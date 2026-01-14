@@ -5,6 +5,24 @@ library(dplyr)
 library(tibble)
 library(EpiEstim)
 
+quiet_load_support <- function(app_dir = ".") {
+  previous <- getOption("shiny.autoload.r")
+  on.exit(options(shiny.autoload.r = previous), add = TRUE)
+
+  options(shiny.autoload.r = TRUE)
+  withCallingHandlers(
+    shiny::loadSupport(appDir = app_dir),
+    warning = function(w) {
+      msg <- conditionMessage(w)
+      if (grepl("Loading R/ subdirectory", msg, fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
+
+quiet_load_support()
+
 inputs <- load_inputs()
 
 empty_results <- tibble(
@@ -34,6 +52,9 @@ ui <- page_fluid(
     column(5, mod_map_ui("map", intervention_defs = intervention_defs)),
     column(4, mod_dashboard_ui("dashboard"))
   ),
+  fluidRow(
+    column(12, mod_replay_ui("replay"))
+  ),
   card(
     card_body(
       HTML("Data layers are precomputed from GLA/ONS sources; loaded from ./data/*.rds."),
@@ -52,6 +73,13 @@ server <- function(input, output, session) {
 
   observation_state <- reactiveVal(init_observation_state())
   available_now <- reactiveVal(empty_results)
+
+  turn_logs <- reactiveValues(
+    truth = tibble(),
+    observations = tibble(),
+    actions = tibble()
+  )
+  replay_unlocked <- reactiveVal(FALSE)
 
   truth_state <- reactiveVal(NULL)
   truth_history <- reactiveVal(list())
@@ -75,6 +103,21 @@ server <- function(input, output, session) {
     available_now = reactive(available_now())
   )
 
+  logs_snapshot <- reactive({
+    list(
+      truth = turn_logs$truth,
+      observations = turn_logs$observations,
+      actions = turn_logs$actions
+    )
+  })
+
+  mod_replay_server(
+    id = "replay",
+    logs = logs_snapshot,
+    boros = inputs$boros,
+    ended = reactive(replay_unlocked())
+  )
+
   output$run_summary_table <- renderTable({
     report <- run_report()
     req(report)
@@ -86,11 +129,20 @@ server <- function(input, output, session) {
       set.seed(seed)
     }
 
+    params_epi <- controls$epidemiology()
+    budget <- controls$budget()
+
     init <- init_truth(
       n_boroughs = nrow(inputs$pop_tbl),
       seed_boroughs = 1L,
       seed_cases = 20L
     )
+
+    blank_logs <- init_turn_logs(inputs$pop_tbl)
+    turn_logs$truth <- blank_logs$truth
+    turn_logs$observations <- blank_logs$observations
+    turn_logs$actions <- blank_logs$actions
+    replay_unlocked(FALSE)
 
     truth_state(init)
     truth_history(init$history)
@@ -107,18 +159,51 @@ server <- function(input, output, session) {
         allocations = starter_alloc,
         truth_incidence = init$incidence,
         pop_tbl = inputs$pop_tbl,
-        params = testing_params
-      )
+      params = testing_params
+    )
       base_observation <- list(queue = starter_obs$queue, history = starter_obs$history)
       current_available <- starter_obs$available
     } else {
       current_available <- empty_results
     }
 
+    turn_logs$truth <- append_truth_log(
+      truth_log = turn_logs$truth,
+      turn = init$turn,
+      incidence = init$incidence,
+      cumulative = init$cumulative,
+      imports = integer(length(init$incidence)),
+      Rt = params_epi$Rt,
+      pop_tbl = inputs$pop_tbl
+    )
+
+    starter_spend_stats <- summarise_budget(starter_alloc, list(pcr = 0, ag = 0), budget$budget)
+    turn_logs$actions <- append_action_log(
+      action_log = turn_logs$actions,
+      turn = 0L,
+      allocations = starter_alloc,
+      pop_tbl = inputs$pop_tbl,
+      costs = list(pcr = 0, ag = 0),
+      meta = list(
+        allocation_spend = starter_spend_stats$spend,
+        intervention_cost = 0,
+        total_turn_spend = starter_spend_stats$spend,
+        cumulative_spend = 0,
+        budget_remaining = budget$budget,
+        interventions_active = "None"
+      )
+    )
+
+    turn_logs$observations <- append_observation_log(
+      observation_log = turn_logs$observations,
+      available_results = current_available,
+      turn_reported = 0L,
+      pop_tbl = inputs$pop_tbl
+    )
+
     observation_state(base_observation)
     available_now(current_available)
     total_spend(0)
-    budget <- controls$budget()
     spend_current(list(
       total = 0,
       last_turn = 0,
@@ -176,9 +261,10 @@ server <- function(input, output, session) {
     initialise_truth(seed = controls$reseed())
   })
 
-  observeEvent(controls$advance(), {
+  observeEvent(allocations_module$advance(), {
     req(truth_state())
 
+    current_turn <- turn()
     allocs <- allocations_module$allocations()
     budget <- controls$budget()
     params_epi <- controls$epidemiology()
@@ -213,6 +299,22 @@ server <- function(input, output, session) {
       interventions = intervention_label
     ))
 
+    turn_logs$actions <- append_action_log(
+      action_log = turn_logs$actions,
+      turn = current_turn,
+      allocations = allocs,
+      pop_tbl = inputs$pop_tbl,
+      costs = budget$costs,
+      meta = list(
+        allocation_spend = spend_stats$spend,
+        intervention_cost = intervention_cost,
+        total_turn_spend = turn_spend,
+        cumulative_spend = new_total_spend,
+        budget_remaining = remaining_budget,
+        interventions_active = intervention_label
+      )
+    )
+
     obs <- observe_tests(
       state = observation_state(),
       turn = turn(),
@@ -224,6 +326,13 @@ server <- function(input, output, session) {
 
     observation_state(list(queue = obs$queue, history = obs$history))
     available_now(obs$available)
+
+    turn_logs$observations <- append_observation_log(
+      observation_log = turn_logs$observations,
+      available_results = obs$available,
+      turn_reported = current_turn,
+      pop_tbl = inputs$pop_tbl
+    )
 
     next_truth <- step_truth(
       state = truth_state(),
@@ -237,10 +346,18 @@ server <- function(input, output, session) {
     truth_state(next_truth)
     truth_history(next_truth$history)
 
-    next_turn <- turn() + 1L
-    entry <- tibble(
-      turn = next_turn,
-      truth_total = sum(next_truth$incidence),
+    turn_logs$truth <- append_truth_log(
+      truth_log = turn_logs$truth,
+      turn = next_truth$turn,
+      incidence = next_truth$incidence,
+      cumulative = next_truth$cumulative,
+      imports = next_truth$last_imports,
+      Rt = params_epi$Rt,
+      pop_tbl = inputs$pop_tbl
+    )
+
+    entry_cur <- tibble(
+      turn = current_turn,
       tests_ag = sum(allocs$n_ag),
       tests_pcr = sum(allocs$n_pcr),
       allocation_spend = spend_stats$spend,
@@ -253,8 +370,16 @@ server <- function(input, output, session) {
       notes = "",
       queue_pending = sum(obs$queue$n)
     )
-    run_log(dplyr::bind_rows(run_log(), entry))
 
+    rl <- run_log()
+    if (nrow(rl) == 0 || !(current_turn %in% rl$turn)) {
+      run_log(dplyr::bind_rows(rl, entry_cur))
+    } else {
+      rl <- dplyr::rows_update(rl, entry_cur, by = "turn")
+      run_log(rl)
+    }
+
+    next_turn <- current_turn + 1L
     turn(next_turn)
     allocations_module$reset()
   })
@@ -266,7 +391,8 @@ server <- function(input, output, session) {
       observed_history = observation_state()$history,
       pop_tbl = inputs$pop_tbl,
       total_spend = total_spend(),
-      run_log = run_log()
+      run_log = run_log(),
+      truth_log = turn_logs$truth
     )
 
     run_report(report)
@@ -297,6 +423,8 @@ server <- function(input, output, session) {
       easyClose = TRUE,
       size = "l"
     ))
+
+    replay_unlocked(TRUE)
   })
 }
 

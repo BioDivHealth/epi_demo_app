@@ -76,9 +76,10 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
 #' @param pop_tbl Population tibble with `pop` column.
 #' @param total_spend Numeric total spend accumulated across turns.
 #' @param run_log Tibble of per-turn summaries captured during gameplay.
+#' @param truth_log Truth log tibble (e.g., from `append_truth_log()`), used for derived stats like imports.
 #' @return List with `metrics` and `turn_summary` tibble.
 #' @export
-build_run_report <- function(truth_history, observed_history, pop_tbl, total_spend = 0, run_log = tibble::tibble()) {
+build_run_report <- function(truth_history, observed_history, pop_tbl, total_spend = 0, run_log = tibble::tibble(), truth_log = tibble::tibble()) {
   metrics <- score_run(
     truth_history = truth_history,
     observed_history = observed_history,
@@ -105,22 +106,32 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     ) |>
     dplyr::rename(turn = turn_available)
 
+  imports_df <- if (!is.null(truth_log) && nrow(truth_log) > 0) {
+    truth_log |>
+      dplyr::group_by(turn) |>
+      dplyr::summarise(imports_total = sum(imports), .groups = "drop")
+  } else {
+    tibble::tibble(turn = integer(), imports_total = integer())
+  }
+
   log_clean <- run_log
   if (nrow(log_clean) == 0) {
     log_clean <- tibble::tibble(turn = integer())
   } else {
     log_clean <- log_clean |>
-      dplyr::select(-dplyr::any_of(c("truth_total", "observed_tests", "observed_positives")))
+      dplyr::select(-dplyr::any_of(c("truth_total", "observed_tests", "observed_positives", "imports_total")))
   }
 
   turn_summary <- truth_df |>
     dplyr::left_join(observed_df, by = "turn") |>
+    dplyr::left_join(imports_df, by = "turn") |>
     dplyr::left_join(log_clean, by = "turn") |>
     dplyr::arrange(turn)
 
   numeric_defaults <- c(
     observed_tests = 0,
     observed_positives = 0,
+    imports_total = 0,
     tests_ag = 0,
     tests_pcr = 0,
     allocation_spend = 0,

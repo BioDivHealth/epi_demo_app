@@ -46,7 +46,6 @@ mod_controls_ui <- function(id) {
     bslib::card_header("Simulation"),
     shiny::numericInput(ns("rng_seed"), "RNG seed", value = 2024, min = 1, step = 1),
     shiny::actionButton(ns("reseed"), "Reseed RNG"),
-    shiny::actionButton(ns("advance"), "Advance turn", class = "btn-primary"),
     shiny::actionButton(ns("end"), "End simulation"),
     shiny::actionButton(ns("reset"), "Reset"),
     width = NULL
@@ -148,7 +147,6 @@ mod_controls_server <- function(id) {
       testing = params_testing,
       budget = budget_info,
       starter_intel = starter_intel,
-      advance = shiny::reactive(input$advance),
       end = shiny::reactive(input$end),
       reset = shiny::reactive(input$reset),
       reseed = reseed

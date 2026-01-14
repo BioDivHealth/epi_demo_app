@@ -30,6 +30,7 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
         ),
         shiny::numericInput(ns("allocation_amount"), "Quantity per click", value = 5, min = 1, step = 1),
         shiny::actionButton(ns("clear_alloc"), "Clear allocations"),
+        shiny::actionButton(ns("advance"), "Advance turn", class = "btn-primary w-100 mt-3"),
         shiny::div(class = "mt-3", shiny::strong("Remaining budget:")),
         shiny::textOutput(ns("budget_text")),
         shiny::div(class = "mt-4", shiny::strong("Interventions")),
@@ -64,12 +65,29 @@ mod_map_server <- function(
       if (is.null(sel)) character() else sel
     })
 
+    bbox <- sf::st_bbox(boros)
+    bounds_list <- list(
+      c(bbox[["ymin"]] - 0.02, bbox[["xmin"]] - 0.02),
+      c(bbox[["ymax"]] + 0.02, bbox[["xmax"]] + 0.02)
+    )
+    reset_js <- sprintf(
+      "function(btn, map){ map.fitBounds([[%.6f, %.6f],[%.6f, %.6f]]); }",
+      bounds_list[[1]][1], bounds_list[[1]][2],
+      bounds_list[[2]][1], bounds_list[[2]][2]
+    )
+
     observeEvent(input$clear_alloc, {
       allocations(allocations_init)
     })
 
     output$map <- leaflet::renderLeaflet({
-      leaflet::leaflet(boros) |>
+      leaflet::leaflet(
+        boros,
+        options = leaflet::leafletOptions(
+          maxBounds = bounds_list,
+          minZoom = 9
+        )
+      ) |>
         leaflet::addProviderTiles("CartoDB.Positron") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
@@ -79,6 +97,19 @@ mod_map_server <- function(
           fillColor = "#cccccc",
           label = ~borough_name,
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
+        ) |>
+        leaflet::addEasyButton(
+          leaflet::easyButton(
+            icon = "fa-home",
+            title = "Reset view",
+            onClick = htmlwidgets::JS(reset_js)
+          )
+        ) |>
+        leaflet::fitBounds(
+          lng1 = bbox[["xmin"]],
+          lat1 = bbox[["ymin"]],
+          lng2 = bbox[["xmax"]],
+          lat2 = bbox[["ymax"]]
         )
     })
 
@@ -200,7 +231,8 @@ mod_map_server <- function(
       clear_interventions = function() {
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
       },
-      interventions = selected_interventions
+      interventions = selected_interventions,
+      advance = shiny::reactive(input$advance)
     )
   })
 }

@@ -2,6 +2,7 @@ library(testthat)
 
 pop_stub <- tibble::tibble(
   borough_name = c("A", "B", "C"),
+  gss_code = c("G1", "G2", "G3"),
   pop = c(1000, 1000, 1000)
 )
 
@@ -36,12 +37,24 @@ run_log <- tibble::tibble(
   queue_pending = c(0L, 0L, 2L)
 )
 
+truth_log <- tibble::tibble(
+  turn = rep(0:2, each = 3),
+  borough_index = rep(1:3, times = 3),
+  gss_code = rep(pop_stub$gss_code, times = 3),
+  borough_name = rep(pop_stub$borough_name, times = 3),
+  incidence = c(5L, 0L, 0L, 6L, 1L, 0L, 4L, 2L, 0L),
+  cumulative = c(5L, 0L, 0L, 11L, 1L, 0L, 15L, 3L, 0L),
+  imports = c(0L, 0L, 0L, 1L, 0L, 0L, 0L, 1L, 0L),
+  Rt = rep(1.2, 9)
+)
+
 report <- build_run_report(
   truth_history = truth_history,
   observed_history = observed_history,
   pop_tbl = pop_stub,
   total_spend = 210,
-  run_log = run_log
+  run_log = run_log,
+  truth_log = truth_log
 )
 
 test_that("run report carries metrics and summaries", {
@@ -49,6 +62,7 @@ test_that("run report carries metrics and summaries", {
   expect_equal(length(report$metrics), 6)
   expect_equal(nrow(report$turn_summary), length(truth_history))
   expect_equal(report$turn_summary$truth_total, c(5, 7, 6))
+  expect_equal(report$turn_summary$imports_total, c(0, 1, 1))
   expect_equal(report$turn_summary$observed_tests[report$turn_summary$turn == 2], 8)
   expect_equal(report$turn_summary$active_interventions[2], "Social distancing")
 })
