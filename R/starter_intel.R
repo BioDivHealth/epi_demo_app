@@ -18,7 +18,7 @@ starter_intel_allocations <- function(option = "none", truth_state, pop_tbl) {
     if (truth_state$incidence[candidate] == 0) {
       candidate <- sample.int(n_b, 1L)
     }
-    base$n_pcr[candidate] <- 40L
+    base$n_ag[candidate] <- 200L
     return(base)
   }
 

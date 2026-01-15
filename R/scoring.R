@@ -8,6 +8,54 @@
 #' @param total_spend Numeric total spend accumulated across turns.
 #' @return Named list of metrics.
 #' @export
+estimate_rt_series <- function(incid_vector, mean_si = 3.5, std_si = 1.5) {
+  if (length(incid_vector) < 3 || all(is.na(incid_vector))) {
+    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+  }
+
+  window_size <- min(5, length(incid_vector))
+  if (window_size < 3) {
+    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+  }
+
+  t_end <- seq(window_size, length(incid_vector))
+  t_start <- pmax(t_end - window_size + 1, 2)
+  valid <- t_start <= t_end
+  t_start <- t_start[valid]
+  t_end <- t_end[valid]
+
+  if (!length(t_start)) {
+    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+  }
+
+  config <- EpiEstim::make_config(list(
+    mean_si = mean_si,
+    std_si = std_si,
+    t_start = t_start,
+    t_end = t_end
+  ))
+
+  res <- suppressWarnings(suppressMessages(tryCatch(
+    EpiEstim::estimate_R(
+      incid = incid_vector,
+      method = "parametric_si",
+      config = config
+    ),
+    error = function(e) NULL
+  )))
+
+  if (is.null(res) || nrow(res$R) == 0) {
+    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+  }
+
+  last_row <- res$R[nrow(res$R), ]
+  list(
+    mean = last_row$`Mean(R)`,
+    lower = last_row$`Quantile.0.025(R)`,
+    upper = last_row$`Quantile.0.975(R)`
+  )
+}
+
 score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0) {
   if (length(truth_history) == 0) {
     stop("truth_history must contain at least one turn")
@@ -19,6 +67,7 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
 
   final_truth <- truth_mat[nrow(truth_mat), ]
   true_prev <- final_truth / pop_tbl$pop
+  true_prev_rate <- sum(final_truth) / sum(pop_tbl$pop)
 
   detection_turns <- observed_history |>
     dplyr::filter(positives > 0) |>
@@ -59,13 +108,28 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
 
   calibration_gap <- sqrt(mean((true_prev - inferred_prev)^2))
 
+  observed_series <- observed_history |>
+    dplyr::group_by(turn_available) |>
+    dplyr::summarise(positives = sum(positives), .groups = "drop") |>
+    dplyr::arrange(turn_available)
+
+  observed_rt <- estimate_rt_series(observed_series$positives)
+  truth_rt <- estimate_rt_series(total_incidence)
+
   list(
     time_to_detection = time_to_detection,
     peak_true_incidence = peak_true,
     peak_observed_positives = peak_observed,
     percent_positive = pct_positive,
     total_spend = total_spend,
-    calibration_gap = calibration_gap
+    calibration_gap = calibration_gap,
+    true_prevalence_rate = true_prev_rate,
+    rt_observed_mean = observed_rt$mean,
+    rt_observed_lower = observed_rt$lower,
+    rt_observed_upper = observed_rt$upper,
+    rt_truth_mean = truth_rt$mean,
+    rt_truth_lower = truth_rt$lower,
+    rt_truth_upper = truth_rt$upper
   )
 }
 
@@ -86,6 +150,18 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     pop_tbl = pop_tbl,
     total_spend = total_spend
   )
+
+  if (!is.null(truth_log) && nrow(truth_log) > 0 && "cumulative" %in% names(truth_log)) {
+    final_turn <- max(truth_log$turn, na.rm = TRUE)
+    final_cumulative <- truth_log |>
+      dplyr::filter(turn == final_turn) |>
+      dplyr::summarise(total_cumulative = sum(cumulative, na.rm = TRUE), .groups = "drop") |>
+      dplyr::pull(total_cumulative)
+    pop_total <- sum(pop_tbl$pop, na.rm = TRUE)
+    if (is.finite(final_cumulative) && is.finite(pop_total) && pop_total > 0) {
+      metrics$true_prevalence_rate <- final_cumulative / pop_total
+    }
+  }
 
   truth_totals <- vapply(truth_history, sum, numeric(1))
   true_hotspots <- vapply(truth_history, function(x) sum(x > 0), integer(1))
@@ -145,6 +221,10 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     if (field %in% names(turn_summary)) {
       turn_summary[[field]][is.na(turn_summary[[field]])] <- numeric_defaults[[field]]
     }
+  }
+
+  if ("total_turn_spend" %in% names(turn_summary)) {
+    turn_summary$cumulative_spend <- cumsum(turn_summary$total_turn_spend)
   }
 
   if ("active_interventions" %in% names(turn_summary)) {

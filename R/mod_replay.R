@@ -54,7 +54,16 @@ mod_replay_ui <- function(id) {
         inputId = ns("show_actions"),
         label = "Show allocation markers",
         value = TRUE
+      ),
+      shiny::checkboxInput(
+        inputId = ns("show_debug"),
+        label = "Debug replay",
+        value = FALSE
       )
+    ),
+    shiny::conditionalPanel(
+      condition = sprintf("input['%s'] == true", ns("show_debug")),
+      shiny::div(class = "small text-muted", shiny::uiOutput(ns("debug_panel")))
     ),
     shiny::fluidRow(
       shiny::column(
@@ -85,9 +94,12 @@ mod_replay_ui <- function(id) {
   )
 }
 
-mod_replay_server <- function(id, logs, boros, ended) {
+mod_replay_server <- function(id, logs, boros, ended, open_signal = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
+    if (is.null(open_signal)) {
+      open_signal <- shiny::reactiveVal(0L)
+    }
 
     play_state <- shiny::reactiveVal(FALSE)
     has_ended <- shiny::reactive({
@@ -120,6 +132,67 @@ mod_replay_server <- function(id, logs, boros, ended) {
     )
 
     sync_guard <- shiny::reactiveVal(NULL)
+    maps_ready <- shiny::reactiveVal(FALSE)
+    build_truth_log <- function(truth_history, borough_names) {
+      if (is.null(truth_history) || length(truth_history) == 0) {
+        return(tibble::tibble())
+      }
+      n_boros <- length(borough_names)
+      turns <- seq_len(length(truth_history)) - 1L
+      tibble::tibble(
+        turn = rep(turns, each = n_boros),
+        borough_index = rep(seq_len(n_boros), times = length(turns)),
+        gss_code = NA_character_,
+        borough_name = rep(borough_names, times = length(turns)),
+        incidence = as.integer(unlist(truth_history, use.names = FALSE)),
+        imports = NA_integer_,
+        Rt = NA_real_
+      )
+    }
+
+    resolve_truth_turns <- function(log_data) {
+      if (is.null(log_data) || !is.list(log_data)) {
+        return(integer())
+      }
+      truth_log <- log_data$truth
+      truth_history <- log_data$truth_history
+      history_n <- if (is.null(truth_history)) 0L else length(truth_history)
+      log_turns <- if (!is.null(truth_log) && nrow(truth_log) > 0) sort(unique(truth_log$turn)) else integer()
+      log_n <- length(log_turns)
+
+      if (history_n > log_n && history_n > 0) {
+        return(seq_len(history_n) - 1L)
+      }
+      if (log_n > 0) {
+        return(log_turns)
+      }
+      if (history_n > 0) {
+        return(seq_len(history_n) - 1L)
+      }
+      integer()
+    }
+
+    resolve_truth_log <- function(log_data, borough_names) {
+      if (is.null(log_data) || !is.list(log_data)) {
+        return(tibble::tibble())
+      }
+      truth_log <- log_data$truth
+      truth_history <- log_data$truth_history
+      history_n <- if (is.null(truth_history)) 0L else length(truth_history)
+      log_turns <- if (!is.null(truth_log) && nrow(truth_log) > 0) unique(truth_log$turn) else integer()
+      log_n <- length(log_turns)
+
+      if (history_n > log_n && history_n > 0) {
+        return(build_truth_log(truth_history, borough_names))
+      }
+      if (!is.null(truth_log) && nrow(truth_log) > 0) {
+        return(truth_log)
+      }
+      if (history_n > 0) {
+        return(build_truth_log(truth_history, borough_names))
+      }
+      tibble::tibble()
+    }
 
     coalesce_scalar <- function(x, fallback = 0) {
       if (is.null(x) || length(x) == 0) {
@@ -149,7 +222,45 @@ mod_replay_server <- function(id, logs, boros, ended) {
       }
     })
 
+    output$debug_panel <- shiny::renderUI({
+      if (!isTRUE(input$show_debug)) {
+        return(NULL)
+      }
+      log_data <- logs()
+      turns <- resolve_truth_turns(log_data)
+      range_txt <- if (length(turns) > 0) paste(min(turns), max(turns), sep = "..") else "none"
+      obs_rows <- if (!is.null(log_data$observations)) nrow(log_data$observations) else 0
+      action_rows <- if (!is.null(log_data$actions)) nrow(log_data$actions) else 0
+      truth_rows <- if (!is.null(log_data$truth)) nrow(log_data$truth) else 0
+      history_len <- if (is.null(log_data$truth_history)) 0 else length(log_data$truth_history)
+      slider_val <- input$turn_slider
+      truth_log <- resolve_truth_log(log_data, borough_names)
+      truth_turn_rows <- if (!is.null(slider_val) && nrow(truth_log) > 0) {
+        sum(truth_log$turn == slider_val)
+      } else {
+        0
+      }
+      obs_turn_rows <- if (!is.null(slider_val) && !is.null(log_data$observations)) {
+        sum(log_data$observations$turn_reported == slider_val)
+      } else {
+        0
+      }
+      bounds_obs_missing <- is.null(input$map_observed_bounds)
+      bounds_truth_missing <- is.null(input$map_truth_bounds)
+      lines <- c(
+        paste("ended:", has_ended()),
+        paste("turns:", length(turns), "range:", range_txt, "slider:", slider_val),
+        paste("turn rows: truth", truth_turn_rows, "obs", obs_turn_rows),
+        paste("history_len:", history_len, "truth_rows:", truth_rows, "obs_rows:", obs_rows, "action_rows:", action_rows),
+        paste("maps_ready:", maps_ready()),
+        paste("bounds missing: observed", bounds_obs_missing, "truth", bounds_truth_missing),
+        paste("log_signature:", log_signature())
+      )
+      tags$pre(paste(lines, collapse = "\n"))
+    })
+
     output$map_observed <- leaflet::renderLeaflet({
+      open_signal()
       leaflet::leaflet(
         boros,
         options = leaflet::leafletOptions(
@@ -184,6 +295,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
     })
 
     output$map_truth <- leaflet::renderLeaflet({
+      open_signal()
       leaflet::leaflet(
         boros,
         options = leaflet::leafletOptions(
@@ -222,6 +334,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
       if (is.null(bounds)) {
         return()
       }
+      maps_ready(TRUE)
       if (identical(sync_guard(), "observed")) {
         sync_guard(NULL)
         return()
@@ -241,6 +354,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
       if (is.null(bounds)) {
         return()
       }
+      maps_ready(TRUE)
       if (identical(sync_guard(), "truth")) {
         sync_guard(NULL)
         return()
@@ -257,37 +371,74 @@ mod_replay_server <- function(id, logs, boros, ended) {
 
     available_turns <- shiny::reactive({
       log_data <- logs()
-      truth_log <- log_data$truth
-      if (is.null(truth_log) || nrow(truth_log) == 0) {
-        return(integer())
-      }
-      sort(unique(truth_log$turn))
+      resolve_truth_turns(log_data)
     })
 
-    shiny::observeEvent(list(available_turns(), has_ended()), {
+    log_signature <- shiny::reactive({
+      log_data <- logs()
+      turns <- resolve_truth_turns(log_data)
+      obs_rows <- if (!is.null(log_data$observations)) nrow(log_data$observations) else 0
+      action_rows <- if (!is.null(log_data$actions)) nrow(log_data$actions) else 0
+      truth_rows <- if (!is.null(log_data$truth)) nrow(log_data$truth) else 0
+      paste(length(turns), obs_rows, action_rows, truth_rows, sep = "|")
+    })
+
+    shiny::observeEvent(open_signal(), {
+      maps_ready(FALSE)
+      sync_guard(NULL)
+      play_state(FALSE)
+      shiny::updateActionButton(session, "play_toggle", label = "Play")
+      shiny::isolate(animation_turn(NULL))
+
+      session$onFlushed(function() {
+        maps_ready(TRUE)
+      }, once = TRUE)
+
       if (!has_ended()) {
-        play_state(FALSE)
-        shiny::updateActionButton(session, "play_toggle", label = "Play")
-        shiny::updateSliderInput(session, "turn_slider", min = 0, max = 0, value = 0, step = 1)
         return()
       }
-
       turns <- available_turns()
+      if (length(turns) == 0 || is.null(input$turn_slider)) {
+        shiny::invalidateLater(100, session)
+        return()
+      }
+      shiny::updateSliderInput(session, "turn_slider", value = max(turns))
+    }, ignoreInit = TRUE)
+
+    # Observe both available turns and when slider input becomes available
+    shiny::observe({
+      turns <- available_turns()
+      ended <- has_ended()
+      slider_val <- input$turn_slider
+      
+      # Only proceed if we have ended and have turn data
+      if (!ended) {
+        return()
+      }
+      
       if (length(turns) == 0) {
         return()
       }
 
-      current_value <- input$turn_slider
-      if (is.null(current_value) || !(current_value %in% turns)) {
-        current_value <- max(turns)
+      if (is.null(input$turn_slider)) {
+        shiny::invalidateLater(100, session)
+        return()
       }
 
+      # Determine value to set
+      if (is.null(slider_val) || !(slider_val %in% turns)) {
+        target_value <- max(turns)
+      } else {
+        target_value <- slider_val
+      }
+
+      # Update the slider - this will work once the UI is rendered
       shiny::updateSliderInput(
         session,
         "turn_slider",
         min = min(turns),
         max = max(turns),
-        value = current_value,
+        value = target_value,
         step = 1
       )
     })
@@ -297,42 +448,93 @@ mod_replay_server <- function(id, logs, boros, ended) {
         shiny::showNotification("Finish the simulation first to enable playback.", type = "message")
         return()
       }
+
+      turns <- available_turns()
+      if (length(turns) == 0) {
+        shiny::showNotification("No turn data available for replay.", type = "warning")
+        return()
+      }
+
+      # If starting playback, reset to first turn
+      if (!play_state()) {
+        current <- input$turn_slider
+        # If at the last turn or invalid, reset to first turn
+        if (is.null(current) || current >= max(turns)) {
+          shiny::updateSliderInput(session, "turn_slider", value = min(turns))
+        }
+      }
+
       next_state <- !play_state()
       play_state(next_state)
       shiny::updateActionButton(session, "play_toggle", label = if (next_state) "Pause" else "Play")
     })
 
+    # Track current animation turn (separate from slider to avoid race conditions)
+    animation_turn <- shiny::reactiveVal(NULL)
+
+    shiny::observeEvent(log_signature(), {
+      play_state(FALSE)
+      shiny::updateActionButton(session, "play_toggle", label = "Play")
+      shiny::isolate(animation_turn(NULL))
+
+      if (!has_ended()) {
+        return()
+      }
+      turns <- available_turns()
+      if (length(turns) == 0 || is.null(input$turn_slider)) {
+        return()
+      }
+      shiny::updateSliderInput(session, "turn_slider", value = max(turns))
+    }, ignoreInit = TRUE)
+
     shiny::observe({
+      # Only react to play_state and invalidateLater, not to animation_turn changes
       if (!has_ended() || !play_state()) {
+        shiny::isolate(animation_turn(NULL))
         return()
       }
 
-      turns <- available_turns()
+      turns <- shiny::isolate(available_turns())
       if (length(turns) <= 1) {
         play_state(FALSE)
         shiny::updateActionButton(session, "play_toggle", label = "Play")
+        shiny::isolate(animation_turn(NULL))
         return()
       }
 
-      current <- isolate(input$turn_slider)
+      # Get current turn - use isolate to avoid triggering on animation_turn changes
+      current <- shiny::isolate(animation_turn())
       if (is.null(current) || !(current %in% turns)) {
-        current <- min(turns)
+        # First iteration - start from slider value or beginning
+        slider_val <- shiny::isolate(input$turn_slider)
+        if (is.null(slider_val) || slider_val >= max(turns) || !(slider_val %in% turns)) {
+          current <- min(turns)
+        } else {
+          current <- slider_val
+        }
       }
+
       idx <- match(current, turns)
       next_turn <- if (!is.na(idx) && idx < length(turns)) turns[idx + 1] else NA_integer_
 
       if (is.na(next_turn)) {
         play_state(FALSE)
         shiny::updateActionButton(session, "play_toggle", label = "Play")
+        shiny::isolate(animation_turn(NULL))
         return()
       }
 
-      delay_sec <- input$play_delay
+      delay_sec <- shiny::isolate(input$play_delay)
       if (is.null(delay_sec) || !is.finite(delay_sec)) {
         delay_sec <- 2
       }
       delay_ms <- max(0.25, delay_sec) * 1000
+      
+      # Schedule next update BEFORE updating the turn
       shiny::invalidateLater(delay_ms, session)
+
+      # Update both our tracked turn and the slider (use isolate to prevent re-trigger)
+      shiny::isolate(animation_turn(next_turn))
       shiny::updateSliderInput(session, "turn_slider", value = next_turn)
     })
 
@@ -350,7 +552,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
 
     truth_turn <- shiny::reactive({
       log_data <- logs()
-      truth_log <- log_data$truth
+      truth_log <- resolve_truth_log(log_data, borough_names)
       shiny::req(nrow(truth_log) > 0)
       truth_log |>
         dplyr::filter(turn == selected_turn()) |>
@@ -400,6 +602,15 @@ mod_replay_server <- function(id, logs, boros, ended) {
 
     shiny::observe({
       shiny::req(has_ended())
+      if ((is.null(input$map_observed_bounds) || is.null(input$map_truth_bounds)) && !maps_ready()) {
+        shiny::invalidateLater(100, session)
+        return()
+      }
+      if (!maps_ready()) {
+        shiny::invalidateLater(100, session)
+        return()
+      }
+
       truth_df <- truth_turn()
       obs_df <- observed_turn()
       actions_df <- actions_turn()
@@ -421,7 +632,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
       }
       window <- max(1L, as.integer(round(window)))
 
-      truth_log <- logs()$truth
+      truth_log <- resolve_truth_log(logs(), borough_names)
       active_df <- compute_active_infections(truth_log, turn = selected_turn(), window = window)
       truth_active_vals <- rep(NA_real_, n_boros)
       if (nrow(active_df) > 0) {
@@ -499,7 +710,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
         character(1)
       )
 
-      observed_proxy <- leaflet::leafletProxy(ns("map_observed"), data = boros) |>
+      observed_proxy <- leaflet::leafletProxy(ns("map_observed"), data = boros, deferUntilFlush = FALSE) |>
         leaflet::clearGroup("observed") |>
         leaflet::clearGroup("action_markers") |>
         leaflet::addPolygons(
@@ -598,7 +809,7 @@ mod_replay_server <- function(id, logs, boros, ended) {
         character(1)
       )
 
-      leaflet::leafletProxy(ns("map_truth"), data = boros) |>
+      leaflet::leafletProxy(ns("map_truth"), data = boros, deferUntilFlush = FALSE) |>
         leaflet::clearGroup("truth") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
@@ -637,7 +848,11 @@ mod_replay_server <- function(id, logs, boros, ended) {
     output$incidence_plot <- shiny::renderPlot({
       shiny::req(has_ended())
       log_data <- logs()
-      truth_ts <- log_data$truth |>
+      truth_log <- resolve_truth_log(log_data, borough_names)
+      if (is.null(truth_log) || nrow(truth_log) == 0) {
+        return(NULL)
+      }
+      truth_ts <- truth_log |>
         dplyr::group_by(turn) |>
         dplyr::summarise(truth_incidence = sum(incidence), .groups = "drop")
       obs_ts_raw <- log_data$observations

@@ -1,6 +1,8 @@
 library(testthat)
 
-inputs <- load_inputs()
+# Use testthat helper to find project root
+data_dir <- testthat::test_path("..", "..", "data")
+inputs <- load_inputs(data_dir = data_dir)
 
 test_that("p_star extremes behave as expected", {
   n_b <- nrow(inputs$pop_tbl)

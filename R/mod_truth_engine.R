@@ -55,7 +55,8 @@ step_truth <- function(
     Rt_global,
     k_overdisp,
     imports_prob,
-    lambda_import) {
+    lambda_import,
+    pop = NULL) {
   if (is.null(state) || !is.list(state)) {
     stop("state must be a list created by init_truth()")
   }
@@ -93,6 +94,17 @@ step_truth <- function(
 
   mu <- as.numeric(K %*% I_t) * Rt_global
   mu[mu < 0] <- 0
+
+  # Apply susceptible depletion if population provided
+  if (!is.null(pop)) {
+    if (length(pop) != length(I_t)) {
+      stop("Length of pop vector must match number of boroughs")
+    }
+    S_frac <- 1 - (state$cumulative / pop)
+    S_frac[!is.finite(S_frac)] <- 0
+    S_frac <- pmax(0, pmin(1, S_frac))
+    mu <- mu * S_frac
+  }
 
   offspring <- if (is.infinite(k_overdisp)) {
     stats::rpois(length(mu), lambda = mu)

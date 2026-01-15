@@ -15,8 +15,9 @@ load_inputs <- function(data_dir = "data") {
     pop_tbl = file.path(data_dir, "pop_boroughs.rds")
   )
 
-  missing_files <- files[!vapply(files, file.exists, logical(1))]
-  if (length(missing_files) > 0) {
+  exists_mask <- vapply(files, file.exists, logical(1))
+  if (!all(exists_mask)) {
+    missing_files <- unlist(files[!exists_mask])
     stop(
       "Missing expected data files in ", data_dir, ": ",
       paste(basename(missing_files), collapse = ", ")

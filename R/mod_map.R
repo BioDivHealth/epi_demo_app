@@ -4,46 +4,77 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
   ns <- shiny::NS(id)
   intervention_choices <- stats::setNames(
     intervention_defs$id,
-    sprintf("%s (cost £%s)", intervention_defs$label, intervention_defs$cost)
+    sprintf("%s (£%s)", intervention_defs$label, intervention_defs$cost)
   )
   bslib::card(
     full_screen = TRUE,
-    bslib::card_header("Testing allocation"),
+    bslib::card_header(
+      class = "d-flex justify-content-between align-items-center",
+      shiny::span("Click boroughs to allocate tests"),
+      shiny::span(
+        class = "badge bg-info",
+        shiny::textOutput(ns("budget_badge"), inline = TRUE)
+      )
+    ),
+    shiny::div(
+      class = "mb-2 d-flex flex-wrap gap-3 align-items-center p-2 bg-light rounded",
+      shiny::div(
+        class = "d-flex gap-2 align-items-center",
+        shiny::tags$label(class = "mb-0", "Test type:"),
+        shiny::radioButtons(
+          ns("test_type"),
+          label = NULL,
+        choices = c("Antigen (fast)" = "ag", "PCR (accurate)" = "pcr"),
+          selected = "ag",
+          inline = TRUE
+        )
+      ),
+      shiny::div(
+        class = "d-flex gap-2 align-items-center",
+        shiny::tags$label(class = "mb-0 small", "Tests per click:"),
+        shiny::sliderInput(
+          ns("tests_per_click"),
+          label = NULL,
+          min = 1,
+          max = 20,
+          value = 5,
+          step = 1,
+          width = "120px",
+          ticks = FALSE
+        )
+      ),
+      shiny::actionButton(
+        ns("mass_test"),
+        "Mass Testing",
+        class = "btn-outline-primary btn-sm"
+      ),
+      shiny::tags$span(class = "ms-auto small text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
+    ),
+    leaflet::leafletOutput(ns("map"), height = 380),
+    shiny::hr(class = "my-2"),
     shiny::fluidRow(
       shiny::column(
-        width = 8,
-        leaflet::leafletOutput(ns("map"), height = 500)
+        width = 7,
+        shiny::div(
+          class = "d-flex flex-wrap gap-2",
+          shiny::tags$label(class = "form-label small mb-0 me-2", "Interventions:"),
+          shiny::checkboxGroupInput(
+            ns("interventions"),
+            label = NULL,
+            choices = intervention_choices,
+            selected = character(),
+            inline = TRUE
+          )
+        )
       ),
       shiny::column(
-        width = 4,
-        shiny::radioButtons(
-          ns("allocation_mode"),
-          "Mode",
-          choices = c("Add" = "add", "Remove" = "remove"),
-          selected = "add"
-        ),
-        shiny::radioButtons(
-          ns("allocation_type"),
-          "Test type",
-          choices = c("Antigen" = "ag", "PCR" = "pcr"),
-          selected = "ag"
-        ),
-        shiny::numericInput(ns("allocation_amount"), "Quantity per click", value = 5, min = 1, step = 1),
-        shiny::actionButton(ns("clear_alloc"), "Clear allocations"),
-        shiny::actionButton(ns("advance"), "Advance turn", class = "btn-primary w-100 mt-3"),
-        shiny::div(class = "mt-3", shiny::strong("Remaining budget:")),
-        shiny::textOutput(ns("budget_text")),
-        shiny::div(class = "mt-4", shiny::strong("Interventions")),
-        shiny::checkboxGroupInput(
-          ns("interventions"),
-          label = NULL,
-          choices = intervention_choices,
-          selected = character()
-        ),
-        shiny::helpText("Intervention cost applies in addition to testing spend."),
-        shiny::textOutput(ns("intervention_cost_text")),
-        shiny::div(class = "mt-3", shiny::strong("This turn positivity:")),
-        shiny::textOutput(ns("turn_positivity"))
+        width = 5,
+        shiny::div(
+          class = "d-flex gap-2 justify-content-end",
+          shiny::div(class = "small text-muted align-self-center", shiny::textOutput(ns("turn_positivity"), inline = TRUE)),
+          shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm"),
+          shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary")
+        )
       )
     )
   )
@@ -55,6 +86,7 @@ mod_map_server <- function(
     allocations_init,
     budget_info,
     observed_this_turn,
+    pop_tbl,
     intervention_defs = intervention_catalog()) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
@@ -64,6 +96,16 @@ mod_map_server <- function(
       sel <- input$interventions
       if (is.null(sel)) character() else sel
     })
+
+    # Compute borough centroids for allocation markers
+    centroids <- sf::st_geometry(boros) |>
+      sf::st_centroid(of_largest_polygon = TRUE) |>
+      sf::st_coordinates()
+    centroid_tbl <- tibble::tibble(
+      borough_name = boros$borough_name,
+      lng = centroids[, 1],
+      lat = centroids[, 2]
+    )
 
     bbox <- sf::st_bbox(boros)
     bounds_list <- list(
@@ -78,6 +120,58 @@ mod_map_server <- function(
 
     observeEvent(input$clear_alloc, {
       allocations(allocations_init)
+    })
+
+    observeEvent(input$mass_test, {
+      budget <- budget_info()
+      cost_ag <- budget$costs[["ag"]]
+      if (is.null(cost_ag)) {
+        cost_ag <- 0
+      }
+      if (cost_ag <= 0) {
+        shiny::showNotification("Antigen cost is zero or missing.", type = "error")
+        return()
+      }
+
+      allocs <- allocations()
+      spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
+      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
+      remaining <- budget$budget - spend_stats$spend - intervention_cost
+
+      if (!is.finite(remaining) || remaining < cost_ag) {
+        shiny::showNotification("Not enough budget for mass testing.", type = "message")
+        return()
+      }
+
+      total_tests <- floor(remaining / cost_ag)
+      if (total_tests <= 0) {
+        shiny::showNotification("Not enough budget for mass testing.", type = "message")
+        return()
+      }
+
+      weights <- pop_tbl$pop
+      if (length(weights) != nrow(allocs)) {
+        shiny::showNotification("Population data mismatch.", type = "error")
+        return()
+      }
+
+      weights <- weights / sum(weights)
+      base_alloc <- floor(total_tests * weights)
+      remainder <- total_tests - sum(base_alloc)
+
+      if (remainder > 0) {
+        fractional <- (total_tests * weights) - base_alloc
+        extra_idx <- order(fractional, decreasing = TRUE)[seq_len(remainder)]
+        base_alloc[extra_idx] <- base_alloc[extra_idx] + 1L
+      }
+
+      allocs$n_ag <- allocs$n_ag + as.integer(base_alloc)
+      allocations(allocs)
+
+      shiny::showNotification(
+        paste0("Mass testing allocated ", total_tests, " antigen tests."),
+        type = "message"
+      )
     })
 
     output$map <- leaflet::renderLeaflet({
@@ -96,6 +190,7 @@ mod_map_server <- function(
           fillOpacity = 0.7,
           fillColor = "#cccccc",
           label = ~borough_name,
+          group = "boroughs",
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
         ) |>
         leaflet::addEasyButton(
@@ -113,26 +208,23 @@ mod_map_server <- function(
         )
     })
 
+    # Handle map clicks - add tests based on selected type
     observeEvent(input$map_shape_click, {
       click <- input$map_shape_click
       req(click$id)
       idx <- match(click$id, allocations()$borough_name)
       req(!is.na(idx))
 
-      mode <- input$allocation_mode
-      type <- input$allocation_type
-      qty <- max(1L, as.integer(input$allocation_amount))
+      test_type <- input$test_type
+      if (is.null(test_type)) test_type <- "ag"
+
+      qty <- input$tests_per_click
+      if (is.null(qty) || !is.finite(qty)) qty <- 5L
+      qty <- as.integer(qty)
       current_allocs <- allocations()
-
-      col_name <- if (type == "ag") "n_ag" else "n_pcr"
+      col_name <- if (test_type == "pcr") "n_pcr" else "n_ag"
       current_value <- current_allocs[[col_name]][idx]
-
-      new_value <- current_value
-      if (mode == "add") {
-        new_value <- current_value + qty
-      } else {
-        new_value <- max(0L, current_value - qty)
-      }
+      new_value <- current_value + qty
 
       trial_allocs <- current_allocs
       trial_allocs[[col_name]][idx] <- new_value
@@ -141,7 +233,7 @@ mod_map_server <- function(
       spend_stats <- summarise_budget(trial_allocs, budget$costs, budget$budget)
       intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
 
-      if (mode == "add" && (budget$budget - spend_stats$spend - intervention_cost) < -1e-6) {
+      if ((budget$budget - spend_stats$spend - intervention_cost) < -1e-6) {
         shiny::showNotification("Budget exceeded", type = "error")
         return()
       }
@@ -149,17 +241,25 @@ mod_map_server <- function(
       allocations(trial_allocs)
     })
 
-    output$budget_text <- shiny::renderText({
+    output$budget_badge <- shiny::renderText({
       allocs <- allocations()
       budget <- budget_info()
       spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
       intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
       total_spend <- spend_stats$spend + intervention_cost
       remaining <- budget$budget - total_spend
-      paste0(
-        "£", format(round(remaining, 1), big.mark = ","),
-        " remaining (spend £", format(round(total_spend, 1), big.mark = ","), ")"
-      )
+      paste0("£", round(remaining, 0), " left")
+    })
+
+    output$allocation_summary <- shiny::renderText({
+      allocs <- allocations()
+      total_ag <- sum(allocs$n_ag)
+      total_pcr <- sum(allocs$n_pcr)
+      if (total_ag + total_pcr == 0) {
+        "No tests allocated"
+      } else {
+        paste0(total_ag, " Ag + ", total_pcr, " PCR tests")
+      }
     })
 
     observe({
@@ -168,15 +268,19 @@ mod_map_server <- function(
       positives <- sum(latest$positives, na.rm = TRUE)
       output$turn_positivity <- shiny::renderText({
         if (total_tests == 0) {
-          "No results"
+          ""
         } else {
-          paste0(round(100 * positives / total_tests, 1), "%")
+          paste0("Last turn: ", round(100 * positives / total_tests, 1), "% positive")
         }
       })
     })
 
+    # Update map with results and allocation markers
     observe({
       res <- observed_this_turn()
+      allocs <- allocations()
+
+      # Aggregate observed results
       agg <- res |>
         dplyr::group_by(borough_name) |>
         dplyr::summarise(
@@ -189,37 +293,86 @@ mod_map_server <- function(
       idx <- match(agg$borough_name, boros$borough_name)
       values[idx] <- agg$positives / agg$tests
 
+      # Color palette: grey for no results, green to red for positivity
       palette <- leaflet::colorNumeric(
         palette = "YlOrRd",
         domain = c(0, 1),
-        na.color = "#cccccc"
+        na.color = "#e0e0e0"
       )
 
-      fill_cols <- ifelse(is.na(values), "#cccccc", palette(values))
+      fill_cols <- ifelse(is.na(values), "#e0e0e0", palette(values))
 
-      leaflet::leafletProxy(ns("map"), data = boros) |>
-        leaflet::clearShapes() |>
+      # Build labels including allocations
+      labels <- lapply(seq_len(nrow(boros)), function(i) {
+        name <- boros$borough_name[i]
+        val <- values[i]
+        alloc_idx <- match(name, allocs$borough_name)
+
+        result_txt <- if (is.na(val)) {
+          "<em>No results yet</em>"
+        } else if (val == 0) {
+          "<span style='color:green'>0% positive</span>"
+        } else {
+          sprintf("<span style='color:#d95f02'>%.1f%% positive</span>", 100 * val)
+        }
+
+        alloc_txt <- ""
+        if (!is.na(alloc_idx)) {
+          ag <- allocs$n_ag[alloc_idx]
+          pcr <- allocs$n_pcr[alloc_idx]
+          if (ag + pcr > 0) {
+            alloc_txt <- sprintf("<br><small>Allocated: %d Ag, %d PCR</small>", ag, pcr)
+          }
+        }
+
+        htmltools::HTML(paste0("<strong>", name, "</strong><br>", result_txt, alloc_txt))
+      })
+
+      proxy <- leaflet::leafletProxy(ns("map"), data = boros) |>
+        leaflet::clearGroup("boroughs") |>
+        leaflet::clearGroup("alloc_markers") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
           weight = 1,
           color = "#555555",
           fillOpacity = 0.7,
           fillColor = fill_cols,
-          label = lapply(seq_len(nrow(boros)), function(i) {
-            val <- values[i]
-            txt <- if (is.na(val)) "No results" else paste0(round(100 * val, 1), "% positive")
-            htmltools::HTML(paste0("<strong>", boros$borough_name[i], "</strong><br>", txt))
-          }),
+          label = labels,
+          group = "boroughs",
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
         )
-    })
 
-    output$intervention_cost_text <- shiny::renderText({
-      eff <- compute_intervention_effects(selected_interventions(), intervention_defs)
-      if (eff$cost <= 0) {
-        "No intervention cost this turn"
-      } else {
-        paste0("Intervention spend: £", format(round(eff$cost, 1), big.mark = ","))
+      # Add allocation markers
+      allocs_with_coords <- allocs |>
+        dplyr::filter(n_ag > 0 | n_pcr > 0) |>
+        dplyr::left_join(centroid_tbl, by = "borough_name")
+
+      if (nrow(allocs_with_coords) > 0) {
+        total_tests <- allocs_with_coords$n_ag + allocs_with_coords$n_pcr
+        radius <- 4 + sqrt(total_tests)
+
+        marker_labels <- lapply(seq_len(nrow(allocs_with_coords)), function(i) {
+          htmltools::HTML(sprintf(
+            "%s<br>Ag: %d, PCR: %d",
+            allocs_with_coords$borough_name[i],
+            allocs_with_coords$n_ag[i],
+            allocs_with_coords$n_pcr[i]
+          ))
+        })
+
+        proxy <- proxy |>
+          leaflet::addCircleMarkers(
+            lng = allocs_with_coords$lng,
+            lat = allocs_with_coords$lat,
+            radius = radius,
+            color = "#2166ac",
+            fillColor = "#2166ac",
+            fillOpacity = 0.6,
+            stroke = TRUE,
+            weight = 2,
+            label = marker_labels,
+            group = "alloc_markers"
+          )
       }
     })
 

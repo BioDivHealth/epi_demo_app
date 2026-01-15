@@ -60,6 +60,13 @@ observe_tests <- function(
   prev_floor <- params$prev_floor %||% 1e-6
 
   prev <- truth_incidence / pop_tbl$pop
+
+  sampling_mode <- params$sampling_mode %||% "random"
+  if (sampling_mode == "symptomatic") {
+    pool_frac <- params$sampling_pool_frac %||% 0.1
+    pool_frac <- max(min(pool_frac, 1), 1e-6)
+    prev <- truth_incidence / (pop_tbl$pop * pool_frac)
+  }
   prev <- pmax(prev, prev_floor)
   prev <- pmin(prev, 0.9)
 

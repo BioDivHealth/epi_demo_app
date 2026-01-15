@@ -46,20 +46,52 @@ intervention_defs <- intervention_catalog()
 
 ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
-  title = "Outbreak London (boroughs)",
+  title = "Outbreak London",
+  tags$head(
+    tags$style(HTML("
+      .main-header { margin-bottom: 1rem; }
+      .main-header h3 { margin: 0; color: #5a5a5a; }
+      .turn-badge { font-size: 1.1rem; font-weight: 600; }
+      #controls-rng_seed { width: 100%; min-width: 75px; font-size: 11px; }
+      .controls-seed-block {
+        margin-bottom: 12px;
+        width: 100%;
+        height: fit-content;
+      }
+      .controls-seed-block .checkbox {
+        vertical-align: middle;
+        text-align: left;
+        margin-bottom: 0;
+        height: fit-content;
+      }
+      .controls-seed-block .checkbox label {
+        overflow: visible;
+        height: fit-content;
+        text-align: center;
+        vertical-align: middle;
+      }
+      .controls-seed-block .checkbox span {
+        font-size: 14px;
+        color: rgba(62, 63, 58, 1);
+      }
+    "))
+  ),
+  div(
+    class = "main-header d-flex justify-content-between align-items-center",
+    h3("Outbreak London"),
+    div(
+      class = "turn-badge badge bg-secondary",
+      textOutput("turn_display", inline = TRUE)
+    )
+  ),
   fluidRow(
-    column(3, mod_controls_ui("controls")),
-    column(5, mod_map_ui("map", intervention_defs = intervention_defs)),
+    column(2, mod_controls_ui("controls")),
+    column(6, mod_map_ui("map", intervention_defs = intervention_defs)),
     column(4, mod_dashboard_ui("dashboard"))
   ),
-  fluidRow(
-    column(12, mod_replay_ui("replay"))
-  ),
-  card(
-    card_body(
-      HTML("Data layers are precomputed from GLA/ONS sources; loaded from ./data/*.rds."),
-      class = "small text-muted"
-    )
+  div(
+    class = "text-muted small mt-2",
+    "Data: GLA/ONS borough boundaries. Click boroughs to allocate tests, then advance turns."
   )
 )
 
@@ -67,6 +99,10 @@ server <- function(input, output, session) {
   turn <- reactiveVal(0L)
   total_spend <- reactiveVal(0)
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
+
+  output$turn_display <- renderText({
+    paste("Turn", turn())
+  })
 
   run_log <- reactiveVal(tibble())
   run_report <- reactiveVal(NULL)
@@ -80,6 +116,14 @@ server <- function(input, output, session) {
     actions = tibble()
   )
   replay_unlocked <- reactiveVal(FALSE)
+  empty_logs <- init_turn_logs(inputs$pop_tbl)
+  replay_snapshot <- reactiveVal(list(
+    truth = empty_logs$truth,
+    observations = empty_logs$observations,
+    actions = empty_logs$actions,
+    truth_history = list()
+  ))
+  replay_open_id <- reactiveVal(0L)
 
   truth_state <- reactiveVal(NULL)
   truth_history <- reactiveVal(list())
@@ -92,6 +136,7 @@ server <- function(input, output, session) {
     allocations_init = allocations_template,
     budget_info = controls$budget,
     observed_this_turn = reactive(available_now()),
+    pop_tbl = inputs$pop_tbl,
     intervention_defs = intervention_defs
   )
 
@@ -107,16 +152,10 @@ server <- function(input, output, session) {
     list(
       truth = turn_logs$truth,
       observations = turn_logs$observations,
-      actions = turn_logs$actions
+      actions = turn_logs$actions,
+      truth_history = truth_history()
     )
   })
-
-  mod_replay_server(
-    id = "replay",
-    logs = logs_snapshot,
-    boros = inputs$boros,
-    ended = reactive(replay_unlocked())
-  )
 
   output$run_summary_table <- renderTable({
     report <- run_report()
@@ -132,10 +171,12 @@ server <- function(input, output, session) {
     params_epi <- controls$epidemiology()
     budget <- controls$budget()
 
+    n_boros <- nrow(inputs$pop_tbl)
+    seed_borough <- sample.int(n_boros, 1L)
     init <- init_truth(
-      n_boroughs = nrow(inputs$pop_tbl),
-      seed_boroughs = 1L,
-      seed_cases = 20L
+      n_boroughs = n_boros,
+      seed_boroughs = seed_borough,
+      seed_cases = 100L
     )
 
     blank_logs <- init_turn_logs(inputs$pop_tbl)
@@ -143,6 +184,12 @@ server <- function(input, output, session) {
     turn_logs$observations <- blank_logs$observations
     turn_logs$actions <- blank_logs$actions
     replay_unlocked(FALSE)
+    replay_snapshot(list(
+      truth = blank_logs$truth,
+      observations = blank_logs$observations,
+      actions = blank_logs$actions,
+      truth_history = list()
+    ))
 
     truth_state(init)
     truth_history(init$history)
@@ -340,7 +387,8 @@ server <- function(input, output, session) {
       Rt_global = params_epi$Rt,
       k_overdisp = params_epi$k,
       imports_prob = params_epi$imports_prob,
-      lambda_import = params_epi$lambda_import
+      lambda_import = params_epi$lambda_import,
+      pop = inputs$pop_tbl$pop
     )
 
     truth_state(next_truth)
@@ -382,6 +430,29 @@ server <- function(input, output, session) {
     next_turn <- current_turn + 1L
     turn(next_turn)
     allocations_module$reset()
+
+    # Show turn summary notification
+    n_results <- sum(obs$available$n)
+    n_positives <- sum(obs$available$positives)
+    n_pending <- sum(obs$queue$n)
+
+    summary_msg <- if (n_results > 0) {
+      sprintf(
+        "Turn %d complete: %d results returned (%d positive). %d tests pending.",
+        current_turn, n_results, n_positives, n_pending
+      )
+    } else {
+      sprintf(
+        "Turn %d complete: No results yet. %d tests pending.",
+        current_turn, n_pending
+      )
+    }
+
+    showNotification(
+      summary_msg,
+      type = if (n_positives > 0) "warning" else "message",
+      duration = 5
+    )
   })
 
   observeEvent(controls$end(), {
@@ -396,36 +467,144 @@ server <- function(input, output, session) {
     )
 
     run_report(report)
+    replay_snapshot(logs_snapshot())
+    replay_unlocked(TRUE)
 
     metrics <- report$metrics
-    metric_items <- tagList(
-      tags$li(sprintf(
-        "Time to first detection: %s",
-        ifelse(is.na(metrics$time_to_detection), "Not detected", metrics$time_to_detection)
-      )),
-      tags$li(sprintf("Peak true incidence: %s", metrics$peak_true_incidence)),
-      tags$li(sprintf("Peak observed positives: %s", metrics$peak_observed_positives)),
-      tags$li(sprintf(
-        "Percent positive: %s",
-        ifelse(is.na(metrics$percent_positive), "NA", sprintf("%.1f%%", metrics$percent_positive))
-      )),
-      tags$li(sprintf("Total spend: £%s", round(metrics$total_spend, 1))),
-      tags$li(sprintf("Calibration gap (RMSE): %.3f", metrics$calibration_gap))
+
+    # Calculate detection coverage
+    total_true <- sum(sapply(truth_history(), sum))
+    total_observed <- sum(observation_state()$history$positives)
+    detection_rate <- if (total_true > 0) round(100 * total_observed / total_true, 1) else NA
+
+    format_rt <- function(mean_rt, lower_rt, upper_rt) {
+      if (is.na(mean_rt) || is.na(lower_rt) || is.na(upper_rt)) {
+        "Rt unavailable"
+      } else {
+        sprintf("%.2f (%.2f–%.2f)", mean_rt, lower_rt, upper_rt)
+      }
+    }
+
+    true_prev_pct <- if (is.na(metrics$true_prevalence_rate)) {
+      "N/A"
+    } else {
+      sprintf("%.2f%%", 100 * metrics$true_prevalence_rate)
+    }
+
+    observed_rt_txt <- format_rt(
+      metrics$rt_observed_mean,
+      metrics$rt_observed_lower,
+      metrics$rt_observed_upper
+    )
+    truth_rt_txt <- format_rt(
+      metrics$rt_truth_mean,
+      metrics$rt_truth_lower,
+      metrics$rt_truth_upper
     )
 
     showModal(modalDialog(
-      title = "Run summary",
-      tags$h4("Key metrics"),
-      tags$ul(metric_items),
+      title = tags$span(
+        tags$i(class = "fa fa-eye me-2"),
+        "The Truth Revealed"
+      ),
+      fluidRow(
+        column(6,
+          tags$div(
+            class = "card bg-light mb-3",
+            tags$div(class = "card-header", tags$strong("Your Performance")),
+            tags$div(
+              class = "card-body",
+              tags$p(
+                tags$strong("Time to first detection: "),
+                ifelse(is.na(metrics$time_to_detection), "Never detected!", paste("Turn", metrics$time_to_detection))
+              ),
+              tags$p(
+                tags$strong("Peak observed: "),
+                metrics$peak_observed_positives, " positives"
+              ),
+              tags$p(
+                tags$strong("Total spend: "),
+                paste0("£", round(metrics$total_spend, 0))
+              ),
+              tags$p(
+                tags$strong("Detection rate: "),
+                ifelse(is.na(detection_rate), "N/A", paste0(detection_rate, "% of true cases"))
+              ),
+              tags$p(
+                tags$strong("Estimated Rt (observed): "),
+                observed_rt_txt
+              )
+            )
+          )
+        ),
+        column(6,
+          tags$div(
+            class = "card bg-warning-subtle mb-3",
+            tags$div(class = "card-header", tags$strong("Hidden Truth")),
+            tags$div(
+              class = "card-body",
+              tags$p(
+                tags$strong("Peak true incidence: "),
+                metrics$peak_true_incidence, " cases"
+              ),
+              tags$p(
+                tags$strong("Calibration gap: "),
+                sprintf("%.3f RMSE", metrics$calibration_gap)
+              ),
+              tags$p(
+                tags$strong("True cumulative prevalence (final turn): "),
+                true_prev_pct
+              ),
+              tags$p(
+                tags$strong("Rt from truth incidence: "),
+                truth_rt_txt
+              ),
+              tags$p(
+                class = "text-muted small",
+                "The calibration gap measures how far your inferred prevalence was from the truth."
+              )
+            )
+          )
+        )
+      ),
       tags$hr(),
-      tags$h4("Turn-by-turn detail"),
-      tableOutput("run_summary_table"),
-      easyClose = TRUE,
-      size = "l"
+      tags$h5("Turn-by-Turn Comparison"),
+      tags$div(
+        style = "max-height: 300px; overflow-y: auto;",
+        tableOutput("run_summary_table")
+      ),
+      tags$hr(),
+      tags$div(
+        class = "text-center",
+        actionButton("show_replay", "View Replay", class = "btn-primary btn-lg")
+      ),
+      footer = modalButton("Close"),
+      size = "xl",
+      easyClose = TRUE
     ))
-
-    replay_unlocked(TRUE)
   })
+
+  # Handle replay button
+  observeEvent(input$show_replay, {
+    removeModal()
+    showModal(modalDialog(
+      title = "Turn-by-Turn Replay",
+      mod_replay_ui("replay"),
+      footer = modalButton("Close"),
+      size = "xl",
+      easyClose = TRUE
+    ))
+    replay_open_id(replay_open_id() + 1L)
+  })
+
+  # Initialize replay server (works when modal opens)
+  mod_replay_server(
+    id = "replay",
+    logs = reactive(replay_snapshot()),
+    boros = inputs$boros,
+    ended = reactive(replay_unlocked()),
+    open_signal = reactive(replay_open_id())
+  )
 }
 
 shinyApp(ui, server)

@@ -11,8 +11,8 @@ set.seed(1)
 
 test_that("alert intel targets seeded borough where possible", {
   alloc <- starter_intel_allocations("alert", truth_stub, pop_stub)
-  expect_equal(sum(alloc$n_pcr), 40)
-  expect_equal(which(alloc$n_pcr > 0), 2)
+  expect_equal(sum(alloc$n_ag), 200)
+  expect_equal(which(alloc$n_ag > 0), 2)
 })
 
 test_that("sweep intel mixes antigen and PCR tests", {

@@ -59,7 +59,7 @@ report <- build_run_report(
 
 test_that("run report carries metrics and summaries", {
   expect_equal(report$metrics$total_spend, 210)
-  expect_equal(length(report$metrics), 6)
+  expect_equal(length(report$metrics), 13)
   expect_equal(nrow(report$turn_summary), length(truth_history))
   expect_equal(report$turn_summary$truth_total, c(5, 7, 6))
   expect_equal(report$turn_summary$imports_total, c(0, 1, 1))
