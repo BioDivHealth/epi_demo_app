@@ -85,7 +85,7 @@ mod_replay_ui <- function(id) {
   )
 }
 
-mod_replay_server <- function(id, logs, boros, ended, open_signal = NULL) {
+mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     if (is.null(open_signal)) {
@@ -301,6 +301,15 @@ mod_replay_server <- function(id, logs, boros, ended, open_signal = NULL) {
       play_state(FALSE)
       shiny::updateActionButton(session, "play_toggle", label = "Play")
       shiny::isolate(animation_turn(NULL))
+
+      if (!has_ended()) {
+        return()
+      }
+      turns <- available_turns()
+      if (length(turns) == 0 || is.null(input$turn_slider)) {
+        return()
+      }
+      shiny::updateSliderInput(session, "turn_slider", value = max(turns))
     }, ignoreInit = TRUE)
 
     shiny::observe({
@@ -471,7 +480,12 @@ mod_replay_server <- function(id, logs, boros, ended, open_signal = NULL) {
 
     output$incidence_plot <- shiny::renderPlot({
       shiny::req(has_ended())
-      replay_plot_incidence(truth_log(), log_data()$observations)
+      replay_plot_prevalence(
+        truth_log = truth_log(),
+        obs_log = log_data()$observations,
+        pop_tbl = pop_tbl,
+        window = input$infectious_period
+      )
     })
 
     output$testing_plot <- shiny::renderPlot({

@@ -367,69 +367,109 @@ replay_action_table <- function(actions_df) {
     dplyr::arrange(desc(spend))
 }
 
-replay_plot_incidence <- function(truth_log, obs_log) {
+replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
   if (is.null(truth_log) || nrow(truth_log) == 0) {
+    return(NULL)
+  }
+
+  pop_total <- sum(pop_tbl$pop, na.rm = TRUE)
+  if (!is.finite(pop_total) || pop_total <= 0) {
     return(NULL)
   }
 
   truth_ts <- truth_log |>
     dplyr::group_by(turn) |>
-    dplyr::summarise(truth_incidence = sum(incidence), .groups = "drop")
+    dplyr::summarise(truth_incidence = sum(incidence), .groups = "drop") |>
+    dplyr::arrange(turn)
+
+  window <- as.integer(window)
+  if (length(window) != 1 || is.na(window) || window < 1) {
+    window <- 3L
+  }
+
+  active_total <- vapply(
+    seq_len(nrow(truth_ts)),
+    function(i) {
+      start <- max(1L, i - window + 1L)
+      sum(truth_ts$truth_incidence[start:i], na.rm = TRUE)
+    },
+    numeric(1)
+  )
+  truth_ts$truth_prev_pct <- 100 * active_total / pop_total
 
   obs_ts <- if (is.null(obs_log) || nrow(obs_log) == 0) {
-    tibble::tibble(turn = truth_ts$turn, observed_positives = 0)
+    tibble::tibble(
+      turn = truth_ts$turn,
+      observed_tests = 0,
+      observed_positives = 0
+    )
   } else {
     obs_log |>
       dplyr::group_by(turn_reported) |>
-      dplyr::summarise(observed_positives = sum(positives), .groups = "drop") |>
+      dplyr::summarise(
+        observed_tests = sum(n_returned),
+        observed_positives = sum(positives),
+        .groups = "drop"
+      ) |>
       dplyr::rename(turn = turn_reported)
   }
+  obs_ts$observed_prev_pct <- ifelse(
+    obs_ts$observed_tests > 0,
+    100 * obs_ts$observed_positives / obs_ts$observed_tests,
+    0
+  )
 
   combined <- dplyr::full_join(truth_ts, obs_ts, by = "turn")
   if (nrow(combined) == 0) {
     return(NULL)
   }
-  combined$truth_incidence[is.na(combined$truth_incidence)] <- 0
-  combined$observed_positives[is.na(combined$observed_positives)] <- 0
+  combined$truth_prev_pct[is.na(combined$truth_prev_pct)] <- 0
+  combined$observed_prev_pct[is.na(combined$observed_prev_pct)] <- 0
 
   if (nrow(combined) <= 1) {
     return(
       ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
         ggplot2::geom_point(
-          ggplot2::aes(y = truth_incidence, colour = "Hidden truth"),
+          ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
           size = 3
         ) +
         ggplot2::geom_point(
-          ggplot2::aes(y = observed_positives, colour = "Observed positives"),
+          ggplot2::aes(y = observed_prev_pct, colour = "Observed positivity"),
           size = 3,
           shape = 17
         ) +
         ggplot2::labs(
           x = "Turn",
-          y = "Incidence / Positives",
+          y = "Prevalence (%)",
           colour = NULL
         ) +
-        ggplot2::scale_colour_manual(values = c("Hidden truth" = "#08519c", "Observed positives" = "#ef6548")) +
+        ggplot2::scale_colour_manual(values = c(
+          "Truth prevalence (active)" = "#08519c",
+          "Observed positivity" = "#ef6548"
+        )) +
         ggplot2::theme_minimal()
     )
   }
 
   ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
     ggplot2::geom_line(
-      ggplot2::aes(y = truth_incidence, colour = "Hidden truth"),
+      ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
       linewidth = 1
     ) +
     ggplot2::geom_line(
-      ggplot2::aes(y = observed_positives, colour = "Observed positives"),
+      ggplot2::aes(y = observed_prev_pct, colour = "Observed positivity"),
       linewidth = 1,
       linetype = "dashed"
     ) +
     ggplot2::labs(
       x = "Turn",
-      y = "Incidence / Positives",
+      y = "Prevalence (%)",
       colour = NULL
     ) +
-    ggplot2::scale_colour_manual(values = c("Hidden truth" = "#08519c", "Observed positives" = "#ef6548")) +
+    ggplot2::scale_colour_manual(values = c(
+      "Truth prevalence (active)" = "#08519c",
+      "Observed positivity" = "#ef6548"
+    )) +
     ggplot2::theme_minimal()
 }
 

@@ -87,9 +87,20 @@ mod_map_server <- function(
     budget_info,
     observed_this_turn,
     pop_tbl,
+    app_ready = shiny::reactive(TRUE),
     intervention_defs = intervention_catalog()) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
+    ready <- shiny::reactive({
+      isTRUE(app_ready())
+    })
+    map_ready <- shiny::reactiveVal(FALSE)
+
+    observeEvent(input$map_bounds, {
+      if (!is.null(input$map_bounds)) {
+        map_ready(TRUE)
+      }
+    })
 
     allocations <- shiny::reactiveVal(allocations_init)
     selected_interventions <- shiny::reactive({
@@ -210,6 +221,7 @@ mod_map_server <- function(
 
     # Handle map clicks - add tests based on selected type
     observeEvent(input$map_shape_click, {
+      req(ready())
       click <- input$map_shape_click
       req(click$id)
       idx <- match(click$id, allocations()$borough_name)
@@ -242,6 +254,7 @@ mod_map_server <- function(
     })
 
     output$budget_badge <- shiny::renderText({
+      req(ready())
       allocs <- allocations()
       budget <- budget_info()
       spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
@@ -252,6 +265,7 @@ mod_map_server <- function(
     })
 
     output$allocation_summary <- shiny::renderText({
+      req(ready())
       allocs <- allocations()
       total_ag <- sum(allocs$n_ag)
       total_pcr <- sum(allocs$n_pcr)
@@ -263,6 +277,9 @@ mod_map_server <- function(
     })
 
     observe({
+      if (!ready()) {
+        return()
+      }
       latest <- observed_this_turn()
       total_tests <- sum(latest$n, na.rm = TRUE)
       positives <- sum(latest$positives, na.rm = TRUE)
@@ -277,6 +294,14 @@ mod_map_server <- function(
 
     # Update map with results and allocation markers
     observe({
+      if (!ready()) {
+        shiny::invalidateLater(100, session)
+        return()
+      }
+      if (!map_ready()) {
+        shiny::invalidateLater(100, session)
+        return()
+      }
       res <- observed_this_turn()
       allocs <- allocations()
 

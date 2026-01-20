@@ -47,8 +47,12 @@ mod_dashboard_server <- function(
     observed_history,
     queue_state,
     spend_info,
-    available_now) {
+    available_now,
+    app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
+    ready <- shiny::reactive({
+      isTRUE(app_ready())
+    })
 
     observed_series <- shiny::reactive({
       hist <- observed_history()
@@ -63,18 +67,21 @@ mod_dashboard_server <- function(
     })
 
     output$total_positives <- shiny::renderText({
+      req(ready())
       hist <- observed_history()
       if (is.null(hist) || nrow(hist) == 0) return("0")
       sum(hist$positives)
     })
 
     output$pending_count <- shiny::renderText({
+      req(ready())
       queue <- queue_state()
       if (is.null(queue) || nrow(queue) == 0) return("0")
       sum(queue$n)
     })
 
     output$incidence_plot <- shiny::renderPlot({
+      req(ready())
       series <- observed_series()
       if (nrow(series) == 0) {
         ggplot2::ggplot() +
@@ -96,6 +103,7 @@ mod_dashboard_server <- function(
     })
 
     output$rt_plot <- shiny::renderPlot({
+      req(ready())
       series <- observed_series()
       if (nrow(series) < 3) {
         return(ggplot2::ggplot() +
@@ -171,6 +179,7 @@ mod_dashboard_server <- function(
     })
 
     output$spend_text <- shiny::renderPrint({
+      req(ready())
       info <- spend_info()
       hist <- observed_history()
 

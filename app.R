@@ -23,6 +23,16 @@ quiet_load_support <- function(app_dir = ".") {
 
 quiet_load_support()
 
+if (!exists("load_inputs")) {
+  r_dir <- "R"
+  if (dir.exists(r_dir)) {
+    r_files <- list.files(r_dir, pattern = "\\.R$", full.names = TRUE)
+    for (file in r_files) {
+      source(file, local = FALSE)
+    }
+  }
+}
+
 inputs <- load_inputs()
 
 empty_results <- tibble(
@@ -99,6 +109,7 @@ server <- function(input, output, session) {
   turn <- reactiveVal(0L)
   total_spend <- reactiveVal(0)
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
+  app_ready <- reactiveVal(FALSE)
 
   output$turn_display <- renderText({
     paste("Turn", turn())
@@ -137,6 +148,7 @@ server <- function(input, output, session) {
     budget_info = controls$budget,
     observed_this_turn = reactive(available_now()),
     pop_tbl = inputs$pop_tbl,
+    app_ready = app_ready,
     intervention_defs = intervention_defs
   )
 
@@ -145,7 +157,8 @@ server <- function(input, output, session) {
     observed_history = reactive(observation_state()$history),
     queue_state = reactive(observation_state()$queue),
     spend_info = spend_current,
-    available_now = reactive(available_now())
+    available_now = reactive(available_now()),
+    app_ready = app_ready
   )
 
   logs_snapshot <- reactive({
@@ -298,7 +311,13 @@ server <- function(input, output, session) {
 
   observeEvent(controls$reseed(), {
     already_initialised <- !is.null(isolate(truth_state()))
+    if (!already_initialised) {
+      app_ready(FALSE)
+    }
     initialise_truth(seed = controls$reseed())
+    if (!already_initialised) {
+      app_ready(TRUE)
+    }
     if (already_initialised) {
       showNotification("Simulation reseeded", type = "message")
     }
@@ -602,6 +621,7 @@ server <- function(input, output, session) {
     id = "replay",
     logs = reactive(replay_snapshot()),
     boros = inputs$boros,
+    pop_tbl = inputs$pop_tbl,
     ended = reactive(replay_unlocked()),
     open_signal = reactive(replay_open_id())
   )
