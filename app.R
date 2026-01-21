@@ -4,6 +4,7 @@ library(leaflet)
 library(dplyr)
 library(tibble)
 library(EpiEstim)
+library(shinymanager)
 
 quiet_load_support <- function(app_dir = ".") {
   previous <- getOption("shiny.autoload.r")
@@ -35,6 +36,49 @@ if (!exists("load_inputs")) {
 
 inputs <- load_inputs()
 
+auth_credentials_path <- Sys.getenv(
+  "EPILONDON_AUTH_FILE",
+  file.path("config", "credentials.csv")
+)
+
+load_credentials <- function(path) {
+  if (!file.exists(path)) {
+    stop(sprintf(
+      "Auth credentials file not found at '%s'. Create it before running the app.",
+      path
+    ))
+  }
+
+  creds <- utils::read.csv(path, stringsAsFactors = FALSE)
+  required <- c("user", "password")
+  missing <- setdiff(required, names(creds))
+  if (length(missing) > 0) {
+    stop(sprintf(
+      "Auth credentials missing required columns: %s",
+      paste(missing, collapse = ", ")
+    ))
+  }
+
+  if (!"admin" %in% names(creds)) {
+    creds$admin <- FALSE
+  }
+  creds$admin <- as.logical(creds$admin)
+  creds
+}
+
+credentials <- load_credentials(auth_credentials_path)
+
+shared_admin <- reactiveValues(
+  Rt = 1.3,
+  k = 0.5,
+  imports_prob = 0.01,
+  lambda_import = 0.5,
+  seed_borough = NA_integer_,
+  seed_cases = 100L
+)
+
+shared_reset_signal <- reactiveVal(0L)
+
 empty_results <- tibble(
   borough_index = integer(),
   borough_name = character(),
@@ -54,7 +98,7 @@ allocations_template <- tibble(
 
 intervention_defs <- intervention_catalog()
 
-ui <- page_fluid(
+app_ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
   title = "Outbreak London",
   tags$head(
@@ -105,7 +149,15 @@ ui <- page_fluid(
   )
 )
 
+ui <- secure_app(app_ui, enable_admin = FALSE)
+
 server <- function(input, output, session) {
+  auth <- secure_server(check_credentials = check_credentials(credentials))
+  is_admin <- reactive({
+    info <- auth$user_info
+    isTRUE(info$admin)
+  })
+
   turn <- reactiveVal(0L)
   total_spend <- reactiveVal(0)
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
@@ -139,7 +191,13 @@ server <- function(input, output, session) {
   truth_state <- reactiveVal(NULL)
   truth_history <- reactiveVal(list())
 
-  controls <- mod_controls_server("controls")
+  controls <- mod_controls_server(
+    id = "controls",
+    is_admin = is_admin,
+    shared_admin = shared_admin,
+    reset_signal = shared_reset_signal,
+    borough_names = inputs$pop_tbl$borough_name
+  )
 
   allocations_module <- mod_map_server(
     id = "map",
@@ -185,11 +243,19 @@ server <- function(input, output, session) {
     budget <- controls$budget()
 
     n_boros <- nrow(inputs$pop_tbl)
-    seed_borough <- sample.int(n_boros, 1L)
+    seed_borough <- shared_admin$seed_borough
+    if (is.null(seed_borough) || is.na(seed_borough) ||
+        seed_borough < 1L || seed_borough > n_boros) {
+      seed_borough <- sample.int(n_boros, 1L)
+    }
+    seed_cases <- as.integer(shared_admin$seed_cases)
+    if (length(seed_cases) != 1L || is.na(seed_cases) || seed_cases < 0L) {
+      seed_cases <- 100L
+    }
     init <- init_truth(
       n_boroughs = n_boros,
       seed_boroughs = seed_borough,
-      seed_cases = 100L
+      seed_cases = seed_cases
     )
 
     blank_logs <- init_turn_logs(inputs$pop_tbl)
@@ -295,6 +361,11 @@ server <- function(input, output, session) {
 
     run_report(NULL)
   }
+
+  observeEvent(shared_reset_signal(), {
+    initialise_truth(seed = controls$reseed())
+    showNotification("Admin reset triggered", type = "message")
+  }, ignoreInit = TRUE)
 
   observe({
     # keep spend panel current when budget sliders change between turns

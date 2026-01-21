@@ -12,11 +12,13 @@ LazyData: true
 Depends: R (>= 4.3)
 Imports:
     shiny,
+    shinymanager,
     bslib,
     leaflet,
     dplyr,
     tibble,
     ggplot2,
+    scales,
     EpiEstim,
     sf,
     htmltools
