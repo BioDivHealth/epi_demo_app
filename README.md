@@ -21,6 +21,75 @@ An instructional Shiny application that simulates an emerging respiratory outbre
    devtools::test()
    ```
 
+## Authentication (admin vs student)
+
+This app uses in-memory login via `shinymanager`. Create a local credentials file
+and keep it out of git.
+
+1. Create `config/credentials.csv` with columns `user`, `password`, `admin`:
+   ```csv
+   user,password,admin
+   admin,ChangeMe,TRUE
+   student,ClassPass,FALSE
+   ```
+2. (Optional) point to a different file path using:
+   ```bash
+   export EPILONDON_AUTH_FILE="/path/to/credentials.csv"
+   ```
+3. Start the app. Admin users will see the admin-only controls and can reset all
+   sessions or update global parameters.
+
+For automated checks or local demos, you can disable auth entirely:
+```bash
+export EPILONDON_AUTH_DISABLE="true"
+```
+
+Note: this is intended for classroom use. If you need stronger protection, put
+the app behind basic auth or host it on a platform with access control.
+
+## Deployment (AWS Lightsail)
+
+For a one-day demo or class, a small Ubuntu 22.04 Lightsail instance is a good fit. The canonical command sequence lives in `.cmds`.
+
+1. Create an Ubuntu 22.04 instance, attach a Static IP, and open TCP port `3838`.
+2. Install R 4.5.x from CRAN and required system packages:
+   ```bash
+   sudo apt update
+   sudo apt install -y --no-install-recommends software-properties-common dirmngr
+   wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
+     | sudo tee /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc
+   sudo add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu jammy-cran40/"
+   sudo apt update
+   sudo apt install -y r-base
+   sudo apt install -y \
+     gdebi-core cmake libabsl-dev gdal-bin pandoc \
+     libssl-dev libcurl4-openssl-dev libxml2-dev \
+     libgdal-dev libproj-dev libgeos-dev libudunits2-dev
+   ```
+3. Install Shiny Server:
+   ```bash
+   wget https://download3.rstudio.org/ubuntu-20.04/x86_64/shiny-server-1.5.23.1030-amd64.deb
+   sudo gdebi -n shiny-server-1.5.23.1030-amd64.deb
+   ```
+4. Upload the app (use `.rsyncignore`; do **not** exclude `renv/activate.R`):
+   ```bash
+   rsync -av --exclude-from='.rsyncignore' \
+     ./ ubuntu@SERVER_IP:/home/ubuntu/EpiAppLondon/
+   ```
+5. Move into the Shiny Server directory and restore packages with renv:
+   ```bash
+   sudo mv /home/ubuntu/EpiAppLondon /srv/shiny-server/
+   sudo chown -R shiny:shiny /srv/shiny-server/EpiAppLondon
+   sudo R -q -e 'install.packages("renv", repos="https://cloud.r-project.org")'
+   sudo -u shiny R -q -e 'setwd("/srv/shiny-server/EpiAppLondon"); source("renv/activate.R"); Sys.setenv(MAKEFLAGS="-j1"); renv::restore()'
+   ```
+6. Open the app at: `http://<PUBLIC_IP>:3838/EpiAppLondon/`
+
+Notes:
+- If `terra`/`s2` fail to compile on small instances, add swap (see `.cmds`).
+- Logs live under `/var/log/shiny-server/`.
+- `.rsconnectignore` is used for shinyapps.io bundling; `.rsyncignore` is for Lightsail uploads.
+
 ## Gameplay overview
 
 - Allocate antigen vs. PCR tests per borough each turn under a shared budget.

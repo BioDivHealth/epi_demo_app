@@ -45,6 +45,7 @@ mod_controls_ui <- function(id) {
 
 mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_signal = NULL, borough_names = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
+    ns <- session$ns
     if (is.null(is_admin)) {
       is_admin <- function() FALSE
     }
@@ -82,6 +83,15 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         costs = list(ag = 2, pcr = 10)
       ),
       starter_intel = "alert"
+    )
+
+    admin_defaults <- list(
+      Rt = 1.3,
+      k = 0.5,
+      imports_prob = 0.01,
+      lambda_import = 0.5,
+      seed_borough = NA_integer_,
+      seed_cases = 100L
     )
 
     params_epidemic <- shiny::reactive({
@@ -177,6 +187,11 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
           ns("admin_reset_all"),
           "Reset all sessions",
           class = "btn-outline-danger w-100"
+        ),
+        shiny::actionButton(
+          ns("admin_reset_defaults"),
+          "Reset to defaults",
+          class = "btn-outline-secondary w-100 mt-2"
         )
       )
     })
@@ -229,6 +244,48 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
     observeEvent(input$admin_reset_all, {
       shiny::req(is_admin())
       reset_signal(reset_signal() + 1L)
+    })
+
+    observeEvent(input$admin_reset_defaults, {
+      shiny::req(is_admin())
+
+      shared_admin$Rt <- admin_defaults$Rt
+      shared_admin$k <- admin_defaults$k
+      shared_admin$imports_prob <- admin_defaults$imports_prob
+      shared_admin$lambda_import <- admin_defaults$lambda_import
+      shared_admin$seed_borough <- admin_defaults$seed_borough
+      shared_admin$seed_cases <- admin_defaults$seed_cases
+
+      shiny::updateNumericInput(
+        session,
+        "admin_rt",
+        value = admin_defaults$Rt
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_k",
+        value = admin_defaults$k
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_imports_prob",
+        value = admin_defaults$imports_prob
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_lambda_import",
+        value = admin_defaults$lambda_import
+      )
+      shiny::updateSelectInput(
+        session,
+        "admin_seed_borough",
+        selected = "random"
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_seed_cases",
+        value = admin_defaults$seed_cases
+      )
     })
 
     reseed <- shiny::eventReactive(input$reseed, {

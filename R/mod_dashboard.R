@@ -26,12 +26,18 @@ mod_dashboard_ui <- function(id) {
           )
         )
       ),
-      shiny::plotOutput(ns("incidence_plot"), height = 180),
+      shiny::div(
+        style = "height: 180px;",
+        shiny::plotOutput(ns("incidence_plot"), height = "100%")
+      ),
       shiny::hr(class = "my-2"),
       shiny::div(
         class = "small",
         shiny::tags$strong("Estimated Rt"),
-        shiny::plotOutput(ns("rt_plot"), height = 140)
+        shiny::div(
+          style = "height: 140px;",
+          shiny::plotOutput(ns("rt_plot"), height = "100%")
+        )
       ),
       shiny::hr(class = "my-2"),
       shiny::div(

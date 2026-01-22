@@ -36,6 +36,9 @@ if (!exists("load_inputs")) {
 
 inputs <- load_inputs()
 
+auth_disabled <- tolower(Sys.getenv("EPILONDON_AUTH_DISABLE", "false")) %in%
+  c("true", "1", "yes")
+
 auth_credentials_path <- Sys.getenv(
   "EPILONDON_AUTH_FILE",
   file.path("config", "credentials.csv")
@@ -66,7 +69,38 @@ load_credentials <- function(path) {
   creds
 }
 
-credentials <- load_credentials(auth_credentials_path)
+credentials <- NULL
+if (!auth_disabled) {
+  credentials <- load_credentials(auth_credentials_path)
+}
+
+get_auth_user_info <- function(auth) {
+  info <- auth$user_info
+  if (is.function(info)) {
+    info <- info()
+  }
+  if (is.null(info)) {
+    return(NULL)
+  }
+  if (is.data.frame(info) && nrow(info) < 1L) {
+    return(NULL)
+  }
+  info
+}
+
+get_admin_users <- function(creds) {
+  if (is.null(creds) || !("user" %in% names(creds))) {
+    return(character())
+  }
+  admins <- rep(FALSE, nrow(creds))
+  if ("admin" %in% names(creds)) {
+    admins <- as.logical(creds$admin)
+    admins[is.na(admins)] <- FALSE
+  }
+  creds$user[admins]
+}
+
+admin_users <- get_admin_users(credentials)
 
 shared_admin <- reactiveValues(
   Rt = 1.3,
@@ -149,14 +183,24 @@ app_ui <- page_fluid(
   )
 )
 
-ui <- secure_app(app_ui, enable_admin = FALSE)
+ui <- if (auth_disabled) app_ui else secure_app(app_ui, enable_admin = FALSE)
 
 server <- function(input, output, session) {
-  auth <- secure_server(check_credentials = check_credentials(credentials))
-  is_admin <- reactive({
-    info <- auth$user_info
-    isTRUE(info$admin)
-  })
+  if (auth_disabled) {
+    is_admin <- reactive(FALSE)
+  } else {
+    auth <- secure_server(check_credentials = check_credentials(credentials))
+    is_admin <- reactive({
+      user <- auth$user
+      if (is.function(user)) {
+        user <- user()
+      }
+      if (is.null(user) || is.na(user) || identical(user, "")) {
+        return(FALSE)
+      }
+      user %in% admin_users
+    })
+  }
 
   turn <- reactiveVal(0L)
   total_spend <- reactiveVal(0)
