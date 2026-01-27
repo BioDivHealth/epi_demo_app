@@ -5,6 +5,16 @@ skip_if_not_installed("shinytest2")
 # shinytest2 needs to run in interactive context; keep smoke test lightweight
 
 test_that("app launches and key UI elements exist", {
+  old_auth <- Sys.getenv("EPILONDON_AUTH_DISABLE", unset = NA)
+  Sys.setenv(EPILONDON_AUTH_DISABLE = "true")
+  on.exit({
+    if (is.na(old_auth)) {
+      Sys.unsetenv("EPILONDON_AUTH_DISABLE")
+    } else {
+      Sys.setenv(EPILONDON_AUTH_DISABLE = old_auth)
+    }
+  }, add = TRUE)
+
   app <- shinytest2::AppDriver$new(
     app_dir = "../..",
     name = "smoke",

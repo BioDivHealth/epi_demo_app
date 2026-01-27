@@ -20,8 +20,12 @@ test_that("step_truth outputs non-negative integer incidence", {
 
   expect_true(all(next_state$incidence >= 0))
   expect_true(all(next_state$incidence == as.integer(next_state$incidence)))
+  expect_true(all(next_state$deaths >= 0))
+  expect_true(all(next_state$deaths == as.integer(next_state$deaths)))
+  expect_length(next_state$deaths, length(next_state$incidence))
   expect_equal(next_state$turn, 1L)
   expect_length(next_state$history, length(state$history) + 1)
+  expect_length(next_state$death_history, length(next_state$history))
 })
 
 test_that("expected growth tracks Rt when k is infinite", {

@@ -27,6 +27,8 @@ test_that("truth log appends one row per borough with metadata", {
     turn = 3L,
     incidence = c(7L, 2L),
     cumulative = c(30L, 12L),
+    deaths = c(1L, 0L),
+    cumulative_deaths = c(3L, 1L),
     imports = c(1L, 0L),
     Rt = 1.4,
     pop_tbl = pop_tbl
@@ -35,6 +37,8 @@ test_that("truth log appends one row per borough with metadata", {
   expect_equal(nrow(updated), 2)
   expect_true(all(updated$turn == 3L))
   expect_equal(updated$incidence, c(7L, 2L))
+  expect_equal(updated$deaths, c(1L, 0L))
+  expect_equal(updated$cumulative_deaths, c(3L, 1L))
   expect_equal(updated$imports, c(1L, 0L))
   expect_equal(updated$borough_name, pop_tbl$borough_name)
 })

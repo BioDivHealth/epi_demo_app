@@ -36,7 +36,8 @@ mod_replay_ui <- function(id) {
         label = "Truth metric",
         choices = c(
           "Active infections" = "active",
-          "New infections" = "new"
+          "New infections" = "new",
+          "Deaths" = "deaths"
         ),
         selected = "active",
         width = "220px"
@@ -380,7 +381,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       shiny::req(nrow(truth_log_data) > 0)
       truth_log_data |>
         dplyr::filter(turn == selected_turn()) |>
-        dplyr::select(borough_index, gss_code, borough_name, incidence, imports, Rt)
+        dplyr::select(borough_index, gss_code, borough_name, incidence, deaths, imports, Rt)
     })
 
     observed_turn <- shiny::reactive({

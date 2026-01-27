@@ -50,14 +50,37 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       is_admin <- function() FALSE
     }
 
+    scenario_defs <- scenario_catalog()
+    default_scenario <- scenario_lookup("custom", scenario_defs)
+    default_death_ifr <- 0.002
+    default_death_delay <- 6L
+    admin_defaults <- list(
+      Rt = default_scenario$Rt[[1]],
+      k = default_scenario$k[[1]],
+      imports_prob = default_scenario$imports_prob[[1]],
+      lambda_import = default_scenario$lambda_import[[1]],
+      seed_borough = default_scenario$seed_borough[[1]],
+      seed_cases = default_scenario$seed_cases[[1]],
+      kernel_key = default_scenario$kernel_key[[1]],
+      susceptible_frac = default_scenario$susceptible_frac[[1]],
+      scenario_id = default_scenario$id[[1]],
+      death_ifr = default_death_ifr,
+      death_delay = default_death_delay
+    )
+
     if (is.null(shared_admin)) {
       shared_admin <- shiny::reactiveValues(
-        Rt = 1.3,
-        k = 0.5,
-        imports_prob = 0.01,
-        lambda_import = 0.5,
-        seed_borough = NA_integer_,
-        seed_cases = 100L
+        Rt = admin_defaults$Rt,
+        k = admin_defaults$k,
+        imports_prob = admin_defaults$imports_prob,
+        lambda_import = admin_defaults$lambda_import,
+        seed_borough = admin_defaults$seed_borough,
+        seed_cases = admin_defaults$seed_cases,
+        kernel_key = admin_defaults$kernel_key,
+        susceptible_frac = admin_defaults$susceptible_frac,
+        scenario_id = admin_defaults$scenario_id,
+        death_ifr = admin_defaults$death_ifr,
+        death_delay = admin_defaults$death_delay
       )
     }
 
@@ -68,6 +91,85 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
     seed_choices <- c("Random" = "random")
     if (!is.null(borough_names) && length(borough_names) > 0) {
       seed_choices <- c(seed_choices, stats::setNames(seq_along(borough_names), borough_names))
+    }
+    scenario_labels <- scenario_choices(scenario_defs)
+
+    seed_choice_from_value <- function(seed_value) {
+      if (is.null(seed_value) || is.na(seed_value)) {
+        "random"
+      } else {
+        as.character(seed_value)
+      }
+    }
+
+    apply_scenario_defaults <- function(scenario_id) {
+      scenario <- scenario_lookup(scenario_id, scenario_defs)
+      death_ifr <- scenario$death_ifr[[1]]
+      if (is.null(death_ifr) || is.na(death_ifr)) {
+        death_ifr <- shared_admin$death_ifr
+      }
+      death_ifr <- min(1, max(0, death_ifr))
+      death_delay <- scenario$death_delay[[1]]
+      if (is.null(death_delay) || is.na(death_delay)) {
+        death_delay <- shared_admin$death_delay
+      }
+      death_delay <- as.integer(round(death_delay))
+      if (is.na(death_delay) || death_delay < 0L) {
+        death_delay <- 0L
+      }
+
+      shared_admin$Rt <- scenario$Rt[[1]]
+      shared_admin$k <- scenario$k[[1]]
+      shared_admin$imports_prob <- scenario$imports_prob[[1]]
+      shared_admin$lambda_import <- scenario$lambda_import[[1]]
+      shared_admin$seed_borough <- scenario$seed_borough[[1]]
+      shared_admin$seed_cases <- scenario$seed_cases[[1]]
+      shared_admin$kernel_key <- scenario$kernel_key[[1]]
+      shared_admin$susceptible_frac <- scenario$susceptible_frac[[1]]
+      shared_admin$scenario_id <- scenario$id[[1]]
+      shared_admin$death_ifr <- death_ifr
+      shared_admin$death_delay <- death_delay
+
+      shiny::updateNumericInput(
+        session,
+        "admin_rt",
+        value = scenario$Rt[[1]]
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_k",
+        value = scenario$k[[1]]
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_imports_prob",
+        value = scenario$imports_prob[[1]]
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_lambda_import",
+        value = scenario$lambda_import[[1]]
+      )
+      shiny::updateSelectInput(
+        session,
+        "admin_seed_borough",
+        selected = seed_choice_from_value(scenario$seed_borough[[1]])
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_seed_cases",
+        value = scenario$seed_cases[[1]]
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_death_ifr",
+        value = death_ifr
+      )
+      shiny::updateNumericInput(
+        session,
+        "admin_death_delay",
+        value = death_delay
+      )
     }
 
     # Fixed parameters - students focus on testing strategy, not epidemiology
@@ -85,21 +187,19 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       starter_intel = "alert"
     )
 
-    admin_defaults <- list(
-      Rt = 1.3,
-      k = 0.5,
-      imports_prob = 0.01,
-      lambda_import = 0.5,
-      seed_borough = NA_integer_,
-      seed_cases = 100L
-    )
-
     params_epidemic <- shiny::reactive({
       list(
         Rt = shared_admin$Rt,
         k = shared_admin$k,
         imports_prob = shared_admin$imports_prob,
         lambda_import = shared_admin$lambda_import
+      )
+    })
+
+    params_mortality <- shiny::reactive({
+      list(
+        death_ifr = shared_admin$death_ifr,
+        death_delay = shared_admin$death_delay
       )
     })
 
@@ -127,11 +227,13 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         return(NULL)
       }
 
-      seed_value <- shiny::isolate(shared_admin$seed_borough)
-      if (is.null(seed_value) || is.na(seed_value)) {
-        seed_selected <- "random"
-      } else {
-        seed_selected <- as.character(seed_value)
+      seed_selected <- seed_choice_from_value(shiny::isolate(shared_admin$seed_borough))
+      scenario_selected <- shiny::isolate(shared_admin$scenario_id)
+      if (is.null(scenario_selected) || is.na(scenario_selected) || scenario_selected == "") {
+        scenario_selected <- "custom"
+      }
+      if (!(scenario_selected %in% scenario_defs$id)) {
+        scenario_selected <- "custom"
       }
 
       shiny::tagList(
@@ -141,6 +243,13 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
           class = "text-muted small",
           "Changes apply to all sessions on the next turn."
         ),
+        shiny::selectInput(
+          ns("admin_scenario"),
+          label = "Scenario template",
+          choices = scenario_labels,
+          selected = scenario_selected
+        ),
+        shiny::uiOutput(ns("admin_scenario_note")),
         shiny::numericInput(
           ns("admin_rt"),
           label = "Rt",
@@ -183,6 +292,21 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
           min = 0,
           step = 1
         ),
+        shiny::numericInput(
+          ns("admin_death_ifr"),
+          label = "Death IFR",
+          value = shiny::isolate(shared_admin$death_ifr),
+          min = 0,
+          max = 1,
+          step = 0.001
+        ),
+        shiny::numericInput(
+          ns("admin_death_delay"),
+          label = "Death delay (turns)",
+          value = shiny::isolate(shared_admin$death_delay),
+          min = 0,
+          step = 1
+        ),
         shiny::actionButton(
           ns("admin_reset_all"),
           "Reset all sessions",
@@ -196,6 +320,22 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       )
     })
 
+    output$admin_scenario_note <- shiny::renderUI({
+      if (!is_admin()) {
+        return(NULL)
+      }
+      scenario_id <- input$admin_scenario
+      if (is.null(scenario_id) || scenario_id == "" || is.na(scenario_id)) {
+        scenario_id <- "custom"
+      }
+      scenario <- scenario_lookup(scenario_id, scenario_defs)
+      objective <- scenario$objective[[1]]
+      if (is.null(objective) || identical(objective, "")) {
+        return(NULL)
+      }
+      shiny::tags$p(class = "text-muted small", objective)
+    })
+
     observeEvent(
       list(
         input$admin_rt,
@@ -203,7 +343,9 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         input$admin_imports_prob,
         input$admin_lambda_import,
         input$admin_seed_borough,
-        input$admin_seed_cases
+        input$admin_seed_cases,
+        input$admin_death_ifr,
+        input$admin_death_delay
       ),
       {
         shiny::req(is_admin())
@@ -213,7 +355,9 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
           input$admin_imports_prob,
           input$admin_lambda_import,
           input$admin_seed_borough,
-          input$admin_seed_cases
+          input$admin_seed_cases,
+          input$admin_death_ifr,
+          input$admin_death_delay
         )
 
         shared_admin$Rt <- max(0, input$admin_rt)
@@ -237,9 +381,33 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
           seed_cases <- 0L
         }
         shared_admin$seed_cases <- seed_cases
+
+        death_ifr <- suppressWarnings(as.numeric(input$admin_death_ifr))
+        if (is.na(death_ifr) || !is.finite(death_ifr)) {
+          death_ifr <- 0
+        }
+        shared_admin$death_ifr <- min(1, max(0, death_ifr))
+
+        death_delay <- suppressWarnings(as.integer(round(input$admin_death_delay)))
+        if (is.na(death_delay) || death_delay < 0L) {
+          death_delay <- 0L
+        }
+        shared_admin$death_delay <- death_delay
       },
       ignoreInit = TRUE
     )
+
+    observeEvent(input$admin_scenario, {
+      shiny::req(is_admin())
+      scenario_id <- input$admin_scenario
+      if (is.null(scenario_id) || scenario_id == "" || is.na(scenario_id)) {
+        scenario_id <- "custom"
+      }
+      if (identical(scenario_id, shiny::isolate(shared_admin$scenario_id))) {
+        return()
+      }
+      apply_scenario_defaults(scenario_id)
+    }, ignoreInit = TRUE)
 
     observeEvent(input$admin_reset_all, {
       shiny::req(is_admin())
@@ -248,44 +416,11 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
 
     observeEvent(input$admin_reset_defaults, {
       shiny::req(is_admin())
-
-      shared_admin$Rt <- admin_defaults$Rt
-      shared_admin$k <- admin_defaults$k
-      shared_admin$imports_prob <- admin_defaults$imports_prob
-      shared_admin$lambda_import <- admin_defaults$lambda_import
-      shared_admin$seed_borough <- admin_defaults$seed_borough
-      shared_admin$seed_cases <- admin_defaults$seed_cases
-
-      shiny::updateNumericInput(
-        session,
-        "admin_rt",
-        value = admin_defaults$Rt
-      )
-      shiny::updateNumericInput(
-        session,
-        "admin_k",
-        value = admin_defaults$k
-      )
-      shiny::updateNumericInput(
-        session,
-        "admin_imports_prob",
-        value = admin_defaults$imports_prob
-      )
-      shiny::updateNumericInput(
-        session,
-        "admin_lambda_import",
-        value = admin_defaults$lambda_import
-      )
-      shiny::updateSelectInput(
-        session,
-        "admin_seed_borough",
-        selected = "random"
-      )
-      shiny::updateNumericInput(
-        session,
-        "admin_seed_cases",
-        value = admin_defaults$seed_cases
-      )
+      scenario_id <- input$admin_scenario
+      if (is.null(scenario_id) || scenario_id == "" || is.na(scenario_id)) {
+        scenario_id <- "custom"
+      }
+      apply_scenario_defaults(scenario_id)
     })
 
     reseed <- shiny::eventReactive(input$reseed, {
@@ -298,6 +433,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
 
     list(
       epidemiology = params_epidemic,
+      mortality = params_mortality,
       testing = params_testing,
       budget = budget_info,
       starter_intel = starter_intel,

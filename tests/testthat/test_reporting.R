@@ -32,6 +32,7 @@ run_log <- tibble::tibble(
   cumulative_spend = c(0, 130, 210),
   observed_tests = c(0L, 10L, 8L),
   observed_positives = c(0L, 3L, 2L),
+  reported_deaths = c(0L, 1L, 0L),
   active_interventions = c("None", "Social distancing", "None"),
   notes = c("Starter intel: targeted alert", "", ""),
   queue_pending = c(0L, 0L, 2L)
@@ -44,6 +45,8 @@ truth_log <- tibble::tibble(
   borough_name = rep(pop_stub$borough_name, times = 3),
   incidence = c(5L, 0L, 0L, 6L, 1L, 0L, 4L, 2L, 0L),
   cumulative = c(5L, 0L, 0L, 11L, 1L, 0L, 15L, 3L, 0L),
+  deaths = c(0L, 0L, 0L, 1L, 0L, 0L, 0L, 1L, 0L),
+  cumulative_deaths = c(0L, 0L, 0L, 1L, 0L, 0L, 1L, 1L, 0L),
   imports = c(0L, 0L, 0L, 1L, 0L, 0L, 0L, 1L, 0L),
   Rt = rep(1.2, 9)
 )
@@ -59,10 +62,11 @@ report <- build_run_report(
 
 test_that("run report carries metrics and summaries", {
   expect_equal(report$metrics$total_spend, 210)
-  expect_equal(length(report$metrics), 13)
+  expect_equal(length(report$metrics), 14)
   expect_equal(nrow(report$turn_summary), length(truth_history))
   expect_equal(report$turn_summary$truth_total, c(5, 7, 6))
   expect_equal(report$turn_summary$imports_total, c(0, 1, 1))
+  expect_equal(report$turn_summary$deaths_total, c(0, 1, 1))
   expect_equal(report$turn_summary$observed_tests[report$turn_summary$turn == 2], 8)
   expect_equal(report$turn_summary$active_interventions[2], "Social distancing")
 })

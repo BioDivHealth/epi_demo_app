@@ -24,6 +24,8 @@ init_turn_logs <- function(pop_tbl) {
     borough_name = character(),
     incidence = integer(),
     cumulative = integer(),
+    deaths = integer(),
+    cumulative_deaths = integer(),
     imports = integer(),
     Rt = numeric()
   )
@@ -78,14 +80,17 @@ init_turn_logs <- function(pop_tbl) {
 #' @param pop_tbl Population table used to supply borough metadata.
 #' @return Updated truth log tibble.
 #' @export
-append_truth_log <- function(truth_log, turn, incidence, cumulative, imports, Rt, pop_tbl) {
+append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cumulative_deaths, imports, Rt, pop_tbl) {
   incidence <- as.integer(incidence)
   cumulative <- as.integer(cumulative)
+  deaths <- as.integer(deaths)
+  cumulative_deaths <- as.integer(cumulative_deaths)
   imports <- as.integer(imports)
 
   n <- length(incidence)
-  if (length(cumulative) != n || length(imports) != n) {
-    stop("incidence, cumulative, and imports must have the same length")
+  if (length(cumulative) != n || length(deaths) != n ||
+      length(cumulative_deaths) != n || length(imports) != n) {
+    stop("incidence, cumulative, deaths, cumulative_deaths, and imports must have the same length")
   }
 
   pop_tbl <- tibble::as_tibble(pop_tbl)
@@ -99,10 +104,23 @@ append_truth_log <- function(truth_log, turn, incidence, cumulative, imports, Rt
       turn = as.integer(turn),
       incidence = incidence,
       cumulative = cumulative,
+      deaths = deaths,
+      cumulative_deaths = cumulative_deaths,
       imports = imports,
       Rt = as.numeric(Rt)
     ) |>
-    dplyr::select(turn, borough_index, gss_code, borough_name, incidence, cumulative, imports, Rt)
+    dplyr::select(
+      turn,
+      borough_index,
+      gss_code,
+      borough_name,
+      incidence,
+      cumulative,
+      deaths,
+      cumulative_deaths,
+      imports,
+      Rt
+    )
 
   dplyr::bind_rows(truth_log, addition)
 }

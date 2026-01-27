@@ -6,6 +6,7 @@
 #' @return A named list with sf objects, adjacency structures, kernel, and population table.
 #' @export
 load_inputs <- function(data_dir = "data") {
+  kernel_measles_path <- file.path(data_dir, "kernel_K_measles.rds")
   files <- list(
     boros = file.path(data_dir, "boroughs.rds"),
     boros_planar = file.path(data_dir, "boroughs_planar.rds"),
@@ -58,6 +59,27 @@ load_inputs <- function(data_dir = "data") {
     stop("Spatial kernel rows must sum to 1 within tolerance")
   }
 
+  K_measles <- NULL
+  if (file.exists(kernel_measles_path)) {
+    K_measles <- readRDS(kernel_measles_path)
+    if (!is.matrix(K_measles)) {
+      stop("kernel_K_measles.rds must be a matrix")
+    }
+    if (nrow(K_measles) != ncol(K_measles)) {
+      stop("Measles kernel must be square")
+    }
+    if (nrow(K_measles) != nrow(K)) {
+      stop("Measles kernel dimension mismatch with default kernel")
+    }
+    row_sums_measles <- rowSums(K_measles)
+    if (any(!is.finite(row_sums_measles))) {
+      stop("Measles kernel rows must have finite sums")
+    }
+    if (any(abs(row_sums_measles - 1) > 1e-6)) {
+      stop("Measles kernel rows must sum to 1 within tolerance")
+    }
+  }
+
   pop_tbl <- inputs$pop_tbl
   if (!all(c("gss_code", "borough_name", "pop") %in% names(pop_tbl))) {
     stop("Population table must include gss_code, borough_name, pop")
@@ -77,6 +99,7 @@ load_inputs <- function(data_dir = "data") {
     nb = inputs$nb,
     A = inputs$A,
     K = K,
+    K_measles = K_measles,
     pop_tbl = pop_tbl
   )
 }

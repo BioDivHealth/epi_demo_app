@@ -16,4 +16,10 @@ test_that("adjacency kernels have expected dimensions", {
   expect_equal(dim(inputs$A), dim(inputs$K))
 
   expect_equal(unname(rowSums(inputs$K)), rep(1, 33), tolerance = 1e-6)
+
+  if (!is.null(inputs$K_measles)) {
+    expect_true(is.matrix(inputs$K_measles))
+    expect_equal(dim(inputs$K_measles), dim(inputs$K))
+    expect_equal(unname(rowSums(inputs$K_measles)), rep(1, 33), tolerance = 1e-6)
+  }
 })

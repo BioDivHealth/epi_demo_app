@@ -10,7 +10,7 @@ mod_dashboard_ui <- function(id) {
       shiny::div(
         class = "row g-2 mb-2",
         shiny::div(
-          class = "col-6",
+        class = "col-4",
           shiny::div(
             class = "p-2 bg-light rounded text-center",
             shiny::tags$small(class = "text-muted", "Total Positives"),
@@ -18,12 +18,20 @@ mod_dashboard_ui <- function(id) {
           )
         ),
         shiny::div(
-          class = "col-6",
+        class = "col-4",
           shiny::div(
             class = "p-2 bg-light rounded text-center",
             shiny::tags$small(class = "text-muted", "Pending Tests"),
             shiny::div(class = "fs-4 fw-bold text-primary", shiny::textOutput(ns("pending_count"), inline = TRUE))
           )
+      ),
+      shiny::div(
+        class = "col-4",
+        shiny::div(
+          class = "p-2 bg-light rounded text-center",
+          shiny::tags$small(class = "text-muted", "Reported Deaths"),
+          shiny::div(class = "fs-4 fw-bold text-dark", shiny::textOutput(ns("reported_deaths"), inline = TRUE))
+        )
         )
       ),
       shiny::div(
@@ -54,6 +62,7 @@ mod_dashboard_server <- function(
     queue_state,
     spend_info,
     available_now,
+    reported_deaths,
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
     ready <- shiny::reactive({
@@ -84,6 +93,13 @@ mod_dashboard_server <- function(
       queue <- queue_state()
       if (is.null(queue) || nrow(queue) == 0) return("0")
       sum(queue$n)
+    })
+
+    output$reported_deaths <- shiny::renderText({
+      req(ready())
+      deaths <- reported_deaths()
+      if (is.null(deaths) || is.na(deaths)) return("0")
+      round(deaths)
     })
 
     output$incidence_plot <- shiny::renderPlot({

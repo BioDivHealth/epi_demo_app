@@ -31,11 +31,17 @@ init_truth <- function(n_boroughs, seed_boroughs = 1L, seed_cases = 10L) {
     incidence[idx] <- incidence[idx] + as.integer(seed_cases)
   }
 
+  deaths <- integer(n_boroughs)
+
   list(
     turn = 0L,
     incidence = incidence,
     cumulative = incidence,
-    history = list(incidence)
+    history = list(incidence),
+    deaths = deaths,
+    cumulative_deaths = deaths,
+    death_history = list(deaths),
+    death_queue = list()
   )
 }
 
@@ -56,7 +62,9 @@ step_truth <- function(
     k_overdisp,
     imports_prob,
     lambda_import,
-    pop = NULL) {
+    pop = NULL,
+    death_ifr = 0,
+    death_delay = 0) {
   if (is.null(state) || !is.list(state)) {
     stop("state must be a list created by init_truth()")
   }
@@ -92,6 +100,19 @@ step_truth <- function(
     stop("lambda_import must be non-negative")
   }
 
+  if (!is.numeric(death_ifr) || length(death_ifr) != 1L || is.na(death_ifr) ||
+      death_ifr < 0 || death_ifr > 1) {
+    stop("death_ifr must be within [0, 1]")
+  }
+
+  if (!is.numeric(death_delay) || length(death_delay) != 1L || is.na(death_delay)) {
+    stop("death_delay must be a single numeric value")
+  }
+  death_delay <- as.integer(round(death_delay))
+  if (death_delay < 0L) {
+    stop("death_delay must be non-negative")
+  }
+
   mu <- as.numeric(K %*% I_t) * Rt_global
   mu[mu < 0] <- 0
 
@@ -119,8 +140,39 @@ step_truth <- function(
   I_next <- as.integer(offspring + imports)
   I_next[I_next < 0] <- 0L
 
+  deaths_next <- integer(length(I_next))
+  death_queue <- state$death_queue
+  if (is.null(death_queue) || !is.list(death_queue)) {
+    death_queue <- list()
+  }
+
+  if (death_delay <= 0L) {
+    if (death_ifr > 0) {
+      deaths_next <- stats::rbinom(length(I_next), size = I_next, prob = death_ifr)
+    }
+  } else {
+    death_queue <- c(death_queue, list(I_next))
+    if (length(death_queue) > death_delay) {
+      exposed <- death_queue[[1]]
+      death_queue <- death_queue[-1]
+      if (length(exposed) == length(I_next) && death_ifr > 0) {
+        deaths_next <- stats::rbinom(length(exposed), size = as.integer(exposed), prob = death_ifr)
+      }
+    }
+  }
+
   cumulative <- state$cumulative + I_next
   history <- c(state$history, list(I_next))
+  cumulative_deaths <- state$cumulative_deaths
+  if (is.null(cumulative_deaths) || length(cumulative_deaths) != length(I_next)) {
+    cumulative_deaths <- integer(length(I_next))
+  }
+  cumulative_deaths <- cumulative_deaths + as.integer(deaths_next)
+  death_history <- state$death_history
+  if (is.null(death_history) || !is.list(death_history)) {
+    death_history <- list()
+  }
+  death_history <- c(death_history, list(as.integer(deaths_next)))
 
   list(
     turn = state$turn + 1L,
@@ -128,6 +180,10 @@ step_truth <- function(
     cumulative = cumulative,
     history = history,
     last_mu = mu,
-    last_imports = imports
+    last_imports = imports,
+    deaths = as.integer(deaths_next),
+    cumulative_deaths = cumulative_deaths,
+    death_history = death_history,
+    death_queue = death_queue
   )
 }

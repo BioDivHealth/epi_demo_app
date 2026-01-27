@@ -163,6 +163,17 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     }
   }
 
+  if (!is.null(truth_log) && nrow(truth_log) > 0 && "cumulative_deaths" %in% names(truth_log)) {
+    final_turn <- max(truth_log$turn, na.rm = TRUE)
+    final_deaths <- truth_log |>
+      dplyr::filter(turn == final_turn) |>
+      dplyr::summarise(total_deaths = sum(cumulative_deaths, na.rm = TRUE), .groups = "drop") |>
+      dplyr::pull(total_deaths)
+    if (is.finite(final_deaths)) {
+      metrics$total_deaths <- final_deaths
+    }
+  }
+
   truth_totals <- vapply(truth_history, sum, numeric(1))
   true_hotspots <- vapply(truth_history, function(x) sum(x > 0), integer(1))
   turns <- seq_along(truth_totals) - 1L
@@ -190,6 +201,14 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     tibble::tibble(turn = integer(), imports_total = integer())
   }
 
+  deaths_df <- if (!is.null(truth_log) && nrow(truth_log) > 0 && "deaths" %in% names(truth_log)) {
+    truth_log |>
+      dplyr::group_by(turn) |>
+      dplyr::summarise(deaths_total = sum(deaths), .groups = "drop")
+  } else {
+    tibble::tibble(turn = integer(), deaths_total = integer())
+  }
+
   log_clean <- run_log
   if (nrow(log_clean) == 0) {
     log_clean <- tibble::tibble(turn = integer())
@@ -201,6 +220,7 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
   turn_summary <- truth_df |>
     dplyr::left_join(observed_df, by = "turn") |>
     dplyr::left_join(imports_df, by = "turn") |>
+    dplyr::left_join(deaths_df, by = "turn") |>
     dplyr::left_join(log_clean, by = "turn") |>
     dplyr::arrange(turn)
 
@@ -208,6 +228,7 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     observed_tests = 0,
     observed_positives = 0,
     imports_total = 0,
+    deaths_total = 0,
     tests_ag = 0,
     tests_pcr = 0,
     allocation_spend = 0,

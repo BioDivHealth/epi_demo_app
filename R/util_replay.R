@@ -272,6 +272,7 @@ replay_build_truth_layers <- function(
     truth_metric) {
   n_boros <- length(borough_names)
   truth_new_vals <- rep(NA_real_, n_boros)
+  truth_death_vals <- rep(NA_real_, n_boros)
   truth_imports <- rep(0L, n_boros)
   if (!is.null(truth_df) && nrow(truth_df) > 0) {
     idx_truth <- match(truth_df$borough_name, borough_names)
@@ -279,6 +280,7 @@ replay_build_truth_layers <- function(
     if (length(valid_truth) > 0) {
       pos <- idx_truth[valid_truth]
       truth_new_vals[pos] <- truth_df$incidence[valid_truth]
+      truth_death_vals[pos] <- truth_df$deaths[valid_truth]
       truth_imports[pos] <- truth_df$imports[valid_truth]
     }
   }
@@ -296,10 +298,16 @@ replay_build_truth_layers <- function(
     }
   }
 
-  if (is.null(truth_metric) || !truth_metric %in% c("active", "new")) {
+  if (is.null(truth_metric) || !truth_metric %in% c("active", "new", "deaths")) {
     truth_metric <- "active"
   }
-  truth_display_vals <- if (truth_metric == "active") truth_active_vals else truth_new_vals
+  truth_display_vals <- if (truth_metric == "active") {
+    truth_active_vals
+  } else if (truth_metric == "deaths") {
+    truth_death_vals
+  } else {
+    truth_new_vals
+  }
 
   max_truth <- suppressWarnings(max(truth_display_vals, na.rm = TRUE))
   if (!is.finite(max_truth) || max_truth <= 0) {
@@ -321,6 +329,7 @@ replay_build_truth_layers <- function(
     seq_len(n_boros),
     function(i) {
       new_val <- truth_new_vals[i]
+      death_val <- truth_death_vals[i]
       active_val <- truth_active_vals[i]
       imports_val <- truth_imports[i]
       lines <- c(
@@ -332,6 +341,7 @@ replay_build_truth_layers <- function(
         lines <- c(
           lines,
           sprintf("New infections this turn: %s", fmt_count(new_val)),
+          sprintf("Deaths this turn: %s", fmt_count(death_val)),
           sprintf("Active infections (%s-turn window): %s", window, fmt_count(active_val)),
           sprintf("Imports this turn: %s", fmt_count(imports_val))
         )

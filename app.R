@@ -108,7 +108,12 @@ shared_admin <- reactiveValues(
   imports_prob = 0.01,
   lambda_import = 0.5,
   seed_borough = NA_integer_,
-  seed_cases = 100L
+  seed_cases = 100L,
+  kernel_key = "default",
+  susceptible_frac = 1,
+  scenario_id = "custom",
+  death_ifr = 0.002,
+  death_delay = 6L
 )
 
 shared_reset_signal <- reactiveVal(0L)
@@ -140,6 +145,7 @@ app_ui <- page_fluid(
       .main-header { margin-bottom: 1rem; }
       .main-header h3 { margin: 0; color: #5a5a5a; }
       .turn-badge { font-size: 1.1rem; font-weight: 600; }
+      .scenario-label { font-size: 0.85rem; color: #6c757d; }
       #controls-rng_seed { width: 100%; min-width: 75px; font-size: 11px; }
       .controls-seed-block {
         margin-bottom: 12px;
@@ -166,17 +172,16 @@ app_ui <- page_fluid(
   ),
   div(
     class = "main-header d-flex justify-content-between align-items-center",
-    h3("Outbreak London"),
+    div(
+      h3("Outbreak London"),
+      div(class = "scenario-label", textOutput("scenario_display"))
+    ),
     div(
       class = "turn-badge badge bg-secondary",
       textOutput("turn_display", inline = TRUE)
     )
   ),
-  fluidRow(
-    column(2, mod_controls_ui("controls")),
-    column(6, mod_map_ui("map", intervention_defs = intervention_defs)),
-    column(4, mod_dashboard_ui("dashboard"))
-  ),
+  uiOutput("main_layout"),
   div(
     class = "text-muted small mt-2",
     "Data: GLA/ONS borough boundaries. Click boroughs to allocate tests, then advance turns."
@@ -202,13 +207,82 @@ server <- function(input, output, session) {
     })
   }
 
+  output$main_layout <- renderUI({
+    if (is_admin()) {
+      bslib::layout_sidebar(
+        bslib::layout_columns(
+          col_widths = c(8, 4),
+          fill = FALSE,
+          mod_map_ui("map", intervention_defs = intervention_defs),
+          mod_dashboard_ui("dashboard")
+        ),
+        sidebar = bslib::sidebar(
+          mod_controls_ui("controls"),
+          width = "320px",
+          open = "desktop"
+        ),
+        fill = FALSE
+      )
+    } else {
+      bslib::layout_sidebar(
+        bslib::layout_columns(
+          col_widths = c(7, 5),
+          fill = FALSE,
+          mod_map_ui("map", intervention_defs = intervention_defs),
+          mod_dashboard_ui("dashboard")
+        ),
+        sidebar = bslib::sidebar(
+          mod_controls_ui("controls"),
+          width = "280px",
+          open = "desktop"
+        ),
+        fill = FALSE
+      )
+    }
+  })
+
   turn <- reactiveVal(0L)
   total_spend <- reactiveVal(0)
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
   app_ready <- reactiveVal(FALSE)
 
+  active_kernel <- reactive({
+    key <- shared_admin$kernel_key
+    if (is.null(key) || key == "" || identical(key, "default")) {
+      return(inputs$K)
+    }
+    if (identical(key, "measles") && !is.null(inputs$K_measles)) {
+      return(inputs$K_measles)
+    }
+    inputs$K
+  })
+
+  effective_pop_tbl <- reactive({
+    frac <- shared_admin$susceptible_frac
+    if (is.null(frac) || !is.finite(frac)) {
+      frac <- 1
+    }
+    frac <- max(0, frac)
+    pop_tbl <- inputs$pop_tbl
+    pop_tbl$pop <- pmax(pop_tbl$pop * frac, 1)
+    pop_tbl
+  })
+
   output$turn_display <- renderText({
     paste("Turn", turn())
+  })
+
+  output$scenario_display <- renderText({
+    scenario_id <- shared_admin$scenario_id
+    if (is.null(scenario_id) || is.na(scenario_id) || scenario_id == "custom") {
+      return("")
+    }
+    scenario <- scenario_lookup(scenario_id)
+    label <- scenario$label[[1]]
+    if (is.null(label) || identical(label, "")) {
+      return("")
+    }
+    paste("Scenario:", label)
   })
 
   run_log <- reactiveVal(tibble())
@@ -260,6 +334,19 @@ server <- function(input, output, session) {
     queue_state = reactive(observation_state()$queue),
     spend_info = spend_current,
     available_now = reactive(available_now()),
+    reported_deaths = reactive({
+      rl <- run_log()
+      if (is.null(rl) || nrow(rl) == 0 || !"reported_deaths" %in% names(rl)) {
+        return(0)
+      }
+      latest_turn <- max(rl$turn, na.rm = TRUE)
+      vals <- rl$reported_deaths[rl$turn == latest_turn]
+      if (length(vals) == 0 || all(is.na(vals))) {
+        0
+      } else {
+        vals[[1]]
+      }
+    }),
     app_ready = app_ready
   )
 
@@ -328,9 +415,9 @@ server <- function(input, output, session) {
         turn = 0,
         allocations = starter_alloc,
         truth_incidence = init$incidence,
-        pop_tbl = inputs$pop_tbl,
-      params = testing_params
-    )
+        pop_tbl = effective_pop_tbl(),
+        params = testing_params
+      )
       base_observation <- list(queue = starter_obs$queue, history = starter_obs$history)
       current_available <- starter_obs$available
     } else {
@@ -342,6 +429,8 @@ server <- function(input, output, session) {
       turn = init$turn,
       incidence = init$incidence,
       cumulative = init$cumulative,
+      deaths = init$deaths,
+      cumulative_deaths = init$cumulative_deaths,
       imports = integer(length(init$incidence)),
       Rt = params_epi$Rt,
       pop_tbl = inputs$pop_tbl
@@ -398,6 +487,7 @@ server <- function(input, output, session) {
       cumulative_spend = 0,
       observed_tests = sum(current_available$n),
       observed_positives = sum(current_available$positives),
+      reported_deaths = sum(init$deaths),
       active_interventions = "None",
       notes = starter_note,
       queue_pending = starter_queue
@@ -449,6 +539,7 @@ server <- function(input, output, session) {
     allocs <- allocations_module$allocations()
     budget <- controls$budget()
     params_epi <- controls$epidemiology()
+    params_mort <- controls$mortality()
     testing_params <- controls$testing()
     active_ids <- allocations_module$interventions()
     effects <- compute_intervention_effects(active_ids, intervention_defs)
@@ -501,12 +592,17 @@ server <- function(input, output, session) {
       turn = turn(),
       allocations = allocs,
       truth_incidence = truth_state()$incidence,
-      pop_tbl = inputs$pop_tbl,
+      pop_tbl = effective_pop_tbl(),
       params = testing_params
     )
 
     observation_state(list(queue = obs$queue, history = obs$history))
     available_now(obs$available)
+
+    current_deaths <- 0
+    if (!is.null(truth_state()$deaths)) {
+      current_deaths <- sum(truth_state()$deaths)
+    }
 
     turn_logs$observations <- append_observation_log(
       observation_log = turn_logs$observations,
@@ -517,12 +613,14 @@ server <- function(input, output, session) {
 
     next_truth <- step_truth(
       state = truth_state(),
-      K = inputs$K,
+      K = active_kernel(),
       Rt_global = params_epi$Rt,
       k_overdisp = params_epi$k,
       imports_prob = params_epi$imports_prob,
       lambda_import = params_epi$lambda_import,
-      pop = inputs$pop_tbl$pop
+      pop = effective_pop_tbl()$pop,
+      death_ifr = params_mort$death_ifr,
+      death_delay = params_mort$death_delay
     )
 
     truth_state(next_truth)
@@ -533,6 +631,8 @@ server <- function(input, output, session) {
       turn = next_truth$turn,
       incidence = next_truth$incidence,
       cumulative = next_truth$cumulative,
+      deaths = next_truth$deaths,
+      cumulative_deaths = next_truth$cumulative_deaths,
       imports = next_truth$last_imports,
       Rt = params_epi$Rt,
       pop_tbl = inputs$pop_tbl
@@ -548,6 +648,7 @@ server <- function(input, output, session) {
       cumulative_spend = new_total_spend,
       observed_tests = sum(obs$available$n),
       observed_positives = sum(obs$available$positives),
+      reported_deaths = current_deaths,
       active_interventions = intervention_label,
       notes = "",
       queue_pending = sum(obs$queue$n)
@@ -594,7 +695,7 @@ server <- function(input, output, session) {
     report <- build_run_report(
       truth_history = truth_history(),
       observed_history = observation_state()$history,
-      pop_tbl = inputs$pop_tbl,
+      pop_tbl = effective_pop_tbl(),
       total_spend = total_spend(),
       run_log = run_log(),
       truth_log = turn_logs$truth
