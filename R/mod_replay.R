@@ -139,7 +139,14 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
           "End the simulation to unlock the replay viewer."
         )
       } else {
-        shiny::span(class = "text-muted", "Use the slider to scrub through turns or press Play for an animated replay.")
+        turns <- available_turns()
+        if (length(turns) == 0) {
+          shiny::span(class = "text-muted", "No turn data available for replay yet.")
+        } else if (length(turns) == 1) {
+          shiny::span(class = "text-muted", "Only one turn recorded. Advance a few turns before ending to see the replay.")
+        } else {
+          shiny::span(class = "text-muted", "Use the slider to scrub through turns or press Play for an animated replay.")
+        }
       }
     })
 
@@ -206,7 +213,9 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     })
 
     available_turns <- shiny::reactive({
-      replay_resolve_truth_turns(log_data())
+      turns <- replay_resolve_truth_turns(log_data())
+      turns <- turns[is.finite(turns)]
+      as.integer(turns)
     })
 
     log_signature <- shiny::reactive({
@@ -231,43 +240,52 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
 
     }, ignoreInit = TRUE)
 
-    # Observe both available turns and when slider input becomes available
-    shiny::observe({
-      turns <- available_turns()
-      ended <- has_ended()
-      slider_val <- input$turn_slider
-      
-      # Only proceed if we have ended and have turn data
-      if (!ended) {
+    apply_turns_to_slider <- function(turns, value_override = NULL) {
+      if (length(turns) == 0) {
         return()
       }
-      
+      turns <- sort(unique(as.integer(turns)))
+      turns <- turns[is.finite(turns)]
       if (length(turns) == 0) {
         return()
       }
 
+      update_fn <- function() {
+        current <- shiny::isolate(input$turn_slider)
+        if (!is.null(value_override) && value_override %in% turns) {
+          target_value <- value_override
+        } else if (!is.null(current) && current %in% turns) {
+          target_value <- current
+        } else {
+          target_value <- max(turns)
+        }
+        shiny::updateSliderInput(
+          session,
+          "turn_slider",
+          min = min(turns),
+          max = max(turns),
+          value = target_value,
+          step = 1
+        )
+      }
+
       if (is.null(input$turn_slider)) {
-        shiny::invalidateLater(100, session)
+        session$onFlushed(update_fn, once = TRUE)
+      } else {
+        update_fn()
+      }
+    }
+
+    shiny::observeEvent(open_signal(), {
+      if (!has_ended()) {
         return()
       }
-
-      # Determine value to set
-      if (is.null(slider_val) || !(slider_val %in% turns)) {
-        target_value <- max(turns)
-      } else {
-        target_value <- slider_val
+      turns <- available_turns()
+      if (length(turns) == 0) {
+        return()
       }
-
-      # Update the slider - this will work once the UI is rendered
-      shiny::updateSliderInput(
-        session,
-        "turn_slider",
-        min = min(turns),
-        max = max(turns),
-        value = target_value,
-        step = 1
-      )
-    })
+      apply_turns_to_slider(turns, value_override = max(turns))
+    }, ignoreInit = TRUE)
 
     shiny::observeEvent(input$play_toggle, {
       if (!has_ended()) {
@@ -293,7 +311,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       next_state <- !play_state()
       play_state(next_state)
       shiny::updateActionButton(session, "play_toggle", label = if (next_state) "Pause" else "Play")
-    })
+    }, ignoreInit = TRUE)
 
     # Track current animation turn (separate from slider to avoid race conditions)
     animation_turn <- shiny::reactiveVal(NULL)
@@ -307,10 +325,10 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
         return()
       }
       turns <- available_turns()
-      if (length(turns) == 0 || is.null(input$turn_slider)) {
+      if (length(turns) == 0) {
         return()
       }
-      shiny::updateSliderInput(session, "turn_slider", value = max(turns))
+      apply_turns_to_slider(turns, value_override = max(turns))
     }, ignoreInit = TRUE)
 
     shiny::observe({

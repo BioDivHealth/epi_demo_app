@@ -66,7 +66,6 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
   peak_true <- max(total_incidence)
 
   final_truth <- truth_mat[nrow(truth_mat), ]
-  true_prev <- final_truth / pop_tbl$pop
   true_prev_rate <- sum(final_truth) / sum(pop_tbl$pop)
 
   detection_turns <- observed_history |>
@@ -90,8 +89,17 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
   total_pos <- sum(observed_history$positives)
   pct_positive <- if (total_tests == 0) NA_real_ else 100 * total_pos / total_tests
 
-  inferred_prev <- observed_history |>
-    dplyr::group_by(borough_index) |>
+  n_turns <- nrow(truth_mat)
+  n_boros <- ncol(truth_mat)
+
+  truth_df <- tibble::tibble(
+    turn = rep(seq_len(n_turns) - 1L, each = n_boros),
+    borough_index = rep(seq_len(n_boros), times = n_turns),
+    true_prev = as.numeric(t(truth_mat)) / rep(pop_tbl$pop, times = n_turns)
+  )
+
+  inferred_df <- observed_history |>
+    dplyr::group_by(turn_sampled, borough_index) |>
     dplyr::summarise(
       tests = sum(n),
       positives = sum(positives),
@@ -99,14 +107,30 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
     ) |>
     dplyr::mutate(
       inferred = ifelse(tests == 0, 0, (positives + 1) / (tests + 2))
+    ) |>
+    dplyr::rename(turn = turn_sampled)
+
+  calib_df <- truth_df |>
+    dplyr::left_join(inferred_df, by = c("turn", "borough_index"))
+
+  calib_df$inferred[is.na(calib_df$inferred)] <- 0
+  calib_df$tests[is.na(calib_df$tests)] <- 0
+
+  turn_metrics <- calib_df |>
+    dplyr::group_by(turn) |>
+    dplyr::summarise(
+      rmse = sqrt(mean((true_prev - inferred)^2)),
+      tests = sum(tests, na.rm = TRUE),
+      .groups = "drop"
     )
 
-  inferred_prev <- inferred_prev$inferred
-  if (length(inferred_prev) < length(true_prev)) {
-    inferred_prev <- c(inferred_prev, rep(0, length(true_prev) - length(inferred_prev)))
+  if (nrow(turn_metrics) == 0) {
+    calibration_gap <- NA_real_
+  } else if (sum(turn_metrics$tests, na.rm = TRUE) > 0) {
+    calibration_gap <- stats::weighted.mean(turn_metrics$rmse, w = turn_metrics$tests, na.rm = TRUE)
+  } else {
+    calibration_gap <- mean(turn_metrics$rmse, na.rm = TRUE)
   }
-
-  calibration_gap <- sqrt(mean((true_prev - inferred_prev)^2))
 
   observed_series <- observed_history |>
     dplyr::group_by(turn_available) |>

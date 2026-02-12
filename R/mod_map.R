@@ -50,7 +50,7 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
       ),
       shiny::tags$span(class = "ms-auto small text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
     ),
-    leaflet::leafletOutput(ns("map"), height = 380),
+    leaflet::leafletOutput(ns("map"), height = "400px"),
     shiny::hr(class = "my-2"),
     shiny::fluidRow(
       shiny::column(
@@ -262,6 +262,26 @@ mod_map_server <- function(
       total_spend <- spend_stats$spend + intervention_cost
       remaining <- budget$budget - total_spend
       paste0("£", round(remaining, 0), " left")
+    })
+
+    observe({
+      req(ready())
+      budget <- budget_info()
+      cost_ag <- budget$costs[["ag"]]
+      cost_pcr <- budget$costs[["pcr"]]
+      if (is.null(cost_ag)) cost_ag <- 0
+      if (is.null(cost_pcr)) cost_pcr <- 0
+      shiny::updateRadioButtons(
+        session,
+        "test_type",
+        choices = stats::setNames(
+          c("ag", "pcr"),
+          c(
+            sprintf("Antigen (fast) £%s", cost_ag),
+            sprintf("PCR (accurate) £%s", cost_pcr)
+          )
+        )
+      )
     })
 
     output$allocation_summary <- shiny::renderText({

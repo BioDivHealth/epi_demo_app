@@ -6,6 +6,8 @@ library(tibble)
 library(EpiEstim)
 library(shinymanager)
 
+options(shiny.usews = TRUE)
+
 quiet_load_support <- function(app_dir = ".") {
   previous <- getOption("shiny.autoload.r")
   on.exit(options(shiny.autoload.r = previous), add = TRUE)
@@ -139,13 +141,28 @@ intervention_defs <- intervention_catalog()
 
 app_ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
-  title = "Outbreak London",
+  title = "Outbreaks in London: simulation",
   tags$head(
     tags$style(HTML("
       .main-header { margin-bottom: 1rem; }
       .main-header h3 { margin: 0; color: #5a5a5a; }
+      .header-actions { display: flex; align-items: center; gap: 0.5rem; }
+      .help-button { white-space: nowrap; }
       .turn-badge { font-size: 1.1rem; font-weight: 600; }
       .scenario-label { font-size: 0.85rem; color: #6c757d; }
+      #map-map {
+        height: 55vh !important;
+        min-height: 320px;
+      }
+      .bslib-sidebar-toggle,
+      .bslib-sidebar-toggle-btn,
+      .bslib-sidebar-trigger {
+        display: none !important;
+      }
+      .mfb-component--br,
+      .mfb-component--br * {
+        display: none !important;
+      }
       #controls-rng_seed { width: 100%; min-width: 75px; font-size: 11px; }
       .controls-seed-block {
         margin-bottom: 12px;
@@ -169,18 +186,71 @@ app_ui <- page_fluid(
         color: rgba(62, 63, 58, 1);
       }
     "))
+    ,
+    tags$script(HTML("(
+      function() {
+        var key = 'epilondon_help_seen';
+        function navType() {
+          var entries = performance.getEntriesByType && performance.getEntriesByType('navigation');
+          if (entries && entries.length && entries[0].type) {
+            return entries[0].type;
+          }
+          if (performance.navigation && typeof performance.navigation.type !== 'undefined') {
+            return performance.navigation.type === 1 ? 'reload' : 'navigate';
+          }
+          return 'navigate';
+        }
+        var type = navType();
+        var seen = false;
+        try { seen = localStorage.getItem(key) === '1'; } catch (e) { seen = false; }
+        var shouldShow = (!seen) || type === 'reload';
+        if (shouldShow) {
+          try { localStorage.setItem(key, '1'); } catch (e) {}
+        }
+        var send = function() {
+          if (!shouldShow) {
+            return false;
+          }
+          if (window.Shiny && Shiny.setInputValue) {
+            Shiny.setInputValue('help_auto', Date.now(), {priority: 'event'});
+            return true;
+          }
+          return false;
+        };
+        var tries = 0;
+        var retry = function() {
+          tries += 1;
+          if (send()) {
+            return;
+          }
+          if (tries < 40) {
+            setTimeout(retry, 250);
+          }
+        };
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', retry);
+        } else {
+          retry();
+        }
+        document.addEventListener('shiny:connected', retry);
+      }
+    )();"))
   ),
-  div(
-    class = "main-header d-flex justify-content-between align-items-center",
     div(
-      h3("Outbreak London"),
-      div(class = "scenario-label", textOutput("scenario_display"))
+      class = "main-header d-flex justify-content-between align-items-center",
+      div(
+        h3("Outbreaks in London: simulation"),
+        div(class = "scenario-label", textOutput("scenario_display"))
+      ),
+      div(
+        class = "header-actions",
+        actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button"),
+        div(
+          class = "turn-badge badge bg-secondary",
+          textOutput("turn_display", inline = TRUE)
+        )
+      )
     ),
-    div(
-      class = "turn-badge badge bg-secondary",
-      textOutput("turn_display", inline = TRUE)
-    )
-  ),
   uiOutput("main_layout"),
   div(
     class = "text-muted small mt-2",
@@ -191,6 +261,7 @@ app_ui <- page_fluid(
 ui <- if (auth_disabled) app_ui else secure_app(app_ui, enable_admin = FALSE)
 
 server <- function(input, output, session) {
+  auth <- NULL
   if (auth_disabled) {
     is_admin <- reactive(FALSE)
   } else {
@@ -206,6 +277,71 @@ server <- function(input, output, session) {
       user %in% admin_users
     })
   }
+
+  help_shown <- reactiveVal(FALSE)
+  help_pending <- reactiveVal(FALSE)
+
+  get_auth_user <- function(auth) {
+    if (is.null(auth)) {
+      return(NULL)
+    }
+    user <- auth$user
+    if (is.function(user)) {
+      user <- user()
+    }
+    user
+  }
+
+  auth_ready <- reactive({
+    if (auth_disabled) {
+      return(TRUE)
+    }
+    user <- get_auth_user(auth)
+    !(is.null(user) || is.na(user) || identical(user, ""))
+  })
+
+  show_help_modal <- function() {
+    scenario_id <- isolate(shared_admin$scenario_id)
+    showModal(modalDialog(
+      title = "Welcome and guidance",
+      help_modal_body(scenario_id = scenario_id),
+      footer = modalButton("Close"),
+      size = "l",
+      easyClose = TRUE
+    ))
+  }
+
+  show_help_once <- function() {
+    if (isTRUE(help_shown())) {
+      return()
+    }
+    show_help_modal()
+    help_shown(TRUE)
+    help_pending(FALSE)
+  }
+
+  observeEvent(list(input$help_auto, auth_ready()), {
+    if (is.null(input$help_auto)) {
+      return()
+    }
+    if (isTRUE(auth_ready())) {
+      show_help_once()
+    } else {
+      help_pending(TRUE)
+    }
+  }, ignoreInit = FALSE)
+
+  observeEvent(auth_ready(), {
+    if (isTRUE(auth_ready()) && isTRUE(help_pending())) {
+      show_help_once()
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$help, {
+    show_help_modal()
+    help_shown(TRUE)
+    help_pending(FALSE)
+  })
 
   output$main_layout <- renderUI({
     if (is_admin()) {
@@ -487,7 +623,7 @@ server <- function(input, output, session) {
       cumulative_spend = 0,
       observed_tests = sum(current_available$n),
       observed_positives = sum(current_available$positives),
-      reported_deaths = sum(init$deaths),
+      reported_deaths = sum(init$cumulative_deaths),
       active_interventions = "None",
       notes = starter_note,
       queue_pending = starter_queue
@@ -600,8 +736,8 @@ server <- function(input, output, session) {
     available_now(obs$available)
 
     current_deaths <- 0
-    if (!is.null(truth_state()$deaths)) {
-      current_deaths <- sum(truth_state()$deaths)
+    if (!is.null(truth_state()$cumulative_deaths)) {
+      current_deaths <- sum(truth_state()$cumulative_deaths)
     }
 
     turn_logs$observations <- append_observation_log(
@@ -740,13 +876,13 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = tags$span(
         tags$i(class = "fa fa-eye me-2"),
-        "The Truth Revealed"
+        "True Data Revealed"
       ),
       fluidRow(
         column(6,
           tags$div(
             class = "card bg-light mb-3",
-            tags$div(class = "card-header", tags$strong("Your Performance")),
+            tags$div(class = "card-header", tags$strong("Your Results")),
             tags$div(
               class = "card-body",
               tags$p(
@@ -775,7 +911,7 @@ server <- function(input, output, session) {
         column(6,
           tags$div(
             class = "card bg-warning-subtle mb-3",
-            tags$div(class = "card-header", tags$strong("Hidden Truth")),
+            tags$div(class = "card-header", tags$strong("True Data")),
             tags$div(
               class = "card-body",
               tags$p(
@@ -822,6 +958,7 @@ server <- function(input, output, session) {
   # Handle replay button
   observeEvent(input$show_replay, {
     removeModal()
+    replay_snapshot(logs_snapshot())
     showModal(modalDialog(
       title = "Turn-by-Turn Replay",
       mod_replay_ui("replay"),

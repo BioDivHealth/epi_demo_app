@@ -27,11 +27,11 @@ mod_dashboard_ui <- function(id) {
       ),
       shiny::div(
         class = "col-4",
-        shiny::div(
-          class = "p-2 bg-light rounded text-center",
-          shiny::tags$small(class = "text-muted", "Reported Deaths"),
-          shiny::div(class = "fs-4 fw-bold text-dark", shiny::textOutput(ns("reported_deaths"), inline = TRUE))
-        )
+          shiny::div(
+            class = "p-2 bg-light rounded text-center",
+            shiny::tags$small(class = "text-muted", "Cumulative Deaths"),
+            shiny::div(class = "fs-4 fw-bold text-dark", shiny::textOutput(ns("reported_deaths"), inline = TRUE))
+          )
         )
       ),
       shiny::div(
