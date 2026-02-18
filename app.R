@@ -678,151 +678,57 @@ server <- function(input, output, session) {
     params_mort <- controls$mortality()
     testing_params <- controls$testing()
     active_ids <- allocations_module$interventions()
-    effects <- compute_intervention_effects(active_ids, intervention_defs)
-    intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
+    request <- list(
+      current_turn = current_turn,
+      allocs = allocs,
+      budget = budget,
+      params_epi = params_epi,
+      params_mort = params_mort,
+      testing_params = testing_params,
+      active_ids = active_ids,
+      intervention_defs = intervention_defs,
+      total_spend = total_spend(),
+      truth_state = truth_state(),
+      observation_state = observation_state(),
+      active_kernel = active_kernel(),
+      effective_pop_tbl = effective_pop_tbl(),
+      pop_tbl = inputs$pop_tbl,
+      run_log = run_log(),
+      turn_logs = list(
+        truth = turn_logs$truth,
+        observations = turn_logs$observations,
+        actions = turn_logs$actions
+      )
+    )
 
-    params_epi$Rt <- params_epi$Rt * effects$Rt_multiplier
-    params_epi$imports_prob <- min(1, max(0, params_epi$imports_prob * effects$imports_multiplier))
+    result <- run_single_turn(request)
 
-    testing_params$delays$ag <- max(0, testing_params$delays$ag + effects$delay_adjust$ag)
-    testing_params$delays$pcr <- max(0, testing_params$delays$pcr + effects$delay_adjust$pcr)
-
-    spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-    intervention_cost <- effects$cost
-    turn_spend <- spend_stats$spend + intervention_cost
-    remaining_budget <- budget$budget - turn_spend
-
-    if (remaining_budget < -1e-6) {
-      showNotification("Adjust allocations/interventions to meet budget", type = "error")
+    if (result$status == "budget_exceeded") {
+      showNotification(result$error_message, type = "error")
       return()
     }
 
-    new_total_spend <- total_spend() + turn_spend
-    total_spend(new_total_spend)
-    spend_current(list(
-      total = new_total_spend,
-      last_turn = turn_spend,
-      remaining = remaining_budget,
-      within_budget = remaining_budget >= -1e-6,
-      interventions = intervention_label
-    ))
+    total_spend(result$total_spend)
+    spend_current(result$spend_current)
 
-    turn_logs$actions <- append_action_log(
-      action_log = turn_logs$actions,
-      turn = current_turn,
-      allocations = allocs,
-      pop_tbl = inputs$pop_tbl,
-      costs = budget$costs,
-      meta = list(
-        allocation_spend = spend_stats$spend,
-        intervention_cost = intervention_cost,
-        total_turn_spend = turn_spend,
-        cumulative_spend = new_total_spend,
-        budget_remaining = remaining_budget,
-        interventions_active = intervention_label
-      )
-    )
+    observation_state(result$observation_state)
+    available_now(result$available_now)
 
-    obs <- observe_tests(
-      state = observation_state(),
-      turn = turn(),
-      allocations = allocs,
-      truth_incidence = truth_state()$incidence,
-      pop_tbl = effective_pop_tbl(),
-      params = testing_params
-    )
+    truth_state(result$truth_state)
+    truth_history(result$truth_history)
 
-    observation_state(list(queue = obs$queue, history = obs$history))
-    available_now(obs$available)
+    turn_logs$actions <- result$turn_logs$actions
+    turn_logs$observations <- result$turn_logs$observations
+    turn_logs$truth <- result$turn_logs$truth
 
-    current_deaths <- 0
-    if (!is.null(truth_state()$cumulative_deaths)) {
-      current_deaths <- sum(truth_state()$cumulative_deaths)
-    }
-
-    turn_logs$observations <- append_observation_log(
-      observation_log = turn_logs$observations,
-      available_results = obs$available,
-      turn_reported = current_turn,
-      pop_tbl = inputs$pop_tbl
-    )
-
-    next_truth <- step_truth(
-      state = truth_state(),
-      K = active_kernel(),
-      Rt_global = params_epi$Rt,
-      k_overdisp = params_epi$k,
-      imports_prob = params_epi$imports_prob,
-      lambda_import = params_epi$lambda_import,
-      pop = effective_pop_tbl()$pop,
-      death_ifr = params_mort$death_ifr,
-      death_delay = params_mort$death_delay
-    )
-
-    truth_state(next_truth)
-    truth_history(next_truth$history)
-
-    turn_logs$truth <- append_truth_log(
-      truth_log = turn_logs$truth,
-      turn = next_truth$turn,
-      incidence = next_truth$incidence,
-      cumulative = next_truth$cumulative,
-      deaths = next_truth$deaths,
-      cumulative_deaths = next_truth$cumulative_deaths,
-      imports = next_truth$last_imports,
-      Rt = params_epi$Rt,
-      pop_tbl = inputs$pop_tbl
-    )
-
-    entry_cur <- tibble(
-      turn = current_turn,
-      tests_ag = sum(allocs$n_ag),
-      tests_pcr = sum(allocs$n_pcr),
-      allocation_spend = spend_stats$spend,
-      intervention_cost = intervention_cost,
-      total_turn_spend = turn_spend,
-      cumulative_spend = new_total_spend,
-      observed_tests = sum(obs$available$n),
-      observed_positives = sum(obs$available$positives),
-      reported_deaths = current_deaths,
-      active_interventions = intervention_label,
-      notes = "",
-      queue_pending = sum(obs$queue$n)
-    )
-
-    rl <- run_log()
-    if (nrow(rl) == 0 || !(current_turn %in% rl$turn)) {
-      run_log(dplyr::bind_rows(rl, entry_cur))
-    } else {
-      rl <- dplyr::rows_update(rl, entry_cur, by = "turn")
-      run_log(rl)
-    }
-
-    next_turn <- current_turn + 1L
-    turn(next_turn)
+    run_log(result$run_log)
+    turn(result$next_turn)
     allocations_module$reset()
 
-    # Show turn summary notification
-    n_results <- sum(obs$available$n)
-    n_positives <- sum(obs$available$positives)
-    n_pending <- sum(obs$queue$n)
-
-    summary_msg <- if (n_results > 0) {
-      sprintf(
-        "Turn %d complete: %d results returned (%d positive). %d tests pending.",
-        current_turn, n_results, n_positives, n_pending
-      )
-    } else {
-      sprintf(
-        "Turn %d complete: No results yet. %d tests pending.",
-        current_turn, n_pending
-      )
-    }
-
     showNotification(
-      summary_msg,
-      type = if (n_positives > 0) "warning" else "message",
-      duration = 5
+      result$notification$message,
+      type = result$notification$type,
+      duration = result$notification$duration
     )
   })
 
