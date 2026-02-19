@@ -82,6 +82,18 @@ mod_controls_ui <- function(id) {
       )
     ),
     shiny::div(
+      class = "mb-3",
+      shiny::selectInput(
+        ns("baseline_mode"),
+        label = "Baseline comparator",
+        choices = c(
+          "Basic surveillance" = "basic_surveillance",
+          "No action" = "no_action"
+        ),
+        selected = "basic_surveillance"
+      )
+    ),
+    shiny::div(
       class = "mb-3 d-grid gap-2",
       shiny::actionButton(ns("start_run"), "Start run", class = "btn-primary w-100"),
       shiny::actionButton(ns("pause_run"), "Pause", class = "btn-outline-secondary w-100"),
@@ -478,10 +490,15 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
     })
 
     reseed <- shiny::eventReactive(input$reseed, {
+      seed_value <- suppressWarnings(as.integer(input$rng_seed)[1])
+      if (length(seed_value) != 1L || is.na(seed_value) || seed_value < 1L) {
+        seed_value <- 2024L
+      }
+
       if (isTRUE(input$random_seed)) {
         sample.int(1e6, 1)
       } else {
-        input$rng_seed
+        seed_value
       }
     }, ignoreNULL = FALSE)
 
@@ -519,6 +536,14 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       )
     })
 
+    baseline_mode <- shiny::reactive({
+      mode <- input$baseline_mode
+      if (is.null(mode) || !mode %in% c("no_action", "basic_surveillance")) {
+        mode <- "basic_surveillance"
+      }
+      mode
+    })
+
     list(
       epidemiology = params_epidemic,
       mortality = params_mortality,
@@ -527,6 +552,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       starter_intel = starter_intel,
       run_mode = run_mode,
       autorun = autorun,
+      baseline_mode = baseline_mode,
       start_run = shiny::reactive(input$start_run),
       pause_run = shiny::reactive(input$pause_run),
       run_batch = shiny::reactive(input$run_batch),

@@ -285,3 +285,116 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     turn_summary = turn_summary
   )
 }
+
+compute_comparison_metrics <- function(player_report, baseline_report) {
+  player_turns <- player_report$turn_summary
+  baseline_turns <- baseline_report$turn_summary
+
+  player_total_cases <- if ("truth_total" %in% names(player_turns)) {
+    sum(player_turns$truth_total, na.rm = TRUE)
+  } else {
+    0
+  }
+  baseline_total_cases <- if ("truth_total" %in% names(baseline_turns)) {
+    sum(baseline_turns$truth_total, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  player_total_deaths <- if (!is.null(player_report$metrics$total_deaths)) {
+    as.numeric(player_report$metrics$total_deaths)
+  } else if ("deaths_total" %in% names(player_turns)) {
+    sum(player_turns$deaths_total, na.rm = TRUE)
+  } else {
+    0
+  }
+  baseline_total_deaths <- if (!is.null(baseline_report$metrics$total_deaths)) {
+    as.numeric(baseline_report$metrics$total_deaths)
+  } else if ("deaths_total" %in% names(baseline_turns)) {
+    sum(baseline_turns$deaths_total, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  player_peak_turn <- if ("truth_total" %in% names(player_turns) && nrow(player_turns) > 0) {
+    player_turns$turn[[which.max(player_turns$truth_total)]]
+  } else {
+    NA_integer_
+  }
+  baseline_peak_turn <- if ("truth_total" %in% names(baseline_turns) && nrow(baseline_turns) > 0) {
+    baseline_turns$turn[[which.max(baseline_turns$truth_total)]]
+  } else {
+    NA_integer_
+  }
+
+  cases_averted <- baseline_total_cases - player_total_cases
+  deaths_averted <- baseline_total_deaths - player_total_deaths
+  spend_delta <- player_report$metrics$total_spend - baseline_report$metrics$total_spend
+
+  list(
+    player_total_cases = player_total_cases,
+    baseline_total_cases = baseline_total_cases,
+    player_total_deaths = player_total_deaths,
+    baseline_total_deaths = baseline_total_deaths,
+    cases_averted = cases_averted,
+    deaths_averted = deaths_averted,
+    player_peak_turn = player_peak_turn,
+    baseline_peak_turn = baseline_peak_turn,
+    peak_delay_turns = player_peak_turn - baseline_peak_turn,
+    spend_delta = spend_delta,
+    cost_per_case_averted = if (cases_averted > 0) spend_delta / cases_averted else NA_real_,
+    cost_per_death_averted = if (deaths_averted > 0) spend_delta / deaths_averted else NA_real_
+  )
+}
+
+build_dual_branch_report <- function(player_branch, baseline_branch, pop_tbl) {
+  player_report <- build_run_report(
+    truth_history = player_branch$truth_history,
+    observed_history = player_branch$observation_state$history,
+    pop_tbl = pop_tbl,
+    total_spend = player_branch$total_spend,
+    run_log = player_branch$run_log,
+    truth_log = player_branch$turn_logs$truth
+  )
+
+  baseline_report <- build_run_report(
+    truth_history = baseline_branch$truth_history,
+    observed_history = baseline_branch$observation_state$history,
+    pop_tbl = pop_tbl,
+    total_spend = baseline_branch$total_spend,
+    run_log = baseline_branch$run_log,
+    truth_log = baseline_branch$turn_logs$truth
+  )
+
+  comparison <- compute_comparison_metrics(player_report, baseline_report)
+
+  turn_comparison <- dplyr::full_join(
+    player_report$turn_summary |>
+      dplyr::select(
+        turn,
+        player_truth_total = truth_total,
+        player_deaths_total = deaths_total,
+        player_observed_positives = observed_positives,
+        player_total_turn_spend = total_turn_spend,
+        player_cumulative_spend = cumulative_spend
+      ),
+    baseline_report$turn_summary |>
+      dplyr::select(
+        turn,
+        baseline_truth_total = truth_total,
+        baseline_deaths_total = deaths_total,
+        baseline_observed_positives = observed_positives,
+        baseline_total_turn_spend = total_turn_spend,
+        baseline_cumulative_spend = cumulative_spend
+      ),
+    by = "turn"
+  ) |>
+    dplyr::arrange(turn)
+
+  list(
+    player = player_report,
+    baseline = baseline_report,
+    comparison = comparison,
+    turn_comparison = turn_comparison
+  )
+}

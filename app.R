@@ -427,6 +427,9 @@ server <- function(input, output, session) {
 
   run_log <- reactiveVal(tibble())
   run_report <- reactiveVal(NULL)
+  dual_report <- reactiveVal(NULL)
+  baseline_branch <- reactiveVal(NULL)
+  master_seed <- reactiveVal(2024L)
 
   observation_state <- reactiveVal(init_observation_state())
   available_now <- reactiveVal(empty_results)
@@ -489,6 +492,7 @@ server <- function(input, output, session) {
         vals[[1]]
       }
     }),
+    comparison_report = reactive(dual_report()),
     app_ready = app_ready
   )
 
@@ -502,15 +506,23 @@ server <- function(input, output, session) {
   })
 
   output$run_summary_table <- renderTable({
+    report_dual <- dual_report()
+    if (!is.null(report_dual) && !is.null(report_dual$turn_comparison)) {
+      return(report_dual$turn_comparison)
+    }
+
     report <- run_report()
     req(report)
     report$turn_summary
   }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 2)
 
   initialise_truth <- function(seed = NULL) {
-    if (!is.null(seed)) {
-      set.seed(seed)
+    seed_value <- suppressWarnings(as.integer(seed)[1])
+    if (length(seed_value) != 1L || is.na(seed_value) || seed_value < 1L) {
+      seed_value <- sample.int(1e6, 1)
     }
+    set.seed(seed_value)
+    master_seed(seed_value)
 
     params_epi <- controls$epidemiology()
     budget <- controls$budget()
@@ -575,7 +587,8 @@ server <- function(input, output, session) {
       cumulative_deaths = init$cumulative_deaths,
       imports = integer(length(init$incidence)),
       Rt = params_epi$Rt,
-      pop_tbl = inputs$pop_tbl
+      pop_tbl = inputs$pop_tbl,
+      branch = "player"
     )
 
     starter_spend_stats <- summarise_budget(starter_alloc, list(pcr = 0, ag = 0), budget$budget)
@@ -585,6 +598,7 @@ server <- function(input, output, session) {
       allocations = starter_alloc,
       pop_tbl = inputs$pop_tbl,
       costs = list(pcr = 0, ag = 0),
+      branch = "player",
       meta = list(
         allocation_spend = starter_spend_stats$spend,
         intervention_cost = 0,
@@ -599,7 +613,8 @@ server <- function(input, output, session) {
       observation_log = turn_logs$observations,
       available_results = current_available,
       turn_reported = 0L,
-      pop_tbl = inputs$pop_tbl
+      pop_tbl = inputs$pop_tbl,
+      branch = "player"
     )
 
     observation_state(base_observation)
@@ -635,7 +650,56 @@ server <- function(input, output, session) {
       queue_pending = starter_queue
     ))
 
+    baseline_logs <- init_turn_logs(inputs$pop_tbl)
+    baseline_logs$truth <- append_truth_log(
+      truth_log = baseline_logs$truth,
+      turn = init$turn,
+      incidence = init$incidence,
+      cumulative = init$cumulative,
+      deaths = init$deaths,
+      cumulative_deaths = init$cumulative_deaths,
+      imports = integer(length(init$incidence)),
+      Rt = params_epi$Rt,
+      pop_tbl = inputs$pop_tbl,
+      branch = "baseline"
+    )
+
+    baseline_branch(new_branch_state(
+      name = "baseline",
+      turn = init$turn,
+      truth_state = clone_branch_object(init),
+      truth_history = clone_branch_object(init$history),
+      observation_state = init_observation_state(),
+      available_now = empty_results,
+      run_log = tibble(
+        turn = 0L,
+        truth_total = sum(init$incidence),
+        tests_ag = 0L,
+        tests_pcr = 0L,
+        allocation_spend = 0,
+        intervention_cost = 0,
+        total_turn_spend = 0,
+        cumulative_spend = 0,
+        observed_tests = 0L,
+        observed_positives = 0L,
+        reported_deaths = sum(init$cumulative_deaths),
+        active_interventions = "None",
+        notes = "",
+        queue_pending = 0L
+      ),
+      turn_logs = baseline_logs,
+      total_spend = 0,
+      spend_current = list(
+        total = 0,
+        last_turn = 0,
+        remaining = budget$budget,
+        within_budget = TRUE,
+        interventions = "None"
+      )
+    ))
+
     run_report(NULL)
+    dual_report(NULL)
   }
 
   reset_auto_state <- function(reason = NULL) {
@@ -645,7 +709,35 @@ server <- function(input, output, session) {
     auto_stop_reason(reason)
   }
 
-  build_turn_request <- function(allocs, active_ids, current_turn) {
+  derive_turn_seed <- function(master_seed_value, turn_index) {
+    master_seed_value <- suppressWarnings(as.integer(master_seed_value))
+    turn_index <- suppressWarnings(as.integer(turn_index))
+
+    if (is.na(master_seed_value) || master_seed_value < 1L) {
+      master_seed_value <- 1L
+    }
+    if (is.na(turn_index) || turn_index < 0L) {
+      turn_index <- 0L
+    }
+
+    as.integer((master_seed_value * 1009L + turn_index * 9176L) %% .Machine$integer.max)
+  }
+
+  build_turn_request <- function(
+      allocs,
+      active_ids,
+      current_turn,
+      branch_name = "player",
+      branch_truth_state = truth_state(),
+      branch_observation_state = observation_state(),
+      branch_total_spend = total_spend(),
+      branch_run_log = run_log(),
+      branch_turn_logs = list(
+        truth = turn_logs$truth,
+        observations = turn_logs$observations,
+        actions = turn_logs$actions
+      ),
+      truth_seed = NULL) {
     list(
       current_turn = current_turn,
       allocs = allocs,
@@ -655,18 +747,16 @@ server <- function(input, output, session) {
       testing_params = controls$testing(),
       active_ids = active_ids,
       intervention_defs = intervention_defs,
-      total_spend = total_spend(),
-      truth_state = truth_state(),
-      observation_state = observation_state(),
+      total_spend = branch_total_spend,
+      truth_state = branch_truth_state,
+      observation_state = branch_observation_state,
       active_kernel = active_kernel(),
       effective_pop_tbl = effective_pop_tbl(),
       pop_tbl = inputs$pop_tbl,
-      run_log = run_log(),
-      turn_logs = list(
-        truth = turn_logs$truth,
-        observations = turn_logs$observations,
-        actions = turn_logs$actions
-      )
+      run_log = branch_run_log,
+      turn_logs = branch_turn_logs,
+      branch = branch_name,
+      truth_seed = truth_seed
     )
   }
 
@@ -697,20 +787,60 @@ server <- function(input, output, session) {
     )
   }
 
-  step_once <- function(allocs, active_ids, source = c("manual", "auto")) {
+  step_dual_once <- function(allocs, active_ids, source = c("manual", "auto")) {
     source <- match.arg(source)
     req(truth_state())
+    baseline <- baseline_branch()
+    req(!is.null(baseline))
 
-    request <- build_turn_request(
+    turn_seed <- derive_turn_seed(master_seed(), turn())
+
+    player_request <- build_turn_request(
       allocs = allocs,
       active_ids = active_ids,
-      current_turn = turn()
+      current_turn = turn(),
+      branch_name = "player",
+      truth_seed = turn_seed
     )
 
-    result <- run_single_turn(request)
+    baseline_allocs <- build_baseline_allocations(
+      mode = controls$baseline_mode(),
+      request = list(
+        pop_tbl = effective_pop_tbl(),
+        budget = controls$budget(),
+        intervention_cost = 0,
+        current_turn = turn(),
+        observation_state = baseline$observation_state,
+        available_now = baseline$available_now
+      )
+    )
 
-    if (result$status == "budget_exceeded") {
-      showNotification(result$error_message, type = "error")
+    baseline_request <- build_turn_request(
+      allocs = baseline_allocs,
+      active_ids = character(),
+      current_turn = turn(),
+      branch_name = "baseline",
+      branch_truth_state = baseline$truth_state,
+      branch_observation_state = baseline$observation_state,
+      branch_total_spend = baseline$total_spend,
+      branch_run_log = baseline$run_log,
+      branch_turn_logs = baseline$turn_logs,
+      truth_seed = turn_seed
+    )
+
+    player_result <- run_single_turn(player_request)
+    baseline_result <- run_single_turn(baseline_request)
+
+    budget_failed <- identical(player_result$status, "budget_exceeded") ||
+      identical(baseline_result$status, "budget_exceeded")
+    if (isTRUE(budget_failed)) {
+      error_message <- if (identical(player_result$status, "budget_exceeded")) {
+        player_result$error_message
+      } else {
+        baseline_result$error_message
+      }
+
+      showNotification(error_message, type = "error")
       if (identical(source, "auto")) {
         auto_running(FALSE)
         auto_stop_reason("budget_exceeded")
@@ -718,8 +848,10 @@ server <- function(input, output, session) {
       return(FALSE)
     }
 
+    baseline_branch(apply_branch_turn_result(baseline, baseline_result))
+
     apply_turn_result(
-      result,
+      player_result,
       reset_allocations = !identical(source, "auto")
     )
     TRUE
@@ -775,7 +907,7 @@ server <- function(input, output, session) {
     allocs_policy <- build_policy_allocations(policy_request)
     allocations_module$set_allocations(allocs_policy)
 
-    step_ok <- step_once(
+    step_ok <- step_dual_once(
       allocs = allocs_policy,
       active_ids = active_ids,
       source = "auto"
@@ -833,7 +965,7 @@ server <- function(input, output, session) {
     req(truth_state())
     req(!isTRUE(auto_running()))
 
-    step_once(
+    step_dual_once(
       allocs = allocations_module$allocations(),
       active_ids = allocations_module$interventions(),
       source = "manual"
@@ -947,20 +1079,40 @@ server <- function(input, output, session) {
       auto_stop_reason("user_stop")
     }
 
-    report <- build_run_report(
+    baseline <- baseline_branch()
+    req(!is.null(baseline))
+
+    player_branch <- new_branch_state(
+      name = "player",
+      turn = turn(),
+      truth_state = truth_state(),
       truth_history = truth_history(),
-      observed_history = observation_state()$history,
-      pop_tbl = effective_pop_tbl(),
-      total_spend = total_spend(),
+      observation_state = observation_state(),
+      available_now = available_now(),
       run_log = run_log(),
-      truth_log = turn_logs$truth
+      turn_logs = list(
+        truth = turn_logs$truth,
+        observations = turn_logs$observations,
+        actions = turn_logs$actions
+      ),
+      total_spend = total_spend(),
+      spend_current = spend_current()
     )
 
+    report_dual <- build_dual_branch_report(
+      player_branch = player_branch,
+      baseline_branch = baseline,
+      pop_tbl = effective_pop_tbl()
+    )
+
+    report <- report_dual$player
     run_report(report)
+    dual_report(report_dual)
     replay_snapshot(logs_snapshot())
     replay_unlocked(TRUE)
 
     metrics <- report$metrics
+    comparison <- report_dual$comparison
 
     # Calculate detection coverage
     total_true <- sum(sapply(truth_history(), sum))
@@ -1057,8 +1209,35 @@ server <- function(input, output, session) {
           )
         )
       ),
+      fluidRow(
+        column(12,
+          tags$div(
+            class = "card bg-info-subtle mb-3",
+            tags$div(class = "card-header", tags$strong("Player vs Baseline")),
+            tags$div(
+              class = "card-body",
+              tags$p(
+                tags$strong("Cases averted: "),
+                as.integer(round(comparison$cases_averted))
+              ),
+              tags$p(
+                tags$strong("Deaths averted: "),
+                as.integer(round(comparison$deaths_averted))
+              ),
+              tags$p(
+                tags$strong("Peak delay: "),
+                if (is.na(comparison$peak_delay_turns)) "N/A" else paste0(comparison$peak_delay_turns, " turns")
+              ),
+              tags$p(
+                tags$strong("Spend delta (player - baseline): "),
+                if (is.na(comparison$spend_delta)) "N/A" else paste0("£", round(comparison$spend_delta, 0))
+              )
+            )
+          )
+        )
+      ),
       tags$hr(),
-      tags$h5("Turn-by-Turn Comparison"),
+      tags$h5("Turn-by-Turn Branch Comparison"),
       tags$div(
         style = "max-height: 300px; overflow-y: auto;",
         tableOutput("run_summary_table")

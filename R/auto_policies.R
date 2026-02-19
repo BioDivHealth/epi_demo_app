@@ -416,6 +416,64 @@ policy_symptomatic_proxy <- function(request) {
   base_alloc
 }
 
+policy_none <- function(request) {
+  policy_base_allocations(request$pop_tbl)
+}
+
+policy_basic_surveillance <- function(request) {
+  base_alloc <- policy_base_allocations(request$pop_tbl)
+  budget_parts <- policy_budget_components(request$budget, request$intervention_cost)
+
+  if (budget_parts$remaining <= 0) {
+    return(base_alloc)
+  }
+
+  if (budget_parts$cost_ag <= 0) {
+    return(base_alloc)
+  }
+
+  target_budget <- floor(0.1 * budget_parts$remaining)
+  target_tests <- as.integer(floor(target_budget / budget_parts$cost_ag))
+  max_affordable <- as.integer(floor(budget_parts$remaining / budget_parts$cost_ag))
+
+  total_ag <- min(target_tests, max_affordable)
+  if (total_ag <= 0L && max_affordable > 0L) {
+    total_ag <- 1L
+  }
+
+  weights <- normalise_policy_weights(request$pop_tbl$pop)
+  base_alloc$n_ag <- allocate_integer_by_weights(total_ag, weights)
+  base_alloc$n_pcr <- 0L
+  base_alloc
+}
+
+build_baseline_allocations <- function(mode, request) {
+  if (!is.list(request)) {
+    stop("request must be a list")
+  }
+
+  required_fields <- c("pop_tbl", "budget", "intervention_cost")
+  missing_fields <- setdiff(required_fields, names(request))
+  if (length(missing_fields) > 0) {
+    stop("request missing required fields: ", paste(missing_fields, collapse = ", "))
+  }
+
+  mode <- as.character(mode)
+  if (length(mode) != 1L || is.na(mode) || !mode %in% c("no_action", "basic_surveillance")) {
+    mode <- "basic_surveillance"
+  }
+
+  allocs <- switch(
+    mode,
+    no_action = policy_none(request),
+    basic_surveillance = policy_basic_surveillance(request),
+    stop("unknown baseline mode: ", mode)
+  )
+
+  allocs <- normalise_policy_allocations(allocs, request$pop_tbl)
+  cap_allocations_to_budget(allocs, request$budget, request$intervention_cost)
+}
+
 build_policy_allocations <- function(request) {
   validate_policy_request(request)
 

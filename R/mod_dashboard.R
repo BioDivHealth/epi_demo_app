@@ -51,7 +51,8 @@ mod_dashboard_ui <- function(id) {
       shiny::div(
         class = "small",
         shiny::verbatimTextOutput(ns("spend_text"))
-      )
+      ),
+      shiny::uiOutput(ns("comparison_cards"))
     )
   )
 }
@@ -63,6 +64,7 @@ mod_dashboard_server <- function(
     spend_info,
     available_now,
     reported_deaths,
+    comparison_report = shiny::reactive(NULL),
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
     ready <- shiny::reactive({
@@ -214,6 +216,86 @@ mod_dashboard_server <- function(
         "Positivity rate: ", if (is.na(positivity)) "-" else paste0(positivity, "%"), "\n",
         "Interventions: ", if (is.null(info$interventions) || info$interventions == "") "None" else info$interventions,
         sep = ""
+      )
+    })
+
+    output$comparison_cards <- shiny::renderUI({
+      req(ready())
+      report <- comparison_report()
+      if (is.null(report) || is.null(report$comparison)) {
+        return(NULL)
+      }
+
+      cmp <- report$comparison
+
+      format_money <- function(x) {
+        if (is.null(x) || !is.finite(x) || is.na(x)) {
+          return("N/A")
+        }
+        paste0("£", round(x, 0))
+      }
+
+      format_efficiency <- function(x) {
+        if (is.null(x) || !is.finite(x) || is.na(x)) {
+          return("N/A")
+        }
+        paste0("£", round(x, 1))
+      }
+
+      shiny::div(
+        class = "mt-2",
+        shiny::tags$h6("Baseline comparison"),
+        shiny::div(
+          class = "row g-2",
+          shiny::div(
+            class = "col-6",
+            shiny::div(
+              class = "p-2 bg-light rounded small",
+              shiny::tags$strong("Cases averted: "),
+              as.integer(round(cmp$cases_averted))
+            )
+          ),
+          shiny::div(
+            class = "col-6",
+            shiny::div(
+              class = "p-2 bg-light rounded small",
+              shiny::tags$strong("Deaths averted: "),
+              as.integer(round(cmp$deaths_averted))
+            )
+          ),
+          shiny::div(
+            class = "col-6",
+            shiny::div(
+              class = "p-2 bg-light rounded small",
+              shiny::tags$strong("Peak delay (turns): "),
+              if (is.na(cmp$peak_delay_turns)) "N/A" else as.integer(cmp$peak_delay_turns)
+            )
+          ),
+          shiny::div(
+            class = "col-6",
+            shiny::div(
+              class = "p-2 bg-light rounded small",
+              shiny::tags$strong("Spend delta: "),
+              format_money(cmp$spend_delta)
+            )
+          ),
+          shiny::div(
+            class = "col-6",
+            shiny::div(
+              class = "p-2 bg-light rounded small",
+              shiny::tags$strong("Cost per case averted: "),
+              format_efficiency(cmp$cost_per_case_averted)
+            )
+          ),
+          shiny::div(
+            class = "col-6",
+            shiny::div(
+              class = "p-2 bg-light rounded small",
+              shiny::tags$strong("Cost per death averted: "),
+              format_efficiency(cmp$cost_per_death_averted)
+            )
+          )
+        )
       )
     })
   })

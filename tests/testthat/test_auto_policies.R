@@ -117,3 +117,34 @@ test_that("manual policy returns exact manual allocations when affordable", {
 
   expect_equal(actual, expected)
 })
+
+test_that("baseline no_action returns zero allocations", {
+  request <- make_policy_request_fixture(policy_id = "manual")
+  baseline_request <- list(
+    pop_tbl = request$pop_tbl,
+    budget = request$budget,
+    intervention_cost = 0
+  )
+
+  allocs <- build_baseline_allocations("no_action", baseline_request)
+  expect_true(all(allocs$n_ag == 0L))
+  expect_true(all(allocs$n_pcr == 0L))
+})
+
+test_that("baseline basic_surveillance is budget feasible and antigen-only", {
+  request <- make_policy_request_fixture(policy_id = "manual")
+  baseline_request <- list(
+    pop_tbl = request$pop_tbl,
+    budget = request$budget,
+    intervention_cost = 25
+  )
+
+  allocs <- build_baseline_allocations("basic_surveillance", baseline_request)
+  spend <- summarise_budget(allocs, request$budget$costs, request$budget$budget)$spend
+  limit <- request$budget$budget - baseline_request$intervention_cost
+
+  expect_true(all(allocs$n_pcr == 0L))
+  expect_true(all(allocs$n_ag >= 0L))
+  expect_true(all(allocs$n_ag == as.integer(allocs$n_ag)))
+  expect_lte(spend, limit + 1e-6)
+})

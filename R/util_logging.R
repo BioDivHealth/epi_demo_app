@@ -18,6 +18,7 @@ init_turn_logs <- function(pop_tbl) {
     )
 
   truth_cols <- tibble::tibble(
+    branch = character(),
     turn = integer(),
     borough_index = integer(),
     gss_code = character(),
@@ -31,6 +32,7 @@ init_turn_logs <- function(pop_tbl) {
   )
 
   observation_cols <- tibble::tibble(
+    branch = character(),
     turn_reported = integer(),
     turn_sampled = integer(),
     turn_available = integer(),
@@ -44,6 +46,7 @@ init_turn_logs <- function(pop_tbl) {
   )
 
   action_cols <- tibble::tibble(
+    branch = character(),
     turn = integer(),
     borough_index = integer(),
     gss_code = character(),
@@ -80,7 +83,7 @@ init_turn_logs <- function(pop_tbl) {
 #' @param pop_tbl Population table used to supply borough metadata.
 #' @return Updated truth log tibble.
 #' @export
-append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cumulative_deaths, imports, Rt, pop_tbl) {
+append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cumulative_deaths, imports, Rt, pop_tbl, branch = "player") {
   incidence <- as.integer(incidence)
   cumulative <- as.integer(cumulative)
   deaths <- as.integer(deaths)
@@ -100,6 +103,7 @@ append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cum
 
   addition <- pop_tbl |>
     dplyr::mutate(
+      branch = as.character(branch),
       borough_index = dplyr::row_number(),
       turn = as.integer(turn),
       incidence = incidence,
@@ -110,6 +114,7 @@ append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cum
       Rt = as.numeric(Rt)
     ) |>
     dplyr::select(
+      branch,
       turn,
       borough_index,
       gss_code,
@@ -133,7 +138,7 @@ append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cum
 #' @param pop_tbl Population table for borough metadata.
 #' @return Updated observation log tibble.
 #' @export
-append_observation_log <- function(observation_log, available_results, turn_reported, pop_tbl) {
+append_observation_log <- function(observation_log, available_results, turn_reported, pop_tbl, branch = "player") {
   if (is.null(available_results) || nrow(available_results) == 0) {
     return(observation_log)
   }
@@ -156,6 +161,7 @@ append_observation_log <- function(observation_log, available_results, turn_repo
       by = "borough_index"
     ) |>
     dplyr::mutate(
+      branch = as.character(branch),
       turn_reported = as.integer(turn_reported),
       test_type = type,
       n_returned = as.integer(n),
@@ -165,6 +171,7 @@ append_observation_log <- function(observation_log, available_results, turn_repo
       turn_available = as.integer(turn_available)
     ) |>
     dplyr::select(
+      branch,
       turn_reported,
       turn_sampled,
       turn_available,
@@ -190,7 +197,7 @@ append_observation_log <- function(observation_log, available_results, turn_repo
 #' @param meta Optional list carrying per-turn metadata, e.g. remaining budget.
 #' @return Updated action log tibble.
 #' @export
-append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, meta = list()) {
+append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, meta = list(), branch = "player") {
   required_cols <- c("borough_index", "borough_name", "n_ag", "n_pcr")
   missing_cols <- setdiff(required_cols, names(allocations))
   if (length(missing_cols) > 0) {
@@ -224,6 +231,7 @@ append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, met
   addition <- long_allocs |>
     dplyr::left_join(pop_tbl, by = "borough_index") |>
     dplyr::mutate(
+      branch = as.character(branch),
       turn = as.integer(turn),
       n_allocated = as.integer(n),
       cost_per_test = dplyr::if_else(test_type == "ag", costs[["ag"]], costs[["pcr"]]),
@@ -251,6 +259,7 @@ append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, met
       interventions_active = meta_full$interventions_active
     ) |>
     dplyr::select(
+      branch,
       turn,
       borough_index,
       gss_code,

@@ -129,7 +129,8 @@ run_auto_iteration_fixture <- function(state) {
     effective_pop_tbl = state$effective_pop_tbl,
     pop_tbl = state$pop_tbl,
     run_log = state$run_log,
-    turn_logs = state$turn_logs
+    turn_logs = state$turn_logs,
+    branch = "player"
   )
 
   result <- run_single_turn(request)
@@ -168,6 +169,10 @@ tick_autorun_fixture <- function(state) {
   }
 
   run_auto_iteration_fixture(state)
+}
+
+derive_turn_seed_fixture <- function(master_seed, turn_index) {
+  as.integer((as.integer(master_seed) * 1009L + as.integer(turn_index) * 9176L) %% .Machine$integer.max)
 }
 
 test_that("guided auto-run completes exactly N turns", {
@@ -239,4 +244,114 @@ test_that("manual mode does not auto-advance", {
   expect_equal(state$auto_turns_completed, 0L)
   expect_equal(state$turn, 0L)
   expect_null(state$auto_stop_reason)
+})
+
+test_that("dual-branch auto-run preserves exact N-turn lockstep", {
+  player <- make_autorun_fixture(config_turns = 3L, policy_id = "random_population")
+  baseline <- make_autorun_fixture(config_turns = 3L, policy_id = "manual")
+  baseline$allocs_manual$n_ag <- 0L
+  baseline$allocs_manual$n_pcr <- 0L
+
+  player <- start_autorun_fixture(player)
+  master_seed <- 2024L
+
+  while (isTRUE(player$auto_running)) {
+    turn_seed <- derive_turn_seed_fixture(master_seed, player$turn)
+
+    player_intervention_cost <- compute_intervention_effects(player$active_ids, player$intervention_defs)$cost
+    player_allocs <- build_policy_allocations(list(
+      policy_id = player$policy_id,
+      allocs_manual = player$allocs_manual,
+      pop_tbl = player$effective_pop_tbl,
+      budget = player$budget,
+      intervention_cost = player_intervention_cost,
+      current_turn = player$turn,
+      observation_state = player$observation_state,
+      available_now = player$available_now
+    ))
+
+    baseline_allocs <- build_baseline_allocations(
+      mode = "basic_surveillance",
+      request = list(
+        pop_tbl = baseline$effective_pop_tbl,
+        budget = baseline$budget,
+        intervention_cost = 0,
+        current_turn = baseline$turn,
+        observation_state = baseline$observation_state,
+        available_now = baseline$available_now
+      )
+    )
+
+    player_result <- run_single_turn(list(
+      current_turn = player$turn,
+      allocs = player_allocs,
+      budget = player$budget,
+      params_epi = player$params_epi,
+      params_mort = player$params_mort,
+      testing_params = player$testing_params,
+      active_ids = player$active_ids,
+      intervention_defs = player$intervention_defs,
+      total_spend = player$total_spend,
+      truth_state = player$truth_state,
+      observation_state = player$observation_state,
+      active_kernel = player$active_kernel,
+      effective_pop_tbl = player$effective_pop_tbl,
+      pop_tbl = player$pop_tbl,
+      run_log = player$run_log,
+      turn_logs = player$turn_logs,
+      branch = "player",
+      truth_seed = turn_seed
+    ))
+
+    baseline_result <- run_single_turn(list(
+      current_turn = baseline$turn,
+      allocs = baseline_allocs,
+      budget = baseline$budget,
+      params_epi = baseline$params_epi,
+      params_mort = baseline$params_mort,
+      testing_params = baseline$testing_params,
+      active_ids = character(),
+      intervention_defs = baseline$intervention_defs,
+      total_spend = baseline$total_spend,
+      truth_state = baseline$truth_state,
+      observation_state = baseline$observation_state,
+      active_kernel = baseline$active_kernel,
+      effective_pop_tbl = baseline$effective_pop_tbl,
+      pop_tbl = baseline$pop_tbl,
+      run_log = baseline$run_log,
+      turn_logs = baseline$turn_logs,
+      branch = "baseline",
+      truth_seed = turn_seed
+    ))
+
+    expect_equal(player_result$status, "ok")
+    expect_equal(baseline_result$status, "ok")
+
+    player$total_spend <- player_result$total_spend
+    player$truth_state <- player_result$truth_state
+    player$observation_state <- player_result$observation_state
+    player$available_now <- player_result$available_now
+    player$turn <- player_result$next_turn
+    player$run_log <- player_result$run_log
+    player$turn_logs <- player_result$turn_logs
+
+    baseline$total_spend <- baseline_result$total_spend
+    baseline$truth_state <- baseline_result$truth_state
+    baseline$observation_state <- baseline_result$observation_state
+    baseline$available_now <- baseline_result$available_now
+    baseline$turn <- baseline_result$next_turn
+    baseline$run_log <- baseline_result$run_log
+    baseline$turn_logs <- baseline_result$turn_logs
+
+    player$auto_turns_completed <- player$auto_turns_completed + 1L
+    if (player$auto_turns_completed >= player$auto_turns_requested) {
+      player$auto_running <- FALSE
+      player$auto_stop_reason <- "completed"
+    }
+  }
+
+  expect_equal(player$auto_turns_completed, 3L)
+  expect_equal(player$turn, 3L)
+  expect_equal(baseline$turn, 3L)
+  expect_equal(player$auto_stop_reason, "completed")
 })

@@ -88,7 +88,42 @@ validate_turn_request <- function(request) {
     stop("request$turn_logs must be a list with entries 'truth', 'observations', and 'actions'")
   }
 
+  if (!is.null(request$branch)) {
+    if (!is.character(request$branch) || length(request$branch) != 1L || is.na(request$branch)) {
+      stop("request$branch must be a single character value when provided")
+    }
+  }
+
+  if (!is.null(request$truth_seed)) {
+    if (!is.numeric(request$truth_seed) || length(request$truth_seed) != 1L || is.na(request$truth_seed)) {
+      stop("request$truth_seed must be a single numeric value when provided")
+    }
+  }
+
   invisible(TRUE)
+}
+
+with_truth_seed <- function(seed, expr) {
+  if (is.null(seed)) {
+    return(force(expr))
+  }
+
+  random_seed_exists <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  random_seed_prev <- NULL
+  if (isTRUE(random_seed_exists)) {
+    random_seed_prev <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  }
+
+  on.exit({
+    if (isTRUE(random_seed_exists)) {
+      assign(".Random.seed", random_seed_prev, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+
+  set.seed(as.integer(seed))
+  force(expr)
 }
 
 build_turn_notification <- function(available, queue, turn_index) {
@@ -152,6 +187,12 @@ run_single_turn <- function(request) {
   validate_turn_request(request)
 
   current_turn <- as.integer(request$current_turn)
+  branch <- if (is.null(request$branch) || identical(request$branch, "")) {
+    "player"
+  } else {
+    as.character(request$branch)
+  }
+  truth_seed <- if (is.null(request$truth_seed)) NULL else as.integer(request$truth_seed)
   allocs <- request$allocs
   budget <- request$budget
   params_epi <- request$params_epi
@@ -200,6 +241,7 @@ run_single_turn <- function(request) {
     allocations = allocs,
     pop_tbl = request$pop_tbl,
     costs = budget$costs,
+    branch = branch,
     meta = list(
       allocation_spend = spend$spend_stats$spend,
       intervention_cost = effects$cost,
@@ -229,19 +271,23 @@ run_single_turn <- function(request) {
     observation_log = request$turn_logs$observations,
     available_results = obs$available,
     turn_reported = current_turn,
-    pop_tbl = request$pop_tbl
+    pop_tbl = request$pop_tbl,
+    branch = branch
   )
 
-  next_truth <- step_truth(
-    state = request$truth_state,
-    K = request$active_kernel,
-    Rt_global = params_epi$Rt,
-    k_overdisp = params_epi$k,
-    imports_prob = params_epi$imports_prob,
-    lambda_import = params_epi$lambda_import,
-    pop = request$effective_pop_tbl$pop,
-    death_ifr = params_mort$death_ifr,
-    death_delay = params_mort$death_delay
+  next_truth <- with_truth_seed(
+    truth_seed,
+    step_truth(
+      state = request$truth_state,
+      K = request$active_kernel,
+      Rt_global = params_epi$Rt,
+      k_overdisp = params_epi$k,
+      imports_prob = params_epi$imports_prob,
+      lambda_import = params_epi$lambda_import,
+      pop = request$effective_pop_tbl$pop,
+      death_ifr = params_mort$death_ifr,
+      death_delay = params_mort$death_delay
+    )
   )
 
   truth_log <- append_truth_log(
@@ -253,7 +299,8 @@ run_single_turn <- function(request) {
     cumulative_deaths = next_truth$cumulative_deaths,
     imports = next_truth$last_imports,
     Rt = params_epi$Rt,
-    pop_tbl = request$pop_tbl
+    pop_tbl = request$pop_tbl,
+    branch = branch
   )
 
   entry_cur <- tibble::tibble(
