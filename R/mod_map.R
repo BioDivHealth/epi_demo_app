@@ -88,6 +88,8 @@ mod_map_server <- function(
     observed_this_turn,
     pop_tbl,
     app_ready = shiny::reactive(TRUE),
+    run_mode = shiny::reactive("manual"),
+    auto_running = shiny::reactive(FALSE),
     intervention_defs = intervention_catalog()) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
@@ -106,6 +108,9 @@ mod_map_server <- function(
     selected_interventions <- shiny::reactive({
       sel <- input$interventions
       if (is.null(sel)) character() else sel
+    })
+    map_locked <- shiny::reactive({
+      identical(run_mode(), "guided_auto") && isTRUE(auto_running())
     })
 
     # Compute borough centroids for allocation markers
@@ -130,10 +135,17 @@ mod_map_server <- function(
     )
 
     observeEvent(input$clear_alloc, {
+      if (isTRUE(map_locked())) {
+        return()
+      }
       allocations(allocations_init)
     })
 
     observeEvent(input$mass_test, {
+      if (isTRUE(map_locked())) {
+        return()
+      }
+
       budget <- budget_info()
       cost_ag <- budget$costs[["ag"]]
       if (is.null(cost_ag)) {
@@ -221,6 +233,10 @@ mod_map_server <- function(
 
     # Handle map clicks - add tests based on selected type
     observeEvent(input$map_shape_click, {
+      if (isTRUE(map_locked())) {
+        return()
+      }
+
       req(ready())
       click <- input$map_shape_click
       req(click$id)
@@ -423,6 +439,13 @@ mod_map_server <- function(
 
     list(
       allocations = allocations,
+      set_allocations = function(new_allocs) {
+        if (is.null(new_allocs)) {
+          return(invisible(NULL))
+        }
+        allocs_norm <- normalise_policy_allocations(new_allocs, pop_tbl)
+        allocations(allocs_norm)
+      },
       reset = function() {
         allocations(allocations_init)
       },
@@ -430,7 +453,12 @@ mod_map_server <- function(
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
       },
       interventions = selected_interventions,
-      advance = shiny::reactive(input$advance)
+      advance = shiny::eventReactive(input$advance, {
+        if (isTRUE(map_locked())) {
+          return(NULL)
+        }
+        input$advance
+      }, ignoreNULL = TRUE)
     )
   })
 }

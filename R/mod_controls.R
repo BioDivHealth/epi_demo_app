@@ -34,6 +34,60 @@ mod_controls_ui <- function(id) {
         inline = TRUE
       )
     ),
+    shiny::hr(),
+    shiny::div(
+      class = "mb-3",
+      shiny::tags$label(class = "form-label", "Run mode"),
+      shiny::radioButtons(
+        ns("run_mode"),
+        label = NULL,
+        choices = c("Guided auto" = "guided_auto", "Manual" = "manual"),
+        selected = "guided_auto",
+        inline = TRUE
+      )
+    ),
+    shiny::div(
+      class = "mb-3",
+      shiny::sliderInput(
+        ns("auto_turns"),
+        label = "Auto turns",
+        min = 1,
+        max = 50,
+        value = 12,
+        step = 1,
+        ticks = FALSE,
+        width = "100%"
+      )
+    ),
+    shiny::div(
+      class = "mb-3",
+      shiny::selectInput(
+        ns("auto_speed"),
+        label = "Auto speed",
+        choices = c("Slow" = "slow", "Normal" = "normal", "Fast" = "fast"),
+        selected = "normal"
+      )
+    ),
+    shiny::div(
+      class = "mb-3",
+      shiny::selectInput(
+        ns("allocation_policy"),
+        label = "Allocation policy",
+        choices = c(
+          "Manual (map allocations)" = "manual",
+          "Random population" = "random_population",
+          "Symptomatic proxy" = "symptomatic_proxy"
+        ),
+        selected = "symptomatic_proxy"
+      )
+    ),
+    shiny::div(
+      class = "mb-3 d-grid gap-2",
+      shiny::actionButton(ns("start_run"), "Start run", class = "btn-primary w-100"),
+      shiny::actionButton(ns("pause_run"), "Pause", class = "btn-outline-secondary w-100"),
+      shiny::actionButton(ns("run_batch"), "Run batch", class = "btn-outline-primary w-100"),
+      shiny::actionButton(ns("stop_run"), "Stop", class = "btn-outline-danger w-100")
+    ),
     shiny::uiOutput(ns("admin_controls")),
     shiny::actionButton(ns("reseed"), "New Game", class = "btn-outline-primary w-100 mb-2"),
     shiny::hr(),
@@ -431,12 +485,52 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       }
     }, ignoreNULL = FALSE)
 
+    run_mode <- shiny::reactive({
+      mode <- input$run_mode
+      if (is.null(mode) || !mode %in% c("guided_auto", "manual")) {
+        return("guided_auto")
+      }
+      mode
+    })
+
+    autorun <- shiny::reactive({
+      turns <- suppressWarnings(as.integer(input$auto_turns))
+      if (is.na(turns)) {
+        turns <- 12L
+      }
+      turns <- max(1L, min(50L, turns))
+
+      speed <- input$auto_speed
+      if (is.null(speed) || !speed %in% c("slow", "normal", "fast")) {
+        speed <- "normal"
+      }
+      speed_lookup <- c(slow = 1200L, normal = 700L, fast = 250L)
+
+      policy_id <- input$allocation_policy
+      if (is.null(policy_id) || !policy_id %in% c("manual", "random_population", "symptomatic_proxy")) {
+        policy_id <- "symptomatic_proxy"
+      }
+
+      list(
+        turns = turns,
+        speed = speed,
+        speed_ms = as.integer(speed_lookup[[speed]]),
+        policy_id = policy_id
+      )
+    })
+
     list(
       epidemiology = params_epidemic,
       mortality = params_mortality,
       testing = params_testing,
       budget = budget_info,
       starter_intel = starter_intel,
+      run_mode = run_mode,
+      autorun = autorun,
+      start_run = shiny::reactive(input$start_run),
+      pause_run = shiny::reactive(input$pause_run),
+      run_batch = shiny::reactive(input$run_batch),
+      stop_run = shiny::reactive(input$stop_run),
       end = shiny::reactive(input$end),
       reset = shiny::reactive(input$reset),
       reseed = reseed

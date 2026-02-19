@@ -381,6 +381,10 @@ server <- function(input, output, session) {
   total_spend <- reactiveVal(0)
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
   app_ready <- reactiveVal(FALSE)
+  auto_running <- reactiveVal(FALSE)
+  auto_turns_requested <- reactiveVal(0L)
+  auto_turns_completed <- reactiveVal(0L)
+  auto_stop_reason <- reactiveVal(NULL)
 
   active_kernel <- reactive({
     key <- shared_admin$kernel_key
@@ -461,6 +465,8 @@ server <- function(input, output, session) {
     observed_this_turn = reactive(available_now()),
     pop_tbl = inputs$pop_tbl,
     app_ready = app_ready,
+    run_mode = controls$run_mode,
+    auto_running = auto_running,
     intervention_defs = intervention_defs
   )
 
@@ -632,7 +638,158 @@ server <- function(input, output, session) {
     run_report(NULL)
   }
 
+  reset_auto_state <- function(reason = NULL) {
+    auto_running(FALSE)
+    auto_turns_requested(0L)
+    auto_turns_completed(0L)
+    auto_stop_reason(reason)
+  }
+
+  build_turn_request <- function(allocs, active_ids, current_turn) {
+    list(
+      current_turn = current_turn,
+      allocs = allocs,
+      budget = controls$budget(),
+      params_epi = controls$epidemiology(),
+      params_mort = controls$mortality(),
+      testing_params = controls$testing(),
+      active_ids = active_ids,
+      intervention_defs = intervention_defs,
+      total_spend = total_spend(),
+      truth_state = truth_state(),
+      observation_state = observation_state(),
+      active_kernel = active_kernel(),
+      effective_pop_tbl = effective_pop_tbl(),
+      pop_tbl = inputs$pop_tbl,
+      run_log = run_log(),
+      turn_logs = list(
+        truth = turn_logs$truth,
+        observations = turn_logs$observations,
+        actions = turn_logs$actions
+      )
+    )
+  }
+
+  apply_turn_result <- function(result, reset_allocations = TRUE) {
+    total_spend(result$total_spend)
+    spend_current(result$spend_current)
+
+    observation_state(result$observation_state)
+    available_now(result$available_now)
+
+    truth_state(result$truth_state)
+    truth_history(result$truth_history)
+
+    turn_logs$actions <- result$turn_logs$actions
+    turn_logs$observations <- result$turn_logs$observations
+    turn_logs$truth <- result$turn_logs$truth
+
+    run_log(result$run_log)
+    turn(result$next_turn)
+    if (isTRUE(reset_allocations)) {
+      allocations_module$reset()
+    }
+
+    showNotification(
+      result$notification$message,
+      type = result$notification$type,
+      duration = result$notification$duration
+    )
+  }
+
+  step_once <- function(allocs, active_ids, source = c("manual", "auto")) {
+    source <- match.arg(source)
+    req(truth_state())
+
+    request <- build_turn_request(
+      allocs = allocs,
+      active_ids = active_ids,
+      current_turn = turn()
+    )
+
+    result <- run_single_turn(request)
+
+    if (result$status == "budget_exceeded") {
+      showNotification(result$error_message, type = "error")
+      if (identical(source, "auto")) {
+        auto_running(FALSE)
+        auto_stop_reason("budget_exceeded")
+      }
+      return(FALSE)
+    }
+
+    apply_turn_result(
+      result,
+      reset_allocations = !identical(source, "auto")
+    )
+    TRUE
+  }
+
+  build_policy_request <- function(policy_id, allocs_manual, active_ids, current_turn) {
+    intervention_cost <- compute_intervention_effects(active_ids, intervention_defs)$cost
+    list(
+      policy_id = policy_id,
+      allocs_manual = allocs_manual,
+      pop_tbl = effective_pop_tbl(),
+      budget = controls$budget(),
+      intervention_cost = intervention_cost,
+      current_turn = current_turn,
+      observation_state = observation_state(),
+      available_now = available_now()
+    )
+  }
+
+  initialise_or_resume_autorun <- function() {
+    config_turns <- suppressWarnings(as.integer(controls$autorun()$turns))
+    if (is.na(config_turns) || config_turns < 1L) {
+      config_turns <- 1L
+    }
+    config_turns <- min(50L, config_turns)
+
+    should_reset <- auto_turns_requested() <= 0L ||
+      auto_turns_completed() >= auto_turns_requested() ||
+      identical(auto_stop_reason(), "user_stop") ||
+      identical(auto_stop_reason(), "completed") ||
+      config_turns != auto_turns_requested()
+
+    if (should_reset) {
+      auto_turns_requested(config_turns)
+      auto_turns_completed(0L)
+    }
+
+    auto_stop_reason(NULL)
+  }
+
+  run_auto_iteration <- function() {
+    current_turn <- turn()
+    active_ids <- allocations_module$interventions()
+    manual_allocs <- allocations_module$allocations()
+    policy_id <- controls$autorun()$policy_id
+
+    policy_request <- build_policy_request(
+      policy_id = policy_id,
+      allocs_manual = manual_allocs,
+      active_ids = active_ids,
+      current_turn = current_turn
+    )
+    allocs_policy <- build_policy_allocations(policy_request)
+    allocations_module$set_allocations(allocs_policy)
+
+    step_ok <- step_once(
+      allocs = allocs_policy,
+      active_ids = active_ids,
+      source = "auto"
+    )
+    if (!isTRUE(step_ok)) {
+      return(FALSE)
+    }
+
+    auto_turns_completed(auto_turns_completed() + 1L)
+    TRUE
+  }
+
   observeEvent(shared_reset_signal(), {
+    reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
     showNotification("Admin reset triggered", type = "message")
   }, ignoreInit = TRUE)
@@ -655,7 +812,10 @@ server <- function(input, output, session) {
     if (!already_initialised) {
       app_ready(FALSE)
     }
+
+    reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
+
     if (!already_initialised) {
       app_ready(TRUE)
     }
@@ -665,75 +825,128 @@ server <- function(input, output, session) {
   }, ignoreNULL = FALSE)
 
   observeEvent(controls$reset(), {
+    reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
   })
 
   observeEvent(allocations_module$advance(), {
     req(truth_state())
+    req(!isTRUE(auto_running()))
 
-    current_turn <- turn()
-    allocs <- allocations_module$allocations()
-    budget <- controls$budget()
-    params_epi <- controls$epidemiology()
-    params_mort <- controls$mortality()
-    testing_params <- controls$testing()
-    active_ids <- allocations_module$interventions()
-    request <- list(
-      current_turn = current_turn,
-      allocs = allocs,
-      budget = budget,
-      params_epi = params_epi,
-      params_mort = params_mort,
-      testing_params = testing_params,
-      active_ids = active_ids,
-      intervention_defs = intervention_defs,
-      total_spend = total_spend(),
-      truth_state = truth_state(),
-      observation_state = observation_state(),
-      active_kernel = active_kernel(),
-      effective_pop_tbl = effective_pop_tbl(),
-      pop_tbl = inputs$pop_tbl,
-      run_log = run_log(),
-      turn_logs = list(
-        truth = turn_logs$truth,
-        observations = turn_logs$observations,
-        actions = turn_logs$actions
-      )
+    step_once(
+      allocs = allocations_module$allocations(),
+      active_ids = allocations_module$interventions(),
+      source = "manual"
     )
+  })
 
-    result <- run_single_turn(request)
+  observeEvent(controls$start_run(), {
+    req(truth_state())
+    req(identical(controls$run_mode(), "guided_auto"))
 
-    if (result$status == "budget_exceeded") {
-      showNotification(result$error_message, type = "error")
+    initialise_or_resume_autorun()
+    auto_running(TRUE)
+  })
+
+  observeEvent(controls$pause_run(), {
+    req(identical(controls$run_mode(), "guided_auto"))
+    auto_running(FALSE)
+  })
+
+  observeEvent(controls$stop_run(), {
+    req(identical(controls$run_mode(), "guided_auto"))
+    auto_running(FALSE)
+    auto_stop_reason("user_stop")
+  })
+
+  observeEvent(controls$run_mode(), {
+    if (identical(controls$run_mode(), "guided_auto")) {
+      return()
+    }
+    if (isTRUE(auto_running())) {
+      auto_running(FALSE)
+    }
+    if (auto_turns_requested() > 0L && auto_turns_completed() < auto_turns_requested()) {
+      auto_stop_reason("user_stop")
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(controls$run_batch(), {
+    req(truth_state())
+    req(identical(controls$run_mode(), "guided_auto"))
+
+    initialise_or_resume_autorun()
+    auto_running(FALSE)
+
+    remaining_steps <- auto_turns_requested() - auto_turns_completed()
+    if (!is.finite(remaining_steps) || remaining_steps <= 0L) {
+      auto_stop_reason("completed")
       return()
     }
 
-    total_spend(result$total_spend)
-    spend_current(result$spend_current)
+    for (step_idx in seq_len(as.integer(remaining_steps))) {
+      step_ok <- run_auto_iteration()
+      if (!isTRUE(step_ok)) {
+        break
+      }
 
-    observation_state(result$observation_state)
-    available_now(result$available_now)
+      if (auto_turns_completed() >= auto_turns_requested()) {
+        auto_stop_reason("completed")
+        break
+      }
+    }
+  })
 
-    truth_state(result$truth_state)
-    truth_history(result$truth_history)
+  observe({
+    if (!isTRUE(auto_running())) {
+      return()
+    }
 
-    turn_logs$actions <- result$turn_logs$actions
-    turn_logs$observations <- result$turn_logs$observations
-    turn_logs$truth <- result$turn_logs$truth
+    if (!identical(controls$run_mode(), "guided_auto")) {
+      auto_running(FALSE)
+      auto_stop_reason("user_stop")
+      return()
+    }
 
-    run_log(result$run_log)
-    turn(result$next_turn)
-    allocations_module$reset()
+    speed_ms <- controls$autorun()$speed_ms
+    if (is.null(speed_ms) || !is.finite(speed_ms)) {
+      speed_ms <- 700L
+    }
+    shiny::invalidateLater(as.integer(speed_ms), session)
 
-    showNotification(
-      result$notification$message,
-      type = result$notification$type,
-      duration = result$notification$duration
-    )
+    isolate({
+      if (!isTRUE(auto_running())) {
+        return()
+      }
+
+      if (auto_turns_requested() <= 0L || auto_turns_completed() >= auto_turns_requested()) {
+        auto_running(FALSE)
+        auto_stop_reason("completed")
+        return()
+      }
+
+      step_ok <- run_auto_iteration()
+      if (!isTRUE(step_ok)) {
+        return()
+      }
+
+      if (auto_turns_completed() >= auto_turns_requested()) {
+        auto_running(FALSE)
+        auto_stop_reason("completed")
+      }
+    })
   })
 
   observeEvent(controls$end(), {
     req(truth_state())
+
+    if (isTRUE(auto_running())) {
+      auto_running(FALSE)
+    }
+    if (auto_turns_requested() > 0L && auto_turns_completed() < auto_turns_requested()) {
+      auto_stop_reason("user_stop")
+    }
+
     report <- build_run_report(
       truth_history = truth_history(),
       observed_history = observation_state()$history,

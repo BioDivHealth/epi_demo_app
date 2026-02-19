@@ -25,6 +25,10 @@ test_that("app launches and key UI elements exist", {
 
   app$wait_for_js("document.getElementById('map-map') !== null")
   app$wait_for_js("document.getElementById('map-advance') !== null")
+  app$wait_for_js("document.getElementById('controls-run_mode') !== null")
+  app$wait_for_js("document.getElementById('controls-auto_turns') !== null")
+  app$wait_for_js("document.getElementById('controls-allocation_policy') !== null")
+  app$wait_for_js("document.getElementById('controls-start_run') !== null")
 
   advance_count <- app$get_value(input = "map-advance")
   expect_equal(as.integer(advance_count), 0L)
