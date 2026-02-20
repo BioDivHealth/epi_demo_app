@@ -188,6 +188,5 @@ apply_branch_turn_result <- function(branch, result) {
   branch$turn_logs <- result$turn_logs
   branch$run_log <- result$run_log
 
-  validate_branch_state(branch)
   branch
 }

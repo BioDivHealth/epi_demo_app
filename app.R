@@ -858,7 +858,11 @@ server <- function(input, output, session) {
   }
 
   build_policy_request <- function(policy_id, allocs_manual, active_ids, current_turn) {
-    intervention_cost <- compute_intervention_effects(active_ids, intervention_defs)$cost
+    intervention_cost <- compute_intervention_effects(
+      active_ids,
+      intervention_defs,
+      turn_budget = controls$budget()$budget
+    )$cost
     list(
       policy_id = policy_id,
       allocs_manual = allocs_manual,

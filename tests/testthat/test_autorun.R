@@ -100,7 +100,11 @@ start_autorun_fixture <- function(state) {
 }
 
 run_auto_iteration_fixture <- function(state) {
-  intervention_cost <- compute_intervention_effects(state$active_ids, state$intervention_defs)$cost
+  intervention_cost <- compute_intervention_effects(
+    state$active_ids,
+    state$intervention_defs,
+    turn_budget = state$budget$budget
+  )$cost
   policy_request <- list(
     policy_id = state$policy_id,
     allocs_manual = state$allocs_manual,
@@ -212,7 +216,7 @@ test_that("pause and resume preserve counters and continue correctly", {
   expect_equal(state$auto_stop_reason, "completed")
 })
 
-test_that("budget stop sets budget_exceeded reason", {
+test_that("low-budget run with interventions does not false-stop under capped pricing", {
   low_budget <- list(budget = 20, costs = list(ag = 2, pcr = 10))
   state <- make_autorun_fixture(
     config_turns = 3L,
@@ -226,10 +230,11 @@ test_that("budget stop sets budget_exceeded reason", {
   state <- start_autorun_fixture(state)
   state <- tick_autorun_fixture(state)
 
-  expect_false(state$auto_running)
-  expect_equal(state$auto_stop_reason, "budget_exceeded")
-  expect_equal(state$auto_turns_completed, 0L)
-  expect_equal(state$turn, 0L)
+  expect_true(state$auto_running)
+  expect_null(state$auto_stop_reason)
+  expect_equal(state$auto_turns_completed, 1L)
+  expect_equal(state$turn, 1L)
+  expect_lte(state$run_log$intervention_cost[[1]], round(0.60 * low_budget$budget))
 })
 
 test_that("manual mode does not auto-advance", {
@@ -258,7 +263,11 @@ test_that("dual-branch auto-run preserves exact N-turn lockstep", {
   while (isTRUE(player$auto_running)) {
     turn_seed <- derive_turn_seed_fixture(master_seed, player$turn)
 
-    player_intervention_cost <- compute_intervention_effects(player$active_ids, player$intervention_defs)$cost
+    player_intervention_cost <- compute_intervention_effects(
+      player$active_ids,
+      player$intervention_defs,
+      turn_budget = player$budget$budget
+    )$cost
     player_allocs <- build_policy_allocations(list(
       policy_id = player$policy_id,
       allocs_manual = player$allocs_manual,

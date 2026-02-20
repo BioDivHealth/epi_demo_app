@@ -2,10 +2,7 @@
 
 mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
   ns <- shiny::NS(id)
-  intervention_choices <- stats::setNames(
-    intervention_defs$id,
-    sprintf("%s (£%s)", intervention_defs$label, intervention_defs$cost)
-  )
+  intervention_choices <- format_intervention_choice_labels(intervention_defs)
   bslib::card(
     full_screen = TRUE,
     bslib::card_header(
@@ -109,6 +106,17 @@ mod_map_server <- function(
       sel <- input$interventions
       if (is.null(sel)) character() else sel
     })
+    intervention_effects <- shiny::reactive({
+      budget <- budget_info()
+      compute_intervention_effects(
+        selected = selected_interventions(),
+        catalog = intervention_defs,
+        turn_budget = budget$budget
+      )
+    })
+    intervention_cost <- shiny::reactive({
+      intervention_effects()$cost
+    })
     map_locked <- shiny::reactive({
       identical(run_mode(), "guided_auto") && isTRUE(auto_running())
     })
@@ -158,8 +166,8 @@ mod_map_server <- function(
 
       allocs <- allocations()
       spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
-      remaining <- budget$budget - spend_stats$spend - intervention_cost
+      intervention_spend <- intervention_cost()
+      remaining <- budget$budget - spend_stats$spend - intervention_spend
 
       if (!is.finite(remaining) || remaining < cost_ag) {
         shiny::showNotification("Not enough budget for mass testing.", type = "message")
@@ -259,9 +267,9 @@ mod_map_server <- function(
 
       budget <- budget_info()
       spend_stats <- summarise_budget(trial_allocs, budget$costs, budget$budget)
-      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
+      intervention_spend <- intervention_cost()
 
-      if ((budget$budget - spend_stats$spend - intervention_cost) < -1e-6) {
+      if ((budget$budget - spend_stats$spend - intervention_spend) < -1e-6) {
         shiny::showNotification("Budget exceeded", type = "error")
         return()
       }
@@ -274,10 +282,14 @@ mod_map_server <- function(
       allocs <- allocations()
       budget <- budget_info()
       spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
-      total_spend <- spend_stats$spend + intervention_cost
+      intervention_spend <- intervention_cost()
+      total_spend <- spend_stats$spend + intervention_spend
       remaining <- budget$budget - total_spend
-      paste0("£", round(remaining, 0), " left")
+      paste0(
+        "Left £", round(remaining, 0),
+        " | Tests £", round(spend_stats$spend, 0),
+        " | Interventions £", round(intervention_spend, 0)
+      )
     })
 
     observe({
@@ -297,6 +309,21 @@ mod_map_server <- function(
             sprintf("PCR (accurate) £%s", cost_pcr)
           )
         )
+      )
+    })
+
+    observe({
+      req(ready())
+      budget <- budget_info()
+      selected <- selected_interventions()
+      shiny::updateCheckboxGroupInput(
+        session,
+        "interventions",
+        choices = format_intervention_choice_labels(
+          intervention_defs,
+          turn_budget = budget$budget
+        ),
+        selected = selected
       )
     })
 

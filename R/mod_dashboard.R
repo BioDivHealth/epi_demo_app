@@ -228,18 +228,9 @@ mod_dashboard_server <- function(
 
       cmp <- report$comparison
 
-      format_money <- function(x) {
-        if (is.null(x) || !is.finite(x) || is.na(x)) {
-          return("N/A")
-        }
-        paste0("£", round(x, 0))
-      }
-
-      format_efficiency <- function(x) {
-        if (is.null(x) || !is.finite(x) || is.na(x)) {
-          return("N/A")
-        }
-        paste0("£", round(x, 1))
+      format_currency <- function(x, digits = 0) {
+        if (is.null(x) || !is.finite(x) || is.na(x)) return("N/A")
+        paste0("£", round(x, digits))
       }
 
       shiny::div(
@@ -276,7 +267,7 @@ mod_dashboard_server <- function(
             shiny::div(
               class = "p-2 bg-light rounded small",
               shiny::tags$strong("Spend delta: "),
-              format_money(cmp$spend_delta)
+              format_currency(cmp$spend_delta)
             )
           ),
           shiny::div(
@@ -284,7 +275,7 @@ mod_dashboard_server <- function(
             shiny::div(
               class = "p-2 bg-light rounded small",
               shiny::tags$strong("Cost per case averted: "),
-              format_efficiency(cmp$cost_per_case_averted)
+              format_currency(cmp$cost_per_case_averted, digits = 1)
             )
           ),
           shiny::div(
@@ -292,7 +283,7 @@ mod_dashboard_server <- function(
             shiny::div(
               class = "p-2 bg-light rounded small",
               shiny::tags$strong("Cost per death averted: "),
-              format_efficiency(cmp$cost_per_death_averted)
+              format_currency(cmp$cost_per_death_averted, digits = 1)
             )
           )
         )

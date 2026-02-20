@@ -74,7 +74,11 @@ legacy_turn_reference <- function(request) {
   params_mort <- request$params_mort
   testing_params <- request$testing_params
   active_ids <- request$active_ids
-  effects <- compute_intervention_effects(active_ids, request$intervention_defs)
+  effects <- compute_intervention_effects(
+    active_ids,
+    request$intervention_defs,
+    turn_budget = request$budget$budget
+  )
   intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
 
   params_epi$Rt <- params_epi$Rt * effects$Rt_multiplier

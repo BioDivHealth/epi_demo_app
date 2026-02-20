@@ -200,7 +200,11 @@ run_single_turn <- function(request) {
   testing_params <- request$testing_params
   active_ids <- request$active_ids
 
-  effects <- compute_intervention_effects(active_ids, request$intervention_defs)
+  effects <- compute_intervention_effects(
+    active_ids,
+    request$intervention_defs,
+    turn_budget = request$budget$budget
+  )
   intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
 
   adjusted <- apply_interventions_to_params(params_epi, testing_params, effects)

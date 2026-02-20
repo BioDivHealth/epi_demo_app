@@ -22,8 +22,8 @@ help_modal_body <- function(scenario_id = NULL, scenario_defs = scenario_catalog
       "slider to set how many tests each manual allocation applies. You can",
       "also activate interventions: Social distancing (lower Rt), Targeted",
       "quarantine (reduce imports), and Rapid labs (shorter PCR turnaround).",
-      "Selected interventions apply each turn until unticked and count toward",
-      "the per-turn budget.",
+      "Selected interventions consume a share of the turn budget while active,",
+      "so spending more on interventions leaves less budget for testing coverage.",
       "Use the questions below as a guide for interpreting what you see and",
       "comparing it with the replay."
     ),
@@ -47,6 +47,8 @@ help_modal_body <- function(scenario_id = NULL, scenario_defs = scenario_catalog
     shiny::tags$ul(
       shiny::tags$li("How does observed positivity compare with true prevalence in the replay?"),
       shiny::tags$li("When did sampling bias or delays distort your inference?"),
+      shiny::tags$li("When did intervention choices improve trajectory but reduce detection coverage?"),
+      shiny::tags$li("How did your intervention spend compare with your baseline comparator?"),
       shiny::tags$li("What general testing strategy would you adjust next time?")
     )
   )
