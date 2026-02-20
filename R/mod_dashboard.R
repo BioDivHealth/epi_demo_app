@@ -48,11 +48,14 @@ mod_dashboard_ui <- function(id) {
         )
       ),
       shiny::hr(class = "my-2"),
+      shiny::uiOutput(ns("run_status_line")),
+      shiny::hr(class = "my-2"),
       shiny::div(
         class = "small",
         shiny::verbatimTextOutput(ns("spend_text"))
       ),
-      shiny::uiOutput(ns("comparison_cards"))
+      shiny::uiOutput(ns("comparison_cards")),
+      shiny::uiOutput(ns("debrief_prompts"))
     )
   )
 }
@@ -65,6 +68,7 @@ mod_dashboard_server <- function(
     available_now,
     reported_deaths,
     comparison_report = shiny::reactive(NULL),
+    run_status = shiny::reactive(NULL),
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
     ready <- shiny::reactive({
@@ -81,6 +85,56 @@ mod_dashboard_server <- function(
         dplyr::group_by(turn = turn_available) |>
         dplyr::summarise(positives = sum(positives), .groups = "drop") |>
         dplyr::arrange(turn)
+    })
+
+    output$run_status_line <- shiny::renderUI({
+      req(ready())
+      status <- run_status()
+      if (is.null(status) || !is.list(status)) {
+        return(NULL)
+      }
+
+      mode <- if (is.null(status$mode)) "guided_auto" else as.character(status$mode)
+      running <- isTRUE(status$running)
+      turns_completed <- suppressWarnings(as.integer(status$turns_completed))
+      turns_requested <- suppressWarnings(as.integer(status$turns_requested))
+      stop_reason <- if (is.null(status$stop_reason)) "" else as.character(status$stop_reason)
+      revealed <- isTRUE(status$revealed)
+
+      if (is.na(turns_completed)) turns_completed <- 0L
+      if (is.na(turns_requested)) turns_requested <- 0L
+
+      stop_label <- switch(
+        stop_reason,
+        budget_exceeded = "Budget limit reached",
+        completed = "Run completed",
+        user_stop = "Stopped by user",
+        reset_or_reseed = "Reset/reseed",
+        ""
+      )
+
+      mode_label <- if (identical(mode, "manual")) "Manual mode" else "Guided auto mode"
+      progress_label <- if (turns_requested > 0L) {
+        sprintf("%s/%s turns", turns_completed, turns_requested)
+      } else {
+        sprintf("%s turns", turns_completed)
+      }
+
+      status_bits <- c(mode_label, progress_label)
+      if (nzchar(stop_label)) {
+        status_bits <- c(status_bits, stop_label)
+      }
+      if (revealed) {
+        status_bits <- c(status_bits, "Reveal complete")
+      } else if (running) {
+        status_bits <- c(status_bits, "Run in progress")
+      }
+
+      shiny::div(
+        class = "small text-muted",
+        shiny::tags$strong("Run status: "),
+        paste(status_bits, collapse = " | ")
+      )
     })
 
     output$total_positives <- shiny::renderText({
@@ -286,6 +340,25 @@ mod_dashboard_server <- function(
               format_currency(cmp$cost_per_death_averted, digits = 1)
             )
           )
+        )
+      )
+    })
+
+    output$debrief_prompts <- shiny::renderUI({
+      req(ready())
+      report <- comparison_report()
+      if (is.null(report) || is.null(report$comparison)) {
+        return(NULL)
+      }
+
+      shiny::div(
+        class = "mt-2",
+        shiny::tags$h6("Debrief prompts"),
+        shiny::tags$ul(
+          class = "small mb-0",
+          shiny::tags$li("Surveillance vs control: Did your testing mostly improve visibility, or did interventions materially shift true cases/deaths versus baseline?"),
+          shiny::tags$li("Budget trade-off: Which turns required sacrificing tests to fund interventions, and how did that change observed positivity confidence?"),
+          shiny::tags$li("Interpretation discipline: Compare player and baseline trends across multiple turns, not single-turn spikes, before concluding strategy quality.")
         )
       )
     })

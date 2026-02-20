@@ -17,14 +17,105 @@ replay_build_truth_log <- function(truth_history, borough_names) {
   )
 }
 
-replay_resolve_truth_turns <- function(log_data) {
+replay_branch_names <- function(log_data) {
+  if (is.null(log_data) || !is.list(log_data)) {
+    return(c("player"))
+  }
+
+  branch_payload <- log_data$branches
+  if (!is.list(branch_payload) || length(branch_payload) == 0) {
+    return(c("player"))
+  }
+
+  branch_names <- names(branch_payload)
+  branch_names <- branch_names[!is.na(branch_names) & nzchar(branch_names)]
+  if (length(branch_names) == 0) {
+    return(c("player"))
+  }
+
+  unique(as.character(branch_names))
+}
+
+replay_get_branch_logs <- function(log_data, branch = "player") {
+  empty_logs <- list(
+    truth = tibble::tibble(),
+    observations = tibble::tibble(),
+    actions = tibble::tibble(),
+    truth_history = list()
+  )
+
+  if (is.null(log_data) || !is.list(log_data)) {
+    return(empty_logs)
+  }
+
+  normalize_tbl <- function(x) {
+    if (is.null(x) || !is.data.frame(x)) {
+      tibble::tibble()
+    } else {
+      tibble::as_tibble(x)
+    }
+  }
+
+  normalize_history <- function(x) {
+    if (is.null(x) || !is.list(x)) {
+      list()
+    } else {
+      x
+    }
+  }
+
+  if (is.list(log_data$branches) && length(log_data$branches) > 0) {
+    branch_names <- replay_branch_names(log_data)
+    branch_key <- as.character(branch)[1]
+    if (!branch_key %in% branch_names) {
+      if ("player" %in% branch_names) {
+        branch_key <- "player"
+      } else {
+        branch_key <- branch_names[[1]]
+      }
+    }
+
+    branch_logs <- log_data$branches[[branch_key]]
+    if (!is.list(branch_logs)) {
+      return(empty_logs)
+    }
+
+    return(list(
+      truth = normalize_tbl(branch_logs$truth),
+      observations = normalize_tbl(branch_logs$observations),
+      actions = normalize_tbl(branch_logs$actions),
+      truth_history = normalize_history(branch_logs$truth_history)
+    ))
+  }
+
+  list(
+    truth = normalize_tbl(log_data$truth),
+    observations = normalize_tbl(log_data$observations),
+    actions = normalize_tbl(log_data$actions),
+    truth_history = normalize_history(log_data$truth_history)
+  )
+}
+
+replay_filter_branch <- function(df, branch) {
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) {
+    return(df)
+  }
+  if (!"branch" %in% names(df)) {
+    return(df)
+  }
+  branch_value <- as.character(branch)[1]
+  df[df$branch == branch_value, , drop = FALSE]
+}
+
+replay_resolve_truth_turns <- function(log_data, branch = "player") {
   if (is.null(log_data) || !is.list(log_data)) {
     return(integer())
   }
-  truth_log <- log_data$truth
-  truth_history <- log_data$truth_history
+  branch_logs <- replay_get_branch_logs(log_data, branch = branch)
+  truth_log <- replay_filter_branch(branch_logs$truth, branch = branch)
+  truth_history <- branch_logs$truth_history
   history_n <- if (is.null(truth_history)) 0L else length(truth_history)
-  log_turns <- if (!is.null(truth_log) && nrow(truth_log) > 0) {
+  log_turns <- if (!is.null(truth_log) && nrow(truth_log) > 0 && "turn" %in% names(truth_log)) {
     sort(unique(truth_log$turn))
   } else {
     integer()
@@ -43,14 +134,15 @@ replay_resolve_truth_turns <- function(log_data) {
   integer()
 }
 
-replay_resolve_truth_log <- function(log_data, borough_names) {
+replay_resolve_truth_log <- function(log_data, borough_names, branch = "player") {
   if (is.null(log_data) || !is.list(log_data)) {
     return(tibble::tibble())
   }
-  truth_log <- log_data$truth
-  truth_history <- log_data$truth_history
+  branch_logs <- replay_get_branch_logs(log_data, branch = branch)
+  truth_log <- replay_filter_branch(branch_logs$truth, branch = branch)
+  truth_history <- branch_logs$truth_history
   history_n <- if (is.null(truth_history)) 0L else length(truth_history)
-  log_turns <- if (!is.null(truth_log) && nrow(truth_log) > 0) unique(truth_log$turn) else integer()
+  log_turns <- if (!is.null(truth_log) && nrow(truth_log) > 0 && "turn" %in% names(truth_log)) unique(truth_log$turn) else integer()
   log_n <- length(log_turns)
 
   if (history_n > log_n && history_n > 0) {
@@ -116,7 +208,11 @@ replay_base_map <- function(boros, bounds_list, reset_js, bbox, group) {
     )
 }
 
-replay_summarise_observed <- function(obs_log, target_turn) {
+replay_summarise_observed <- function(obs_log, target_turn, branch = "player") {
+  if (is.null(obs_log) || nrow(obs_log) == 0) {
+    return(tibble::tibble())
+  }
+  obs_log <- replay_filter_branch(obs_log, branch = branch)
   if (is.null(obs_log) || nrow(obs_log) == 0) {
     return(tibble::tibble())
   }
@@ -131,7 +227,11 @@ replay_summarise_observed <- function(obs_log, target_turn) {
     )
 }
 
-replay_summarise_actions <- function(action_log, target_turn) {
+replay_summarise_actions <- function(action_log, target_turn, branch = "player") {
+  if (is.null(action_log) || nrow(action_log) == 0) {
+    return(tibble::tibble())
+  }
+  action_log <- replay_filter_branch(action_log, branch = branch)
   if (is.null(action_log) || nrow(action_log) == 0) {
     return(tibble::tibble())
   }

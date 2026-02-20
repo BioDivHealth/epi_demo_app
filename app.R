@@ -440,13 +440,38 @@ server <- function(input, output, session) {
     actions = tibble()
   )
   replay_unlocked <- reactiveVal(FALSE)
-  empty_logs <- init_turn_logs(inputs$pop_tbl)
-  replay_snapshot <- reactiveVal(list(
-    truth = empty_logs$truth,
-    observations = empty_logs$observations,
-    actions = empty_logs$actions,
-    truth_history = list()
-  ))
+  build_replay_snapshot <- function(player_branch, baseline_branch, comparison_report = NULL) {
+    empty_logs <- init_turn_logs(inputs$pop_tbl)
+    empty_branch <- list(
+      truth = empty_logs$truth,
+      observations = empty_logs$observations,
+      actions = empty_logs$actions,
+      truth_history = list()
+    )
+
+    branch_payload <- function(branch_state) {
+      if (is.null(branch_state)) {
+        return(empty_branch)
+      }
+      list(
+        truth = branch_state$turn_logs$truth,
+        observations = branch_state$turn_logs$observations,
+        actions = branch_state$turn_logs$actions,
+        truth_history = branch_state$truth_history
+      )
+    }
+
+    list(
+      branches = list(
+        player = branch_payload(player_branch),
+        baseline = branch_payload(baseline_branch)
+      ),
+      comparison = if (!is.null(comparison_report)) comparison_report$comparison else NULL,
+      turn_comparison = if (!is.null(comparison_report)) comparison_report$turn_comparison else NULL
+    )
+  }
+
+  replay_snapshot <- reactiveVal(build_replay_snapshot(NULL, NULL))
   replay_open_id <- reactiveVal(0L)
 
   truth_state <- reactiveVal(NULL)
@@ -493,17 +518,19 @@ server <- function(input, output, session) {
       }
     }),
     comparison_report = reactive(dual_report()),
+    run_status = reactive({
+      mode <- controls$run_mode()
+      list(
+        mode = mode,
+        running = isTRUE(auto_running()),
+        turns_completed = auto_turns_completed(),
+        turns_requested = auto_turns_requested(),
+        stop_reason = auto_stop_reason(),
+        revealed = isTRUE(replay_unlocked())
+      )
+    }),
     app_ready = app_ready
   )
-
-  logs_snapshot <- reactive({
-    list(
-      truth = turn_logs$truth,
-      observations = turn_logs$observations,
-      actions = turn_logs$actions,
-      truth_history = truth_history()
-    )
-  })
 
   output$run_summary_table <- renderTable({
     report_dual <- dual_report()
@@ -515,6 +542,25 @@ server <- function(input, output, session) {
     req(report)
     report$turn_summary
   }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 2)
+
+  current_player_branch <- function() {
+    new_branch_state(
+      name = "player",
+      turn = turn(),
+      truth_state = truth_state(),
+      truth_history = truth_history(),
+      observation_state = observation_state(),
+      available_now = available_now(),
+      run_log = run_log(),
+      turn_logs = list(
+        truth = turn_logs$truth,
+        observations = turn_logs$observations,
+        actions = turn_logs$actions
+      ),
+      total_spend = total_spend(),
+      spend_current = spend_current()
+    )
+  }
 
   initialise_truth <- function(seed = NULL) {
     seed_value <- suppressWarnings(as.integer(seed)[1])
@@ -548,12 +594,7 @@ server <- function(input, output, session) {
     turn_logs$observations <- blank_logs$observations
     turn_logs$actions <- blank_logs$actions
     replay_unlocked(FALSE)
-    replay_snapshot(list(
-      truth = blank_logs$truth,
-      observations = blank_logs$observations,
-      actions = blank_logs$actions,
-      truth_history = list()
-    ))
+    replay_snapshot(build_replay_snapshot(NULL, NULL))
 
     truth_state(init)
     truth_history(init$history)
@@ -1086,22 +1127,7 @@ server <- function(input, output, session) {
     baseline <- baseline_branch()
     req(!is.null(baseline))
 
-    player_branch <- new_branch_state(
-      name = "player",
-      turn = turn(),
-      truth_state = truth_state(),
-      truth_history = truth_history(),
-      observation_state = observation_state(),
-      available_now = available_now(),
-      run_log = run_log(),
-      turn_logs = list(
-        truth = turn_logs$truth,
-        observations = turn_logs$observations,
-        actions = turn_logs$actions
-      ),
-      total_spend = total_spend(),
-      spend_current = spend_current()
-    )
+    player_branch <- current_player_branch()
 
     report_dual <- build_dual_branch_report(
       player_branch = player_branch,
@@ -1112,7 +1138,7 @@ server <- function(input, output, session) {
     report <- report_dual$player
     run_report(report)
     dual_report(report_dual)
-    replay_snapshot(logs_snapshot())
+    replay_snapshot(build_replay_snapshot(player_branch, baseline, report_dual))
     replay_unlocked(TRUE)
 
     metrics <- report$metrics
@@ -1260,7 +1286,13 @@ server <- function(input, output, session) {
   # Handle replay button
   observeEvent(input$show_replay, {
     removeModal()
-    replay_snapshot(logs_snapshot())
+    if (isTRUE(replay_unlocked())) {
+      replay_snapshot(build_replay_snapshot(
+        player_branch = current_player_branch(),
+        baseline_branch = baseline_branch(),
+        comparison_report = dual_report()
+      ))
+    }
     showModal(modalDialog(
       title = "Turn-by-Turn Replay",
       mod_replay_ui("replay"),

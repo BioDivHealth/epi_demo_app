@@ -34,3 +34,45 @@ test_that("app launches and key UI elements exist", {
   advance_count <- app$get_value(input = "map-advance")
   expect_equal(as.integer(advance_count), 0L)
 })
+
+test_that("replay unlocks after reveal and supports branch switching", {
+  old_auth <- Sys.getenv("EPILONDON_AUTH_DISABLE", unset = NA)
+  Sys.setenv(EPILONDON_AUTH_DISABLE = "true")
+  on.exit({
+    if (is.na(old_auth)) {
+      Sys.unsetenv("EPILONDON_AUTH_DISABLE")
+    } else {
+      Sys.setenv(EPILONDON_AUTH_DISABLE = old_auth)
+    }
+  }, add = TRUE)
+
+  app <- shinytest2::AppDriver$new(
+    app_dir = "../..",
+    name = "replay-smoke",
+    seed = 123,
+    load_timeout = 15000
+  )
+  on.exit(app$stop(), add = TRUE)
+
+  app$wait_for_js("document.getElementById('controls-end') !== null")
+  app$wait_for_js("document.getElementById('show_replay') === null")
+
+  app$set_inputs(`controls-end` = "click")
+
+  app$wait_for_js(
+    "document.getElementById('show_replay') !== null",
+    timeout = 10000
+  )
+
+  app$set_inputs(show_replay = "click")
+
+  app$wait_for_js("document.getElementById('replay-replay_branch') !== null")
+  app$wait_for_js("document.getElementById('replay-turn_slider') !== null")
+
+  app$set_inputs(`replay-replay_branch` = "baseline")
+  selected_branch <- app$get_value(input = "replay-replay_branch")
+  expect_identical(selected_branch, "baseline")
+
+  app$wait_for_js("document.getElementById('replay-map_observed') !== null")
+  app$wait_for_js("document.getElementById('replay-map_truth') !== null")
+})

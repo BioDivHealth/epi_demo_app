@@ -6,8 +6,20 @@ mod_replay_ui <- function(id) {
     full_screen = TRUE,
     bslib::card_header("Turn-by-turn replay"),
     shiny::uiOutput(ns("notice")),
+    shiny::uiOutput(ns("branch_notice")),
     shiny::div(
       class = "d-flex flex-wrap gap-3 align-items-center mb-3",
+      shiny::radioButtons(
+        inputId = ns("replay_branch"),
+        label = "Replay branch",
+        choices = c(
+          "Player branch" = "player",
+          "Baseline branch" = "baseline"
+        ),
+        selected = "player",
+        inline = TRUE,
+        width = "320px"
+      ),
       shiny::sliderInput(
         inputId = ns("turn_slider"),
         label = "Turn",
@@ -81,6 +93,11 @@ mod_replay_ui <- function(id) {
     ),
     shiny::div(
       class = "mt-3",
+      shiny::tags$strong("Selected turn branch comparison"),
+      shiny::tableOutput(ns("turn_comparison_table"))
+    ),
+    shiny::div(
+      class = "mt-3",
       shiny::tableOutput(ns("actions_table"))
     )
   )
@@ -128,8 +145,24 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     log_data <- shiny::reactive({
       logs()
     })
+    branch_choices <- shiny::reactive({
+      replay_branch_names(log_data())
+    })
+    selected_branch <- shiny::reactive({
+      choices <- branch_choices()
+      shiny::req(length(choices) > 0)
+      selected <- input$replay_branch
+      if (is.null(selected) || !selected %in% choices) {
+        choices[[1]]
+      } else {
+        selected
+      }
+    })
+    branch_logs <- shiny::reactive({
+      replay_get_branch_logs(log_data(), branch = selected_branch())
+    })
     truth_log <- shiny::reactive({
-      replay_resolve_truth_log(log_data(), borough_names)
+      replay_resolve_truth_log(log_data(), borough_names, branch = selected_branch())
     })
 
     output$notice <- shiny::renderUI({
@@ -148,6 +181,46 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
           shiny::span(class = "text-muted", "Use the slider to scrub through turns or press Play for an animated replay.")
         }
       }
+    })
+
+    output$branch_notice <- shiny::renderUI({
+      if (!has_ended()) {
+        return(NULL)
+      }
+      turns <- available_turns()
+      if (length(turns) == 0) {
+        return(NULL)
+      }
+
+      target_turn <- input$turn_slider
+      if (is.null(target_turn) || !target_turn %in% turns) {
+        target_turn <- max(turns)
+      }
+
+      obs_log <- branch_logs()$observations
+      obs_turn <- replay_summarise_observed(
+        obs_log = obs_log,
+        target_turn = target_turn,
+        branch = selected_branch()
+      )
+      total_tests <- if (nrow(obs_turn) == 0) 0 else sum(obs_turn$tests, na.rm = TRUE)
+      if (total_tests > 0) {
+        return(NULL)
+      }
+
+      label <- if (identical(selected_branch(), "baseline")) {
+        "Baseline branch"
+      } else {
+        "Player branch"
+      }
+
+      shiny::div(
+        class = "alert alert-light py-2 mb-2 small",
+        sprintf(
+          "%s has no returned test results for this turn. Interpret observed metrics cautiously and compare trend context across turns.",
+          label
+        )
+      )
     })
 
     output$map_observed <- leaflet::renderLeaflet({
@@ -213,18 +286,19 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     })
 
     available_turns <- shiny::reactive({
-      turns <- replay_resolve_truth_turns(log_data())
+      turns <- replay_resolve_truth_turns(log_data(), branch = selected_branch())
       turns <- turns[is.finite(turns)]
       as.integer(turns)
     })
 
     log_signature <- shiny::reactive({
-      log_snapshot <- log_data()
-      turns <- replay_resolve_truth_turns(log_snapshot)
-      obs_rows <- if (!is.null(log_snapshot$observations)) nrow(log_snapshot$observations) else 0
-      action_rows <- if (!is.null(log_snapshot$actions)) nrow(log_snapshot$actions) else 0
-      truth_rows <- if (!is.null(log_snapshot$truth)) nrow(log_snapshot$truth) else 0
-      paste(length(turns), obs_rows, action_rows, truth_rows, sep = "|")
+      current_branch <- selected_branch()
+      logs_for_branch <- replay_get_branch_logs(log_data(), branch = current_branch)
+      turns <- replay_resolve_truth_turns(log_data(), branch = current_branch)
+      obs_rows <- nrow(replay_filter_branch(logs_for_branch$observations, current_branch))
+      action_rows <- nrow(replay_filter_branch(logs_for_branch$actions, current_branch))
+      truth_rows <- nrow(replay_filter_branch(logs_for_branch$truth, current_branch))
+      paste(current_branch, length(turns), obs_rows, action_rows, truth_rows, sep = "|")
     })
 
     shiny::observeEvent(open_signal(), {
@@ -239,6 +313,45 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       }, once = TRUE)
 
     }, ignoreInit = TRUE)
+
+    shiny::observe({
+      choices <- branch_choices()
+      if (length(choices) == 0) {
+        choices <- c("player")
+      }
+      labels <- stats::setNames(
+        choices,
+        vapply(
+          choices,
+          function(x) {
+            if (identical(x, "player")) {
+              "Player branch"
+            } else if (identical(x, "baseline")) {
+              "Baseline branch"
+            } else {
+              tools::toTitleCase(gsub("_", " ", x))
+            }
+          },
+          character(1)
+        )
+      )
+
+      current <- shiny::isolate(input$replay_branch)
+      target <- if (!is.null(current) && current %in% choices) {
+        current
+      } else if ("player" %in% choices) {
+        "player"
+      } else {
+        choices[[1]]
+      }
+
+      shiny::updateRadioButtons(
+        session = session,
+        inputId = "replay_branch",
+        choices = labels,
+        selected = target
+      )
+    })
 
     apply_turns_to_slider <- function(turns, value_override = NULL) {
       if (length(turns) == 0) {
@@ -403,11 +516,19 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     })
 
     observed_turn <- shiny::reactive({
-      replay_summarise_observed(log_data()$observations, selected_turn())
+      replay_summarise_observed(
+        obs_log = branch_logs()$observations,
+        target_turn = selected_turn(),
+        branch = selected_branch()
+      )
     })
 
     actions_turn <- shiny::reactive({
-      replay_summarise_actions(log_data()$actions, selected_turn())
+      replay_summarise_actions(
+        action_log = branch_logs()$actions,
+        target_turn = selected_turn(),
+        branch = selected_branch()
+      )
     })
 
     shiny::observe({
@@ -497,11 +618,44 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       replay_action_table(actions_turn())
     }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 1, na = "")
 
+    output$turn_comparison_table <- shiny::renderTable({
+      shiny::req(has_ended())
+      comparison_df <- log_data()$turn_comparison
+      if (is.null(comparison_df) || !is.data.frame(comparison_df) || nrow(comparison_df) == 0) {
+        return(tibble::tibble(note = "Turn-level branch comparison is unavailable for this replay payload."))
+      }
+      comparison_df <- tibble::as_tibble(comparison_df)
+      if (!"turn" %in% names(comparison_df)) {
+        return(tibble::tibble(note = "Turn-level branch comparison is unavailable for this replay payload."))
+      }
+
+      selected <- comparison_df |>
+        dplyr::filter(turn == selected_turn()) |>
+        dplyr::select(
+          dplyr::any_of(c(
+            "turn",
+            "player_truth_total",
+            "baseline_truth_total",
+            "player_deaths_total",
+            "baseline_deaths_total",
+            "player_observed_positives",
+            "baseline_observed_positives",
+            "player_total_turn_spend",
+            "baseline_total_turn_spend"
+          ))
+        )
+
+      if (nrow(selected) == 0) {
+        return(tibble::tibble(note = "No branch comparison row is available for the selected turn."))
+      }
+      selected
+    }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 1, na = "")
+
     output$incidence_plot <- shiny::renderPlot({
       shiny::req(has_ended())
       replay_plot_prevalence(
         truth_log = truth_log(),
-        obs_log = log_data()$observations,
+        obs_log = branch_logs()$observations,
         pop_tbl = pop_tbl,
         window = input$infectious_period
       )
@@ -509,7 +663,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
 
     output$testing_plot <- shiny::renderPlot({
       shiny::req(has_ended())
-      replay_plot_testing(log_data()$actions)
+      replay_plot_testing(branch_logs()$actions)
     })
   })
 }
