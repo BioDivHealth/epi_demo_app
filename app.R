@@ -46,60 +46,9 @@ auth_credentials_path <- Sys.getenv(
   file.path("config", "credentials.csv")
 )
 
-load_credentials <- function(path) {
-  if (!file.exists(path)) {
-    stop(sprintf(
-      "Auth credentials file not found at '%s'. Create it before running the app.",
-      path
-    ))
-  }
-
-  creds <- utils::read.csv(path, stringsAsFactors = FALSE)
-  required <- c("user", "password")
-  missing <- setdiff(required, names(creds))
-  if (length(missing) > 0) {
-    stop(sprintf(
-      "Auth credentials missing required columns: %s",
-      paste(missing, collapse = ", ")
-    ))
-  }
-
-  if (!"admin" %in% names(creds)) {
-    creds$admin <- FALSE
-  }
-  creds$admin <- as.logical(creds$admin)
-  creds
-}
-
 credentials <- NULL
 if (!auth_disabled) {
   credentials <- load_credentials(auth_credentials_path)
-}
-
-get_auth_user_info <- function(auth) {
-  info <- auth$user_info
-  if (is.function(info)) {
-    info <- info()
-  }
-  if (is.null(info)) {
-    return(NULL)
-  }
-  if (is.data.frame(info) && nrow(info) < 1L) {
-    return(NULL)
-  }
-  info
-}
-
-get_admin_users <- function(creds) {
-  if (is.null(creds) || !("user" %in% names(creds))) {
-    return(character())
-  }
-  admins <- rep(FALSE, nrow(creds))
-  if ("admin" %in% names(creds)) {
-    admins <- as.logical(creds$admin)
-    admins[is.na(admins)] <- FALSE
-  }
-  creds$user[admins]
 }
 
 admin_users <- get_admin_users(credentials)
@@ -143,114 +92,25 @@ app_ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
   title = "Outbreaks in London: simulation",
   tags$head(
-    tags$style(HTML("
-      .main-header { margin-bottom: 1rem; }
-      .main-header h3 { margin: 0; color: #5a5a5a; }
-      .header-actions { display: flex; align-items: center; gap: 0.5rem; }
-      .help-button { white-space: nowrap; }
-      .turn-badge { font-size: 1.1rem; font-weight: 600; }
-      .scenario-label { font-size: 0.85rem; color: #6c757d; }
-      #map-map {
-        height: 55vh !important;
-        min-height: 320px;
-      }
-      .bslib-sidebar-toggle,
-      .bslib-sidebar-toggle-btn,
-      .bslib-sidebar-trigger {
-        display: none !important;
-      }
-      .mfb-component--br,
-      .mfb-component--br * {
-        display: none !important;
-      }
-      #controls-rng_seed { width: 100%; min-width: 75px; font-size: 11px; }
-      .controls-seed-block {
-        margin-bottom: 12px;
-        width: 100%;
-        height: fit-content;
-      }
-      .controls-seed-block .checkbox {
-        vertical-align: middle;
-        text-align: left;
-        margin-bottom: 0;
-        height: fit-content;
-      }
-      .controls-seed-block .checkbox label {
-        overflow: visible;
-        height: fit-content;
-        text-align: center;
-        vertical-align: middle;
-      }
-      .controls-seed-block .checkbox span {
-        font-size: 14px;
-        color: rgba(62, 63, 58, 1);
-      }
-    "))
-    ,
-    tags$script(HTML("(
-      function() {
-        var key = 'epilondon_help_seen';
-        function navType() {
-          var entries = performance.getEntriesByType && performance.getEntriesByType('navigation');
-          if (entries && entries.length && entries[0].type) {
-            return entries[0].type;
-          }
-          if (performance.navigation && typeof performance.navigation.type !== 'undefined') {
-            return performance.navigation.type === 1 ? 'reload' : 'navigate';
-          }
-          return 'navigate';
-        }
-        var type = navType();
-        var seen = false;
-        try { seen = localStorage.getItem(key) === '1'; } catch (e) { seen = false; }
-        var shouldShow = (!seen) || type === 'reload';
-        if (shouldShow) {
-          try { localStorage.setItem(key, '1'); } catch (e) {}
-        }
-        var send = function() {
-          if (!shouldShow) {
-            return false;
-          }
-          if (window.Shiny && Shiny.setInputValue) {
-            Shiny.setInputValue('help_auto', Date.now(), {priority: 'event'});
-            return true;
-          }
-          return false;
-        };
-        var tries = 0;
-        var retry = function() {
-          tries += 1;
-          if (send()) {
-            return;
-          }
-          if (tries < 40) {
-            setTimeout(retry, 250);
-          }
-        };
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', retry);
-        } else {
-          retry();
-        }
-        document.addEventListener('shiny:connected', retry);
-      }
-    )();"))
+    tags$link(rel = "stylesheet", href = "style.css"),
+    tags$script(src = "help-auto.js")
   ),
+  div(
+    class = "main-header d-flex justify-content-between align-items-center",
     div(
-      class = "main-header d-flex justify-content-between align-items-center",
-      div(
-        h3("Outbreaks in London: simulation"),
-        div(class = "scenario-label", textOutput("scenario_display"))
-      ),
-      div(
-        class = "header-actions",
-        actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button"),
-        div(
-          class = "turn-badge badge bg-secondary",
-          textOutput("turn_display", inline = TRUE)
-        )
-      )
+      h3("Outbreaks in London: simulation"),
+      div(class = "scenario-label", textOutput("scenario_display"))
     ),
+    div(
+      class = "header-actions",
+      mod_controls_header_ui("controls"),
+      actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button"),
+      div(
+        class = "turn-badge badge bg-secondary",
+        textOutput("turn_display", inline = TRUE)
+      )
+    )
+  ),
   uiOutput("main_layout"),
   div(
     class = "text-muted small mt-2",
@@ -344,29 +204,22 @@ server <- function(input, output, session) {
   })
 
   output$main_layout <- renderUI({
+    content <- bslib::layout_columns(
+      col_widths = if (is_admin()) c(8, 4) else c(7, 5),
+      fill = FALSE,
+      mod_map_ui(
+        "map",
+        intervention_defs = intervention_defs,
+        run_controls_ui = mod_controls_run_ui("controls"),
+        run_mode_ui = mod_controls_run_mode_ui("controls"),
+        testing_pool_ui = mod_controls_testing_pool_ui("controls"),
+        borough_policy_ui = mod_controls_borough_policy_ui("controls")
+      ),
+      mod_dashboard_ui("dashboard")
+    )
     if (is_admin()) {
       bslib::layout_sidebar(
-        bslib::layout_columns(
-          col_widths = c(8, 4),
-          fill = FALSE,
-          mod_map_ui("map", intervention_defs = intervention_defs),
-          mod_dashboard_ui("dashboard")
-        ),
-        sidebar = bslib::sidebar(
-          mod_controls_ui("controls"),
-          width = "320px",
-          open = "desktop"
-        ),
-        fill = FALSE
-      )
-    } else {
-      bslib::layout_sidebar(
-        bslib::layout_columns(
-          col_widths = c(7, 5),
-          fill = FALSE,
-          mod_map_ui("map", intervention_defs = intervention_defs),
-          mod_dashboard_ui("dashboard")
-        ),
+        content,
         sidebar = bslib::sidebar(
           mod_controls_ui("controls"),
           width = "280px",
@@ -374,6 +227,8 @@ server <- function(input, output, session) {
         ),
         fill = FALSE
       )
+    } else {
+      content
     }
   })
 
@@ -426,7 +281,6 @@ server <- function(input, output, session) {
   })
 
   run_log <- reactiveVal(tibble())
-  run_report <- reactiveVal(NULL)
   dual_report <- reactiveVal(NULL)
   baseline_branch <- reactiveVal(NULL)
   master_seed <- reactiveVal(2024L)
@@ -440,37 +294,6 @@ server <- function(input, output, session) {
     actions = tibble()
   )
   replay_unlocked <- reactiveVal(FALSE)
-  build_replay_snapshot <- function(player_branch, baseline_branch, comparison_report = NULL) {
-    empty_logs <- init_turn_logs(inputs$pop_tbl)
-    empty_branch <- list(
-      truth = empty_logs$truth,
-      observations = empty_logs$observations,
-      actions = empty_logs$actions,
-      truth_history = list()
-    )
-
-    branch_payload <- function(branch_state) {
-      if (is.null(branch_state)) {
-        return(empty_branch)
-      }
-      list(
-        truth = branch_state$turn_logs$truth,
-        observations = branch_state$turn_logs$observations,
-        actions = branch_state$turn_logs$actions,
-        truth_history = branch_state$truth_history
-      )
-    }
-
-    list(
-      branches = list(
-        player = branch_payload(player_branch),
-        baseline = branch_payload(baseline_branch)
-      ),
-      comparison = if (!is.null(comparison_report)) comparison_report$comparison else NULL,
-      turn_comparison = if (!is.null(comparison_report)) comparison_report$turn_comparison else NULL
-    )
-  }
-
   replay_snapshot <- reactiveVal(build_replay_snapshot(NULL, NULL))
   replay_open_id <- reactiveVal(0L)
 
@@ -534,13 +357,9 @@ server <- function(input, output, session) {
 
   output$run_summary_table <- renderTable({
     report_dual <- dual_report()
-    if (!is.null(report_dual) && !is.null(report_dual$turn_comparison)) {
-      return(report_dual$turn_comparison)
-    }
-
-    report <- run_report()
-    req(report)
-    report$turn_summary
+    req(report_dual)
+    req(report_dual$turn_comparison)
+    report_dual$turn_comparison
   }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 2)
 
   current_player_branch <- function() {
@@ -739,7 +558,6 @@ server <- function(input, output, session) {
       )
     ))
 
-    run_report(NULL)
     dual_report(NULL)
   }
 
@@ -748,20 +566,6 @@ server <- function(input, output, session) {
     auto_turns_requested(0L)
     auto_turns_completed(0L)
     auto_stop_reason(reason)
-  }
-
-  derive_turn_seed <- function(master_seed_value, turn_index) {
-    master_seed_value <- suppressWarnings(as.integer(master_seed_value))
-    turn_index <- suppressWarnings(as.integer(turn_index))
-
-    if (is.na(master_seed_value) || master_seed_value < 1L) {
-      master_seed_value <- 1L
-    }
-    if (is.na(turn_index) || turn_index < 0L) {
-      turn_index <- 0L
-    }
-
-    as.integer((master_seed_value * 1009L + turn_index * 9176L) %% .Machine$integer.max)
   }
 
   build_turn_request <- function(
@@ -1135,155 +939,20 @@ server <- function(input, output, session) {
       pop_tbl = effective_pop_tbl()
     )
 
-    report <- report_dual$player
-    run_report(report)
     dual_report(report_dual)
     replay_snapshot(build_replay_snapshot(player_branch, baseline, report_dual))
     replay_unlocked(TRUE)
 
-    metrics <- report$metrics
+    metrics <- report_dual$player$metrics
     comparison <- report_dual$comparison
 
-    # Calculate detection coverage
     total_true <- sum(sapply(truth_history(), sum))
     total_observed <- sum(observation_state()$history$positives)
     detection_rate <- if (total_true > 0) round(100 * total_observed / total_true, 1) else NA
 
-    format_rt <- function(mean_rt, lower_rt, upper_rt) {
-      if (is.na(mean_rt) || is.na(lower_rt) || is.na(upper_rt)) {
-        "Rt unavailable"
-      } else {
-        sprintf("%.2f (%.2f–%.2f)", mean_rt, lower_rt, upper_rt)
-      }
-    }
-
-    true_prev_pct <- if (is.na(metrics$true_prevalence_rate)) {
-      "N/A"
-    } else {
-      sprintf("%.2f%%", 100 * metrics$true_prevalence_rate)
-    }
-
-    observed_rt_txt <- format_rt(
-      metrics$rt_observed_mean,
-      metrics$rt_observed_lower,
-      metrics$rt_observed_upper
-    )
-    truth_rt_txt <- format_rt(
-      metrics$rt_truth_mean,
-      metrics$rt_truth_lower,
-      metrics$rt_truth_upper
-    )
-
-    showModal(modalDialog(
-      title = tags$span(
-        tags$i(class = "fa fa-eye me-2"),
-        "True Data Revealed"
-      ),
-      fluidRow(
-        column(6,
-          tags$div(
-            class = "card bg-light mb-3",
-            tags$div(class = "card-header", tags$strong("Your Results")),
-            tags$div(
-              class = "card-body",
-              tags$p(
-                tags$strong("Time to first detection: "),
-                ifelse(is.na(metrics$time_to_detection), "Never detected!", paste("Turn", metrics$time_to_detection))
-              ),
-              tags$p(
-                tags$strong("Peak observed: "),
-                metrics$peak_observed_positives, " positives"
-              ),
-              tags$p(
-                tags$strong("Total spend: "),
-                paste0("£", round(metrics$total_spend, 0))
-              ),
-              tags$p(
-                tags$strong("Detection rate: "),
-                ifelse(is.na(detection_rate), "N/A", paste0(detection_rate, "% of true cases"))
-              ),
-              tags$p(
-                tags$strong("Estimated Rt (observed): "),
-                observed_rt_txt
-              )
-            )
-          )
-        ),
-        column(6,
-          tags$div(
-            class = "card bg-warning-subtle mb-3",
-            tags$div(class = "card-header", tags$strong("True Data")),
-            tags$div(
-              class = "card-body",
-              tags$p(
-                tags$strong("Peak true incidence: "),
-                metrics$peak_true_incidence, " cases"
-              ),
-              tags$p(
-                tags$strong("Calibration gap: "),
-                sprintf("%.3f RMSE", metrics$calibration_gap)
-              ),
-              tags$p(
-                tags$strong("True cumulative prevalence (final turn): "),
-                true_prev_pct
-              ),
-              tags$p(
-                tags$strong("Rt from truth incidence: "),
-                truth_rt_txt
-              ),
-              tags$p(
-                class = "text-muted small",
-                "The calibration gap measures how far your inferred prevalence was from the truth."
-              )
-            )
-          )
-        )
-      ),
-      fluidRow(
-        column(12,
-          tags$div(
-            class = "card bg-info-subtle mb-3",
-            tags$div(class = "card-header", tags$strong("Player vs Baseline")),
-            tags$div(
-              class = "card-body",
-              tags$p(
-                tags$strong("Cases averted: "),
-                as.integer(round(comparison$cases_averted))
-              ),
-              tags$p(
-                tags$strong("Deaths averted: "),
-                as.integer(round(comparison$deaths_averted))
-              ),
-              tags$p(
-                tags$strong("Peak delay: "),
-                if (is.na(comparison$peak_delay_turns)) "N/A" else paste0(comparison$peak_delay_turns, " turns")
-              ),
-              tags$p(
-                tags$strong("Spend delta (player - baseline): "),
-                if (is.na(comparison$spend_delta)) "N/A" else paste0("£", round(comparison$spend_delta, 0))
-              )
-            )
-          )
-        )
-      ),
-      tags$hr(),
-      tags$h5("Turn-by-Turn Branch Comparison"),
-      tags$div(
-        style = "max-height: 300px; overflow-y: auto;",
-        tableOutput("run_summary_table")
-      ),
-      tags$hr(),
-      tags$div(
-        class = "text-center",
-        actionButton("show_replay", "View Replay", class = "btn-primary btn-lg")
-      ),
-      footer = modalButton("Close"),
-      size = "xl",
-      easyClose = TRUE
-    ))
+    showModal(build_endgame_modal(metrics, comparison, detection_rate))
   })
 
-  # Handle replay button
   observeEvent(input$show_replay, {
     removeModal()
     if (isTRUE(replay_unlocked())) {
@@ -1303,7 +972,6 @@ server <- function(input, output, session) {
     replay_open_id(replay_open_id() + 1L)
   })
 
-  # Initialize replay server (works when modal opens)
   mod_replay_server(
     id = "replay",
     logs = reactive(replay_snapshot()),

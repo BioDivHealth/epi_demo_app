@@ -1,8 +1,17 @@
 # Map module -----------------------------------------------------------------
 
-mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
+mod_map_ui <- function(
+    id,
+    intervention_defs = intervention_catalog(),
+    run_controls_ui = NULL,
+    run_mode_ui = NULL,
+    testing_pool_ui = NULL,
+    borough_policy_ui = NULL) {
   ns <- shiny::NS(id)
   intervention_choices <- format_intervention_choice_labels(intervention_defs)
+  is_manual_condition <- "input['controls-run_mode'] === 'manual'"
+  is_auto_condition <- "input['controls-run_mode'] === 'guided_auto'"
+  manual_alloc_controls_condition <- "!(input['controls-run_mode'] === 'guided_auto' && input['controls-allocation_policy'] !== 'manual')"
   bslib::card(
     full_screen = TRUE,
     bslib::card_header(
@@ -13,66 +22,105 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
         shiny::textOutput(ns("budget_badge"), inline = TRUE)
       )
     ),
+    # 3-section horizontal strip
     shiny::div(
-      class = "mb-2 d-flex flex-wrap gap-3 align-items-center p-2 bg-light rounded",
+      class = "map-controls-strip mb-2",
+      # Section 1: Run Mode
       shiny::div(
-        class = "d-flex gap-2 align-items-center",
-        shiny::tags$label(class = "mb-0", "Test type:"),
-        shiny::radioButtons(
-          ns("test_type"),
+        id = ns("run_mode_box"),
+        class = "map-section map-section-mode",
+        shiny::tags$div(class = "map-section-label", "Run mode"),
+        run_mode_ui
+      ),
+      # Section 2: Testing Strategy (content varies by mode)
+      shiny::div(
+        class = "map-section map-section-strategy",
+        shiny::tags$div(class = "map-section-label", "Testing strategy"),
+        shiny::div(
+          class = "d-flex flex-wrap gap-2 align-items-center",
+          shiny::conditionalPanel(
+            condition = is_manual_condition,
+            shiny::div(
+              class = "map-selection-group map-selection-group-test-type",
+              shiny::tags$label(class = "map-selection-label", "Test type"),
+              shiny::div(
+                class = "map-selection-options toggle-btn-group",
+                shiny::radioButtons(
+                  ns("test_type"),
+                  label = NULL,
+                  choices = c("Antigen (fast)" = "ag", "PCR (accurate)" = "pcr"),
+                  selected = "ag",
+                  inline = TRUE
+                )
+              )
+            )
+          ),
+          testing_pool_ui,
+          shiny::conditionalPanel(
+            condition = is_auto_condition,
+            borough_policy_ui
+          ),
+          shiny::conditionalPanel(
+            condition = is_manual_condition,
+            shiny::div(
+              class = "d-flex gap-2 align-items-center",
+              shiny::tags$label(style = "font-size:12px; margin-bottom:0;", "Tests per click:"),
+              shiny::sliderInput(
+                ns("tests_per_click"),
+                label = NULL,
+                min = 1,
+                max = 20,
+                value = 5,
+                step = 1,
+                width = "120px",
+                ticks = FALSE
+              )
+            ),
+            shiny::actionButton(
+              ns("mass_test"),
+              "Mass Testing",
+              class = "btn-outline-primary btn-sm"
+            )
+          ),
+          shiny::conditionalPanel(
+            condition = is_manual_condition,
+            shiny::tags$span(
+              class = "ms-auto small text-muted",
+              shiny::textOutput(ns("allocation_summary"), inline = TRUE)
+            )
+          )
+        )
+      ),
+      # Section 3: Interventions
+      shiny::div(
+        class = "map-section map-section-interventions",
+        shiny::tags$div(class = "map-section-label", "Interventions"),
+        shiny::checkboxGroupInput(
+          ns("interventions"),
           label = NULL,
-        choices = c("Antigen (fast)" = "ag", "PCR (accurate)" = "pcr"),
-          selected = "ag",
+          choices = intervention_choices,
+          selected = character(),
           inline = TRUE
         )
-      ),
-      shiny::div(
-        class = "d-flex gap-2 align-items-center",
-        shiny::tags$label(class = "mb-0 small", "Tests per click:"),
-        shiny::sliderInput(
-          ns("tests_per_click"),
-          label = NULL,
-          min = 1,
-          max = 20,
-          value = 5,
-          step = 1,
-          width = "120px",
-          ticks = FALSE
-        )
-      ),
-      shiny::actionButton(
-        ns("mass_test"),
-        "Mass Testing",
-        class = "btn-outline-primary btn-sm"
-      ),
-      shiny::tags$span(class = "ms-auto small text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
+      )
     ),
     leaflet::leafletOutput(ns("map"), height = "400px"),
     shiny::hr(class = "my-2"),
     shiny::fluidRow(
       shiny::column(
-        width = 7,
+        width = 12,
         shiny::div(
-          class = "d-flex flex-wrap gap-2",
-          shiny::tags$label(class = "form-label small mb-0 me-2", "Interventions:"),
-          shiny::checkboxGroupInput(
-            ns("interventions"),
-            label = NULL,
-            choices = intervention_choices,
-            selected = character(),
-            inline = TRUE
-          )
-        )
-      ),
-      shiny::column(
-        width = 5,
-        shiny::div(
-          class = "d-flex gap-2 justify-content-end",
-          shiny::div(class = "small text-muted align-self-center", shiny::textOutput(ns("turn_positivity"), inline = TRUE)),
+          class = "d-flex gap-2 justify-content-end align-items-center",
+          shiny::div(class = "small text-muted me-auto", shiny::textOutput(ns("turn_positivity"), inline = TRUE)),
           shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm"),
           shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary")
         )
       )
+    ),
+    shiny::div(
+      id = ns("run_rail"),
+      class = "map-run-rail",
+      run_controls_ui
     )
   )
 }
@@ -136,11 +184,7 @@ mod_map_server <- function(
       c(bbox[["ymin"]] - 0.02, bbox[["xmin"]] - 0.02),
       c(bbox[["ymax"]] + 0.02, bbox[["xmax"]] + 0.02)
     )
-    reset_js <- sprintf(
-      "function(btn, map){ map.fitBounds([[%.6f, %.6f],[%.6f, %.6f]]); }",
-      bounds_list[[1]][1], bounds_list[[1]][2],
-      bounds_list[[2]][1], bounds_list[[2]][2]
-    )
+    reset_js <- "function(btn, map){ map.setView([51.505, -0.09], 9.3); }"
 
     observeEvent(input$clear_alloc, {
       if (isTRUE(map_locked())) {
@@ -210,7 +254,8 @@ mod_map_server <- function(
         boros,
         options = leaflet::leafletOptions(
           maxBounds = bounds_list,
-          minZoom = 9
+          minZoom = 9,
+          zoomSnap = 0.1
         )
       ) |>
         leaflet::addProviderTiles("CartoDB.Positron") |>
@@ -231,12 +276,7 @@ mod_map_server <- function(
             onClick = htmlwidgets::JS(reset_js)
           )
         ) |>
-        leaflet::fitBounds(
-          lng1 = bbox[["xmin"]],
-          lat1 = bbox[["ymin"]],
-          lng2 = bbox[["xmax"]],
-          lat2 = bbox[["ymax"]]
-        )
+        leaflet::setView(lng = -0.09, lat = 51.505, zoom = 9.3)
     })
 
     # Handle map clicks - add tests based on selected type

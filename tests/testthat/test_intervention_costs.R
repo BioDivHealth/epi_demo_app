@@ -88,7 +88,7 @@ test_that("unknown selections are ignored", {
   expect_equal(effects$Rt_multiplier, 0.8)
 })
 
-test_that("intervention labels include share/floor and optional current amount", {
+test_that("intervention labels include only current amount", {
   labels_static <- format_intervention_choice_labels(local_catalog)
   labels_dynamic <- format_intervention_choice_labels(local_catalog, turn_budget = 2000)
 
@@ -97,6 +97,6 @@ test_that("intervention labels include share/floor and optional current amount",
 
   expect_length(distancing_static, 1)
   expect_length(distancing_dynamic, 1)
-  expect_match(distancing_static, "25%/turn, min £30", fixed = TRUE)
-  expect_match(distancing_dynamic, "25%/turn, min £30, now ~£500", fixed = TRUE)
+  expect_match(distancing_static, "Social distancing (£30)", fixed = TRUE)
+  expect_match(distancing_dynamic, "Social distancing (£500)", fixed = TRUE)
 })

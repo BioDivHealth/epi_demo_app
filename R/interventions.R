@@ -145,14 +145,12 @@ compute_intervention_costs <- function(selected, turn_budget, catalog, max_share
 format_intervention_choice_labels <- function(catalog, turn_budget = NULL) {
   validate_intervention_catalog(catalog)
 
-  pct <- round(suppressWarnings(as.numeric(catalog$cost_pct_turn)) * 100)
   floors <- round(suppressWarnings(as.numeric(catalog$cost_floor)))
 
   if (is.null(turn_budget)) {
     labels <- sprintf(
-      "%s (%s%%/turn, min £%s)",
+      "%s (£%s)",
       catalog$label,
-      pct,
       floors
     )
   } else {
@@ -166,10 +164,8 @@ format_intervention_choice_labels <- function(catalog, turn_budget = NULL) {
       round(suppressWarnings(as.numeric(catalog$cost_pct_turn)) * turn_budget)
     )
     labels <- sprintf(
-      "%s (%s%%/turn, min £%s, now ~£%s)",
+      "%s (£%s)",
       catalog$label,
-      pct,
-      floors,
       round(current_abs)
     )
   }

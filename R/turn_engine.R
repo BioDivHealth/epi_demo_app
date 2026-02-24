@@ -1,5 +1,19 @@
 # Shared turn engine -----------------------------------------------------------
 
+derive_turn_seed <- function(master_seed_value, turn_index) {
+  master_seed_value <- suppressWarnings(as.integer(master_seed_value))
+  turn_index <- suppressWarnings(as.integer(turn_index))
+
+  if (is.na(master_seed_value) || master_seed_value < 1L) {
+    master_seed_value <- 1L
+  }
+  if (is.na(turn_index) || turn_index < 0L) {
+    turn_index <- 0L
+  }
+
+  as.integer((master_seed_value * 1009L + turn_index * 9176L) %% .Machine$integer.max)
+}
+
 validate_turn_request <- function(request) {
   if (!is.list(request)) {
     stop("request must be a list")

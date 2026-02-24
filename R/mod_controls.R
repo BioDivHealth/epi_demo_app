@@ -1,110 +1,144 @@
 # Controls module -------------------------------------------------------------
 
-mod_controls_ui <- function(id) {
-
+mod_controls_testing_pool_ui <- function(id) {
   ns <- shiny::NS(id)
-  bslib::card(
-    style = "height: 100%; overflow-y: auto;",
-    bslib::card_header("Game Controls"),
+
+  shiny::div(
+    class = "map-selection-group map-selection-group-testing-pool",
+    shiny::tags$label(class = "map-selection-label", "Testing pool"),
     shiny::div(
-      class = "mb-3",
-      shiny::tags$p(
-        class = "text-muted small",
-        "Allocate tests on the map, then advance turns to see results."
-      )
-    ),
-    shiny::hr(),
-    shiny::div(
-      class = "mb-3 controls-seed-block",
-      shiny::tags$label(class = "form-label", "RNG Seed"),
-      shiny::div(
-        class = "d-flex gap-2 align-items-center",
-        shiny::numericInput(ns("rng_seed"), label = NULL, value = 2024, min = 1, step = 1, width = "100%"),
-        shiny::checkboxInput(ns("random_seed"), "Random", value = FALSE)
-      )
-    ),
-    shiny::div(
-      class = "mb-3",
-      shiny::tags$label(class = "form-label", "Testing pool"),
+      class = "map-selection-options toggle-btn-group",
       shiny::radioButtons(
         ns("testing_pool"),
         label = NULL,
         choices = c("Symptomatic" = "symptomatic", "Random" = "random"),
-        selected = "symptomatic",
+        selected = "random",
         inline = TRUE
       )
-    ),
-    shiny::hr(),
+    )
+  )
+}
+
+mod_controls_header_ui <- function(id) {
+  ns <- shiny::NS(id)
+
+  shiny::div(
+    class = "header-game-controls",
     shiny::div(
-      class = "mb-3",
-      shiny::tags$label(class = "form-label", "Run mode"),
+      class = "header-seed-controls",
+      shiny::tags$label(
+        class = "header-seed-label text-muted small mb-0",
+        shiny::tags$strong("Seed")
+      ),
+      shiny::numericInput(
+        ns("rng_seed"),
+        label = NULL,
+        value = 2024,
+        min = 1,
+        step = 1,
+        width = "48px"
+      ),
+      shiny::checkboxInput(ns("random_seed"), "Random", value = FALSE)
+    ),
+    shiny::actionButton(ns("reseed"), "New Game", class = "btn-outline-primary btn-sm"),
+    shiny::actionButton(ns("end"), "End & Reveal", class = "btn-success btn-sm"),
+    shiny::actionButton(ns("reset"), "Reset", class = "btn-outline-secondary btn-sm")
+  )
+}
+
+mod_controls_run_mode_ui <- function(id) {
+  ns <- shiny::NS(id)
+
+  shiny::div(
+    class = "map-selection-group map-selection-group-run-mode",
+    shiny::div(
+      class = "map-selection-options toggle-btn-group-vertical",
       shiny::radioButtons(
         ns("run_mode"),
         label = NULL,
         choices = c("Guided auto" = "guided_auto", "Manual" = "manual"),
         selected = "guided_auto",
+        inline = FALSE
+      )
+    )
+  )
+}
+
+mod_controls_borough_policy_ui <- function(id) {
+  ns <- shiny::NS(id)
+
+  shiny::div(
+    class = "map-selection-group map-selection-group-borough-policy",
+    shiny::tags$label(class = "map-selection-label", "Borough policy"),
+    shiny::div(
+      class = "map-selection-options toggle-btn-group",
+      shiny::radioButtons(
+        ns("allocation_policy"),
+        label = NULL,
+        choices = c(
+          "Manual" = "manual",
+          "Random" = "random_population",
+          "Symptomatic" = "symptomatic_proxy"
+        ),
+        selected = "symptomatic_proxy",
         inline = TRUE
       )
-    ),
-    shiny::div(
-      class = "mb-3",
-      shiny::sliderInput(
-        ns("auto_turns"),
-        label = "Auto turns",
-        min = 1,
-        max = 50,
-        value = 12,
-        step = 1,
-        ticks = FALSE,
-        width = "100%"
-      )
-    ),
-    shiny::div(
-      class = "mb-3",
-      shiny::selectInput(
-        ns("auto_speed"),
-        label = "Auto speed",
-        choices = c("Slow" = "slow", "Normal" = "normal", "Fast" = "fast"),
-        selected = "normal"
-      )
-    ),
-    shiny::div(
-      class = "mb-3",
-      shiny::selectInput(
-        ns("allocation_policy"),
-        label = "Allocation policy",
-        choices = c(
-          "Manual (map allocations)" = "manual",
-          "Random population" = "random_population",
-          "Symptomatic proxy" = "symptomatic_proxy"
+    )
+  )
+}
+
+mod_controls_run_ui <- function(id) {
+  ns <- shiny::NS(id)
+
+  shiny::div(
+    class = "map-run-controls",
+    shiny::conditionalPanel(
+      condition = "input.run_mode === 'guided_auto'",
+      ns = ns,
+      shiny::div(
+        class = "map-run-guided",
+        shiny::div(
+          class = "map-run-field map-run-field-turns",
+          shiny::sliderInput(
+            ns("auto_turns"),
+            label = "Auto turns",
+            min = 1,
+            max = 50,
+            value = 12,
+            step = 1,
+            ticks = FALSE,
+            width = "170px"
+          )
         ),
-        selected = "symptomatic_proxy"
+        shiny::div(
+          class = "map-run-field map-run-field-speed",
+          shiny::selectInput(
+            ns("auto_speed"),
+            label = "Auto speed",
+            choices = c("Slow" = "slow", "Normal" = "normal", "Fast" = "fast"),
+            selected = "normal",
+            width = "140px"
+          )
+        )
+      ),
+      shiny::div(
+        class = "map-run-actions",
+        shiny::actionButton(ns("start_run"), "Start run", class = "btn-primary btn-sm"),
+        shiny::actionButton(ns("pause_run"), "Pause", class = "btn-outline-secondary btn-sm"),
+        shiny::actionButton(ns("run_batch"), "Run batch", class = "btn-outline-primary btn-sm"),
+        shiny::actionButton(ns("stop_run"), "Stop", class = "btn-outline-danger btn-sm")
       )
-    ),
-    shiny::div(
-      class = "mb-3",
-      shiny::selectInput(
-        ns("baseline_mode"),
-        label = "Baseline comparator",
-        choices = c(
-          "Basic surveillance" = "basic_surveillance",
-          "No action" = "no_action"
-        ),
-        selected = "basic_surveillance"
-      )
-    ),
-    shiny::div(
-      class = "mb-3 d-grid gap-2",
-      shiny::actionButton(ns("start_run"), "Start run", class = "btn-primary w-100"),
-      shiny::actionButton(ns("pause_run"), "Pause", class = "btn-outline-secondary w-100"),
-      shiny::actionButton(ns("run_batch"), "Run batch", class = "btn-outline-primary w-100"),
-      shiny::actionButton(ns("stop_run"), "Stop", class = "btn-outline-danger w-100")
-    ),
+    )
+  )
+}
+
+mod_controls_ui <- function(id) {
+
+  ns <- shiny::NS(id)
+  bslib::card(
+    style = "height: 100%; overflow-y: auto;",
+    bslib::card_header("Admin Controls"),
     shiny::uiOutput(ns("admin_controls")),
-    shiny::actionButton(ns("reseed"), "New Game", class = "btn-outline-primary w-100 mb-2"),
-    shiny::hr(),
-    shiny::actionButton(ns("end"), "End & Reveal", class = "btn-success w-100 mb-2"),
-    shiny::actionButton(ns("reset"), "Reset", class = "btn-outline-secondary w-100"),
     width = NULL
   )
 }
@@ -273,7 +307,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       testing <- fixed_params$testing
       mode <- input$testing_pool
       if (is.null(mode)) {
-        mode <- "symptomatic"
+        mode <- "random"
       }
       testing$sampling_mode <- mode
       testing$sampling_pool_frac <- 0.1
@@ -303,8 +337,6 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       }
 
       shiny::tagList(
-        shiny::hr(),
-        shiny::tags$h5("Admin controls"),
         shiny::tags$p(
           class = "text-muted small",
           "Changes apply to all sessions on the next turn."
@@ -489,6 +521,15 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       apply_scenario_defaults(scenario_id)
     })
 
+    # Force a visible default on first render for the shared map control.
+    session$onFlushed(function() {
+      shiny::updateRadioButtons(
+        session,
+        "testing_pool",
+        selected = "random"
+      )
+    }, once = TRUE)
+
     reseed <- shiny::eventReactive(input$reseed, {
       seed_value <- suppressWarnings(as.integer(input$rng_seed)[1])
       if (length(seed_value) != 1L || is.na(seed_value) || seed_value < 1L) {
@@ -536,13 +577,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       )
     })
 
-    baseline_mode <- shiny::reactive({
-      mode <- input$baseline_mode
-      if (is.null(mode) || !mode %in% c("no_action", "basic_surveillance")) {
-        mode <- "basic_surveillance"
-      }
-      mode
-    })
+    baseline_mode <- shiny::reactive("no_action")
 
     list(
       epidemiology = params_epidemic,

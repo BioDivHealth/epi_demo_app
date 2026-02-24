@@ -1,5 +1,38 @@
 # Replay utilities ---------------------------------------------------------
 
+build_replay_snapshot <- function(player_branch, baseline_branch, comparison_report = NULL) {
+  empty_logs <- init_turn_logs(
+    tibble::tibble(borough_name = character(), gss_code = character(), pop = numeric())
+  )
+  empty_branch <- list(
+    truth = empty_logs$truth,
+    observations = empty_logs$observations,
+    actions = empty_logs$actions,
+    truth_history = list()
+  )
+
+  branch_payload <- function(branch_state) {
+    if (is.null(branch_state)) {
+      return(empty_branch)
+    }
+    list(
+      truth = branch_state$turn_logs$truth,
+      observations = branch_state$turn_logs$observations,
+      actions = branch_state$turn_logs$actions,
+      truth_history = branch_state$truth_history
+    )
+  }
+
+  list(
+    branches = list(
+      player = branch_payload(player_branch),
+      baseline = branch_payload(baseline_branch)
+    ),
+    comparison = if (!is.null(comparison_report)) comparison_report$comparison else NULL,
+    turn_comparison = if (!is.null(comparison_report)) comparison_report$turn_comparison else NULL
+  )
+}
+
 replay_build_truth_log <- function(truth_history, borough_names) {
   if (is.null(truth_history) || length(truth_history) == 0) {
     return(tibble::tibble())
@@ -477,7 +510,7 @@ replay_action_table <- function(actions_df) {
     dplyr::arrange(desc(spend))
 }
 
-replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
+replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L, baseline_truth_log = NULL) {
   if (is.null(truth_log) || nrow(truth_log) == 0) {
     return(NULL)
   }
@@ -507,6 +540,26 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
   )
   truth_ts$truth_prev_pct <- 100 * active_total / pop_total
 
+  baseline_ts <- NULL
+  if (!is.null(baseline_truth_log) && nrow(baseline_truth_log) > 0) {
+    baseline_ts <- baseline_truth_log |>
+      dplyr::group_by(turn) |>
+      dplyr::summarise(truth_incidence = sum(incidence), .groups = "drop") |>
+      dplyr::arrange(turn)
+
+    baseline_active_total <- vapply(
+      seq_len(nrow(baseline_ts)),
+      function(i) {
+        start <- max(1L, i - window + 1L)
+        sum(baseline_ts$truth_incidence[start:i], na.rm = TRUE)
+      },
+      numeric(1)
+    )
+    baseline_ts$baseline_truth_prev_pct <- 100 * baseline_active_total / pop_total
+    baseline_ts <- baseline_ts |>
+      dplyr::select(turn, baseline_truth_prev_pct)
+  }
+
   obs_ts <- if (is.null(obs_log) || nrow(obs_log) == 0) {
     tibble::tibble(
       turn = truth_ts$turn,
@@ -530,11 +583,23 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
   )
 
   combined <- dplyr::full_join(truth_ts, obs_ts, by = "turn")
+  if (!is.null(baseline_ts)) {
+    combined <- dplyr::full_join(combined, baseline_ts, by = "turn")
+  } else {
+    combined$baseline_truth_prev_pct <- NA_real_
+  }
   if (nrow(combined) == 0) {
     return(NULL)
   }
   combined$truth_prev_pct[is.na(combined$truth_prev_pct)] <- 0
   combined$observed_prev_pct[is.na(combined$observed_prev_pct)] <- 0
+  combined$baseline_truth_prev_pct[is.na(combined$baseline_truth_prev_pct)] <- 0
+
+  legend_cols <- c(
+    "Observed prevalence" = "#ef6548",
+    "Truth prevalence (active)" = "#08519c",
+    "Baseline truth prevalence (active)" = "#31a354"
+  )
 
   if (nrow(combined) <= 1) {
     return(
@@ -544,19 +609,21 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
           size = 3
         ) +
         ggplot2::geom_point(
-          ggplot2::aes(y = observed_prev_pct, colour = "Observed positivity"),
+          ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
           size = 3,
           shape = 17
+        ) +
+        ggplot2::geom_point(
+          ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
+          size = 3,
+          shape = 15
         ) +
         ggplot2::labs(
           x = "Turn",
           y = "Prevalence (%)",
           colour = NULL
         ) +
-        ggplot2::scale_colour_manual(values = c(
-          "Truth prevalence (active)" = "#08519c",
-          "Observed positivity" = "#ef6548"
-        )) +
+        ggplot2::scale_colour_manual(values = legend_cols) +
         ggplot2::theme_minimal()
     )
   }
@@ -567,19 +634,21 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
       linewidth = 1
     ) +
     ggplot2::geom_line(
-      ggplot2::aes(y = observed_prev_pct, colour = "Observed positivity"),
+      ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
       linewidth = 1,
       linetype = "dashed"
+    ) +
+    ggplot2::geom_line(
+      ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
+      linewidth = 1,
+      linetype = "dotdash"
     ) +
     ggplot2::labs(
       x = "Turn",
       y = "Prevalence (%)",
       colour = NULL
     ) +
-    ggplot2::scale_colour_manual(values = c(
-      "Truth prevalence (active)" = "#08519c",
-      "Observed positivity" = "#ef6548"
-    )) +
+    ggplot2::scale_colour_manual(values = legend_cols) +
     ggplot2::theme_minimal()
 }
 
