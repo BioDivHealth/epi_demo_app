@@ -9,21 +9,16 @@ mod_map_ui <- function(
     borough_policy_ui = NULL) {
   ns <- shiny::NS(id)
   intervention_choices <- format_intervention_choice_labels(intervention_defs)
-  is_manual_condition <- "input['controls-run_mode'] === 'manual'"
-  is_auto_condition <- "input['controls-run_mode'] === 'guided_auto'"
-  manual_alloc_controls_condition <- "!(input['controls-run_mode'] === 'guided_auto' && input['controls-allocation_policy'] !== 'manual')"
   bslib::card(
     full_screen = TRUE,
     bslib::card_header(
       class = "d-flex justify-content-between align-items-center",
       shiny::span("Click boroughs to allocate tests"),
-      shiny::span(
-        class = "badge bg-info",
-        shiny::textOutput(ns("budget_badge"), inline = TRUE)
-      )
+      shiny::uiOutput(ns("budget_badge"))
     ),
     # 3-section horizontal strip
     shiny::div(
+      id = ns("controls_strip"),
       class = "map-controls-strip mb-2",
       # Section 1: Run Mode
       shiny::div(
@@ -38,8 +33,9 @@ mod_map_ui <- function(
         shiny::tags$div(class = "map-section-label", "Testing strategy"),
         shiny::div(
           class = "d-flex flex-wrap gap-2 align-items-center",
-          shiny::conditionalPanel(
-            condition = is_manual_condition,
+          shiny::div(
+            id = ns("manual_test_type"),
+            style = "display: none;",
             shiny::div(
               class = "map-selection-group map-selection-group-test-type",
               shiny::tags$label(class = "map-selection-label", "Test type"),
@@ -56,12 +52,14 @@ mod_map_ui <- function(
             )
           ),
           testing_pool_ui,
-          shiny::conditionalPanel(
-            condition = is_auto_condition,
+          shiny::div(
+            id = ns("auto_borough_policy"),
+            style = "display: none;",
             borough_policy_ui
           ),
-          shiny::conditionalPanel(
-            condition = is_manual_condition,
+          shiny::div(
+            id = ns("manual_click_controls"),
+            style = "display: none;",
             shiny::div(
               class = "d-flex gap-2 align-items-center",
               shiny::tags$label(style = "font-size:12px; margin-bottom:0;", "Tests per click:"),
@@ -82,8 +80,9 @@ mod_map_ui <- function(
               class = "btn-outline-primary btn-sm"
             )
           ),
-          shiny::conditionalPanel(
-            condition = is_manual_condition,
+          shiny::div(
+            id = ns("manual_alloc_summary"),
+            style = "display: none;",
             shiny::tags$span(
               class = "ms-auto small text-muted",
               shiny::textOutput(ns("allocation_summary"), inline = TRUE)
@@ -105,17 +104,11 @@ mod_map_ui <- function(
       )
     ),
     leaflet::leafletOutput(ns("map"), height = "400px"),
-    shiny::hr(class = "my-2"),
-    shiny::fluidRow(
-      shiny::column(
-        width = 12,
-        shiny::div(
-          class = "d-flex gap-2 justify-content-end align-items-center",
-          shiny::div(class = "small text-muted me-auto", shiny::textOutput(ns("turn_positivity"), inline = TRUE)),
-          shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm"),
-          shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary")
-        )
-      )
+    shiny::div(
+      class = "map-status-strip",
+      shiny::uiOutput(ns("turn_positivity_badge")),
+      shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm map-status-clear"),
+      shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary map-status-advance")
     ),
     shiny::div(
       id = ns("run_rail"),
@@ -167,6 +160,21 @@ mod_map_server <- function(
     })
     map_locked <- shiny::reactive({
       identical(run_mode(), "guided_auto") && isTRUE(auto_running())
+    })
+
+    observe({
+      is_manual <- identical(run_mode(), "manual")
+      if (is_manual) {
+        shinyjs::show(ns("manual_test_type"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+        shinyjs::show(ns("manual_click_controls"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+        shinyjs::show(ns("manual_alloc_summary"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+        shinyjs::hide(ns("auto_borough_policy"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+      } else {
+        shinyjs::hide(ns("manual_test_type"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+        shinyjs::hide(ns("manual_click_controls"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+        shinyjs::hide(ns("manual_alloc_summary"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+        shinyjs::show(ns("auto_borough_policy"), asis = TRUE, anim = TRUE, animType = "fade", time = 0.2)
+      }
     })
 
     # Compute borough centroids for allocation markers
@@ -317,7 +325,7 @@ mod_map_server <- function(
       allocations(trial_allocs)
     })
 
-    output$budget_badge <- shiny::renderText({
+    output$budget_badge <- shiny::renderUI({
       req(ready())
       allocs <- allocations()
       budget <- budget_info()
@@ -325,11 +333,21 @@ mod_map_server <- function(
       intervention_spend <- intervention_cost()
       total_spend <- spend_stats$spend + intervention_spend
       remaining <- budget$budget - total_spend
-      paste0(
+      total_budget <- budget$budget
+      frac <- if (total_budget > 0) remaining / total_budget else 1
+      badge_class <- if (frac > 0.4) {
+        "badge bg-success"
+      } else if (frac > 0.15) {
+        "badge bg-warning text-dark"
+      } else {
+        "badge bg-danger"
+      }
+      txt <- paste0(
         "Left £", round(remaining, 0),
         " | Tests £", round(spend_stats$spend, 0),
         " | Interventions £", round(intervention_spend, 0)
       )
+      shiny::span(class = badge_class, txt)
     })
 
     observe({
@@ -386,11 +404,17 @@ mod_map_server <- function(
       latest <- observed_this_turn()
       total_tests <- sum(latest$n, na.rm = TRUE)
       positives <- sum(latest$positives, na.rm = TRUE)
-      output$turn_positivity <- shiny::renderText({
+      output$turn_positivity_badge <- shiny::renderUI({
         if (total_tests == 0) {
-          ""
+          shiny::div(class = "map-positivity-badge map-positivity-none", "No results yet")
         } else {
-          paste0("Last turn: ", round(100 * positives / total_tests, 1), "% positive")
+          pct <- round(100 * positives / total_tests, 1)
+          dot_class <- if (pct <= 5) "dot-green" else if (pct <= 20) "dot-amber" else "dot-red"
+          shiny::div(
+            class = "map-positivity-badge",
+            shiny::span(class = paste("positivity-dot", dot_class)),
+            paste0("Last turn: ", pct, "% positive")
+          )
         }
       })
     })

@@ -5,6 +5,7 @@ library(dplyr)
 library(tibble)
 library(EpiEstim)
 library(shinymanager)
+library(shinyjs)
 
 options(shiny.usews = TRUE)
 
@@ -91,6 +92,7 @@ intervention_defs <- intervention_catalog()
 app_ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
   title = "Outbreaks in London: simulation",
+  useShinyjs(),
   tags$head(
     tags$link(rel = "stylesheet", href = "style.css"),
     tags$script(src = "help-auto.js")
@@ -98,16 +100,15 @@ app_ui <- page_fluid(
   div(
     class = "main-header d-flex justify-content-between align-items-center",
     div(
+      class = "main-header-title",
       h3("Outbreaks in London: simulation"),
       div(class = "scenario-label", textOutput("scenario_display"))
     ),
     div(
       class = "header-actions",
-      mod_controls_header_ui("controls"),
-      actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button"),
-      div(
-        class = "turn-badge badge bg-secondary",
-        textOutput("turn_display", inline = TRUE)
+      mod_controls_header_ui(
+        "controls",
+        lifecycle_extra = actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button")
       )
     )
   ),
@@ -207,6 +208,7 @@ server <- function(input, output, session) {
     content <- bslib::layout_columns(
       col_widths = if (is_admin()) c(8, 4) else c(7, 5),
       fill = FALSE,
+      fillable = FALSE,
       mod_map_ui(
         "map",
         intervention_defs = intervention_defs,
@@ -215,7 +217,13 @@ server <- function(input, output, session) {
         testing_pool_ui = mod_controls_testing_pool_ui("controls"),
         borough_policy_ui = mod_controls_borough_policy_ui("controls")
       ),
-      mod_dashboard_ui("dashboard")
+      mod_dashboard_ui(
+        "dashboard",
+        turn_ui = div(
+          class = "turn-badge badge bg-secondary",
+          textOutput("turn_display", inline = TRUE)
+        )
+      )
     )
     if (is_admin()) {
       bslib::layout_sidebar(
@@ -916,6 +924,55 @@ server <- function(input, output, session) {
         auto_stop_reason("completed")
       }
     })
+  })
+
+  observe({
+    running <- isTRUE(auto_running())
+    # transport buttons
+    shinyjs::toggleState("controls-start_run", condition = !running)
+    shinyjs::toggleState("controls-run_batch", condition = !running)
+    shinyjs::toggleState("controls-pause_run", condition = running)
+    shinyjs::toggleState("controls-stop_run", condition = running)
+    # map action buttons
+    shinyjs::toggleState("map-advance", condition = !running)
+    shinyjs::toggleState("map-clear_alloc", condition = !running)
+    shinyjs::toggleState("map-mass_test", condition = !running)
+    # strategy inputs
+    shinyjs::toggleState("map-interventions", condition = !running)
+    shinyjs::toggleState("map-test_type", condition = !running)
+    shinyjs::toggleState("map-tests_per_click", condition = !running)
+    shinyjs::toggleState("controls-testing_pool", condition = !running)
+    shinyjs::toggleState("controls-allocation_policy", condition = !running)
+    # controls strip overlay
+    shinyjs::toggleClass(id = "map-controls_strip", class = "strip-locked", condition = running)
+  })
+
+  output[["controls-turn_progress"]] <- shiny::renderUI({
+    completed <- auto_turns_completed()
+    requested <- auto_turns_requested()
+    running <- isTRUE(auto_running())
+    if (!running || requested <= 0L) {
+      return(NULL)
+    }
+    pct <- round(100 * min(completed, requested) / requested)
+    shiny::div(
+      class = "map-run-progress",
+      shiny::div(
+        class = "map-run-progress-label",
+        paste0("Turn ", completed, " of ", requested)
+      ),
+      shiny::div(
+        class = "progress map-run-progress-bar",
+        shiny::div(
+          class = "progress-bar",
+          role = "progressbar",
+          style = paste0("width: ", pct, "%"),
+          `aria-valuenow` = pct,
+          `aria-valuemin` = "0",
+          `aria-valuemax` = "100"
+        )
+      )
+    )
   })
 
   observeEvent(controls$end(), {

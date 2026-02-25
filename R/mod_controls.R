@@ -19,7 +19,7 @@ mod_controls_testing_pool_ui <- function(id) {
   )
 }
 
-mod_controls_header_ui <- function(id) {
+mod_controls_header_ui <- function(id, lifecycle_extra = NULL) {
   ns <- shiny::NS(id)
 
   shiny::div(
@@ -38,11 +38,25 @@ mod_controls_header_ui <- function(id) {
         step = 1,
         width = "48px"
       ),
-      shiny::checkboxInput(ns("random_seed"), "Random", value = FALSE)
+      shiny::div(
+        class = "header-seed-random-wrap",
+        style = "display: none;",
+        shiny::checkboxInput(ns("random_seed"), NULL, value = FALSE)
+      ),
+      shiny::actionButton(
+        ns("random_seed_btn"),
+        label = shiny::icon("dice-five"),
+        class = "btn btn-outline-secondary btn-sm header-seed-random-btn",
+        title = "Use random seed"
+      ),
+      shiny::actionButton(ns("reseed"), "New Game", class = "btn-outline-primary btn-sm header-new-game-btn")
     ),
-    shiny::actionButton(ns("reseed"), "New Game", class = "btn-outline-primary btn-sm"),
-    shiny::actionButton(ns("end"), "End & Reveal", class = "btn-success btn-sm"),
-    shiny::actionButton(ns("reset"), "Reset", class = "btn-outline-secondary btn-sm")
+    shiny::div(
+      class = "header-game-lifecycle",
+      shiny::actionButton(ns("end"), "End & Reveal", class = "btn-success btn-sm"),
+      shiny::actionButton(ns("reset"), "Reset", class = "btn-outline-secondary btn-sm"),
+      lifecycle_extra
+    )
   )
 }
 
@@ -91,42 +105,84 @@ mod_controls_run_ui <- function(id) {
   ns <- shiny::NS(id)
 
   shiny::div(
-    class = "map-run-controls",
     shiny::conditionalPanel(
       condition = "input.run_mode === 'guided_auto'",
       ns = ns,
       shiny::div(
-        class = "map-run-guided",
+        class = "map-run-bar",
         shiny::div(
-          class = "map-run-field map-run-field-turns",
-          shiny::sliderInput(
-            ns("auto_turns"),
-            label = "Auto turns",
-            min = 1,
-            max = 50,
-            value = 12,
-            step = 1,
-            ticks = FALSE,
-            width = "170px"
+          class = "map-run-transport",
+          shiny::actionButton(
+            ns("start_run"),
+            shiny::HTML("\u25b6 Start"),
+            class = "btn-primary btn-sm"
+          ),
+          shiny::actionButton(
+            ns("pause_run"),
+            shiny::HTML("\u23f8 Pause"),
+            class = "btn-outline-secondary btn-sm"
+          ),
+          shiny::actionButton(
+            ns("stop_run"),
+            shiny::HTML("\u23f9 Stop"),
+            class = "btn-outline-danger btn-sm"
           )
         ),
+        shiny::div(class = "map-run-divider"),
         shiny::div(
-          class = "map-run-field map-run-field-speed",
-          shiny::selectInput(
-            ns("auto_speed"),
-            label = "Auto speed",
-            choices = c("Slow" = "slow", "Normal" = "normal", "Fast" = "fast"),
-            selected = "normal",
-            width = "140px"
+          class = "map-run-settings",
+          shiny::div(
+            class = "map-run-field map-run-field-turns",
+            shiny::sliderInput(
+              ns("auto_turns"),
+              label = "Auto turns",
+              min = 1,
+              max = 50,
+              value = 12,
+              step = 1,
+              ticks = FALSE,
+              width = "170px"
+            )
+          ),
+          shiny::div(
+            class = "map-run-field map-run-field-speed",
+            shiny::tags$label(
+              class = "map-run-field-label",
+              "Speed"
+            ),
+            shiny::div(
+              class = "map-selection-options toggle-btn-group",
+              shiny::radioButtons(
+                ns("auto_speed"),
+                label = NULL,
+                choices = c("Slow" = "slow", "Normal" = "normal", "Fast" = "fast"),
+                selected = "normal",
+                inline = TRUE
+              )
+            )
+          ),
+          shiny::uiOutput(ns("turn_progress"))
+        ),
+        shiny::div(class = "map-run-divider"),
+        shiny::div(
+          class = "map-run-batch",
+          shiny::actionButton(
+            ns("run_batch"),
+            shiny::HTML("\u26a1 Run Batch"),
+            class = "btn-outline-primary btn-sm"
           )
         )
-      ),
+      )
+    ),
+    shiny::conditionalPanel(
+      condition = "input.run_mode === 'manual'",
+      ns = ns,
       shiny::div(
-        class = "map-run-actions",
-        shiny::actionButton(ns("start_run"), "Start run", class = "btn-primary btn-sm"),
-        shiny::actionButton(ns("pause_run"), "Pause", class = "btn-outline-secondary btn-sm"),
-        shiny::actionButton(ns("run_batch"), "Run batch", class = "btn-outline-primary btn-sm"),
-        shiny::actionButton(ns("stop_run"), "Stop", class = "btn-outline-danger btn-sm")
+        class = "map-run-manual-hint",
+        shiny::tags$span(
+          class = "text-muted small",
+          "Click boroughs to allocate tests, then press Advance Turn."
+        )
       )
     )
   )
@@ -530,6 +586,19 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       )
     }, once = TRUE)
 
+    shiny::observeEvent(input$random_seed_btn, {
+      shiny::updateCheckboxInput(session, "random_seed", value = !isTRUE(input$random_seed))
+    })
+
+    shiny::observe({
+      shinyjs::toggleClass(
+        id = ns("random_seed_btn"),
+        class = "active",
+        condition = isTRUE(input$random_seed),
+        asis = TRUE
+      )
+    })
+
     reseed <- shiny::eventReactive(input$reseed, {
       seed_value <- suppressWarnings(as.integer(input$rng_seed)[1])
       if (length(seed_value) != 1L || is.na(seed_value) || seed_value < 1L) {
@@ -537,7 +606,9 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       }
 
       if (isTRUE(input$random_seed)) {
-        sample.int(1e6, 1)
+        new_seed <- sample.int(1e6, 1)
+        shiny::updateNumericInput(session, "rng_seed", value = new_seed)
+        new_seed
       } else {
         seed_value
       }

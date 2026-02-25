@@ -1,10 +1,19 @@
 # Dashboard module -----------------------------------------------------------
 
-mod_dashboard_ui <- function(id) {
+mod_dashboard_ui <- function(id, turn_ui = NULL) {
   ns <- shiny::NS(id)
+  header_content <- if (!is.null(turn_ui)) {
+    shiny::div(
+      class = "dashboard-card-header-inner d-flex justify-content-between align-items-center w-100",
+      shiny::span("Results Dashboard"),
+      turn_ui
+    )
+  } else {
+    "Results Dashboard"
+  }
   bslib::card(
     style = "height: 100%; overflow-y: auto;",
-    bslib::card_header("Results Dashboard"),
+    bslib::card_header(header_content),
     bslib::card_body(
       class = "p-2",
       shiny::div(

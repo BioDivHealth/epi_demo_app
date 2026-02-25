@@ -92,15 +92,13 @@ Notes:
 
 ## Gameplay overview
 
+- Guided auto mode is the default: choose run length and allocation policy, then run turns automatically (manual mode remains available).
 - Allocate antigen vs. PCR tests per borough each turn under a shared budget.
-- Observe only results that have returned; unsampled or pending boroughs remain grey on the map (fog of war).
-- Dashboards summarise observed incidence, quick Rt estimates (parametric serial interval), pending queues, spend, and positivity.
-- Toggle from the default setup into a custom scenario to tweak hidden dynamics, starter intel, and per-turn interventions (distancing, quarantine, rapid labs).
-- Choose **starter intel** options to begin with some initial testing allocation (alert or sweep).
-- Activate **interventions** per turn: social distancing (reduces Rt), targeted quarantine (reduces imports), and rapid labs (shortens PCR delay).
-- Ending a run shows summary scoring metrics: time to first detection, peak true incidence, peak observed positives, overall positivity, cumulative spend, and a calibration gap between inferred and true prevalence.
-- The end-of-run modal includes a turn-by-turn table comparing true incidence with observed results, allocations, and interventions.
-- After ending, a **replay viewer** unlocks, allowing you to scrub or animate through turns and compare the hidden truth side-by-side with what was observed.
+- Activate interventions per turn (distancing, quarantine, rapid labs); intervention pricing uses budget-share costs so testing-vs-control trade-offs are meaningful.
+- Observe only returned results; unsampled or pending boroughs remain grey on the map (fog of war).
+- During play, the dashboard stays observation-only (incidence, Rt estimate, queue, spend, positivity) with no hidden truth leakage.
+- End-of-run reveal compares `player` vs `baseline` outcomes (cases/deaths averted, spend delta, turn-level comparison table) and shows debrief prompts for classroom discussion.
+- After reveal, a replay viewer unlocks with a branch toggle (`player` / `baseline`), synchronized truth+observed maps, action tables, and trend plots for turn-by-turn interpretation.
 
 ## Project structure
 

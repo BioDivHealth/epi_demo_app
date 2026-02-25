@@ -1,0 +1,563 @@
+.main-header { margin-bottom: 1rem; }
+.main-header-title { padding-left: 0.5rem; border-left: 4px solid #0d6efd; }
+.main-header-title h3 { margin: 0; color: #2c3e50; font-weight: 700; font-size: 1.35rem; }
+.header-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+.header-game-controls { display: flex; align-items: center; gap: 0; flex-wrap: nowrap; }
+.header-game-lifecycle { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.header-game-lifecycle { margin-left: 0.75rem; padding-left: 0.75rem; border-left: 1px solid #dee2e6; }
+.header-seed-controls { display: flex; align-items: center; gap: 0.2rem; padding: 0.15rem 0.3rem; border: 1px solid #ddd7cc; border-radius: 6px; background: #f6f2ea; font-size: 11px; width: fit-content; flex: 0 0 auto; flex-wrap: nowrap; }
+.header-seed-controls .shiny-input-container,
+.header-seed-controls .form-group,
+.header-seed-controls .checkbox {
+  margin-bottom: 0;
+  width: auto !important;
+}
+.header-seed-controls .checkbox {
+  margin-top: 0;
+}
+.header-seed-controls .checkbox label {
+  padding-left: 15px;
+  margin-bottom: 0;
+  font-size: 11px;
+  line-height: 1.2;
+}
+.header-seed-controls .checkbox input[type='checkbox'] {
+  margin-left: -15px;
+  margin-top: 1px;
+}
+.header-seed-controls .header-seed-label {
+  font-size: 11px;
+}
+.header-seed-controls .header-seed-random-wrap {
+  display: none !important;
+}
+.header-seed-controls .header-seed-random-btn {
+  margin-left: 0;
+  padding: 0.2rem 0.4rem;
+  min-width: 28px;
+}
+.header-seed-controls .header-seed-random-btn.active {
+  background-color: #ddd7cc;
+  border-color: #c8c0b0;
+  color: #333;
+}
+.header-seed-controls .header-new-game-btn {
+  margin-left: 0.4rem;
+  padding-left: 0.65rem;
+  border-left-width: 1px;
+  border-left-style: solid;
+  border-left-color: var(--bs-primary, #0d6efd);
+  border-radius: 4px 5px 5px 4px;
+}
+.help-button { white-space: nowrap; }
+.turn-badge { font-size: 1.1rem; font-weight: 600; }
+.dashboard-card-header-inner .turn-badge { flex-shrink: 0; }
+.scenario-label { font-size: 0.85rem; color: #6c757d; }
+#map-map {
+  height: 400px !important;
+  min-height: 400px;
+  max-height: 400px;
+}
+.bslib-sidebar-toggle,
+.bslib-sidebar-toggle-btn,
+.bslib-sidebar-trigger {
+  display: none !important;
+}
+.mfb-component--br,
+.mfb-component--br * {
+  display: none !important;
+}
+#controls-rng_seed { width: 100%; min-width: 75px; font-size: 11px; }
+.header-seed-controls #controls-rng_seed { width: 48px; min-width: 48px; padding: 1px 3px; font-size: 11px; height: 22px; }
+.header-seed-controls .shiny-input-container:has(#controls-rng_seed) { width: 48px; flex-shrink: 0; }
+.controls-seed-block {
+  margin-bottom: 12px;
+  width: 100%;
+  height: fit-content;
+}
+.controls-seed-block .checkbox {
+  vertical-align: middle;
+  text-align: left;
+  margin-bottom: 0;
+  height: fit-content;
+}
+.controls-seed-block .checkbox label {
+  overflow: visible;
+  height: fit-content;
+  text-align: center;
+  vertical-align: middle;
+}
+.controls-seed-block .checkbox span {
+  font-size: 14px;
+  color: rgba(62, 63, 58, 1);
+}
+/* --- 3-section controls strip --- */
+.map-controls-strip {
+  display: flex;
+  gap: 0;
+  align-items: stretch;
+  border: 1px solid #d5cebf;
+  border-radius: 8px;
+  overflow-x: auto;
+  transition: opacity 0.2s ease;
+}
+.strip-locked {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.map-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  overflow: hidden;
+}
+.map-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9a9590;
+  margin: 0;
+  white-space: nowrap;
+}
+/* Section 1: Run Mode — dark slate */
+.map-section-mode {
+  flex: 0 0 auto;
+  background: #3b4856;
+  border-right: 1px solid #2e3a47;
+  justify-content: center;
+  align-items: center;
+}
+.map-section-mode .map-section-label {
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: auto;
+}
+.map-section-mode .map-selection-group-run-mode {
+  margin-bottom: auto;
+}
+/* Section 2: Testing Strategy — warm beige */
+.map-section-strategy {
+  flex: 1 1 auto;
+  background: #f6f2ea;
+  border-right: 1px solid #ddd7cc;
+  justify-content: center;
+}
+/* Section 3: Interventions — off-white */
+.map-section-interventions {
+  flex: 0 0 auto;
+  background: #faf9f6;
+  justify-content: center;
+}
+/* Override Shiny's default margin-top: -5px on radio/checkbox option groups */
+.shiny-options-group {
+  margin-top: 10px !important;
+}
+/* compact intervention checkboxes */
+.map-section-interventions .shiny-input-container { width: auto !important; margin: 0; }
+.map-section-interventions .shiny-options-group { margin-top: 10px !important; margin-bottom: 0; }
+.map-section-interventions .checkbox-inline,
+.map-section-interventions .form-check.form-check-inline,
+.map-section-interventions .form-check {
+  margin: 0 8px 0 0;
+  padding: 0;
+}
+.map-section-interventions .shiny-options-group,
+.map-section-interventions .shiny-options-group .form-check,
+.map-section-interventions .shiny-options-group .form-check-label,
+.map-section-interventions .shiny-options-group .checkbox label,
+.map-section-interventions .shiny-options-group .checkbox-inline span,
+.map-section-interventions .shiny-options-group .checkbox-inline input + span {
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+  font-weight: 400 !important;
+}
+.map-section-interventions .checkbox-inline input[type='checkbox'],
+.map-section-interventions .form-check-input { margin-right: 4px; }
+@media (max-width: 768px) {
+  .map-controls-strip { flex-direction: column; }
+  .map-section { border-right: none; border-bottom: 1px solid #d5cebf; }
+  .map-section:last-child { border-bottom: none; }
+}
+/* --- Selection group base (must come before run-mode override) --- */
+.map-selection-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 4px 8px;
+  border: 1px solid #d5cebf;
+  border-radius: 6px;
+  background: #fefcf8;
+  width: fit-content;
+}
+.map-selection-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6c757d;
+  white-space: nowrap;
+}
+/* --- Toggle button group (BS3 + BS5 selectors) --- */
+.toggle-btn-group .shiny-input-container,
+.toggle-btn-group .form-group,
+.toggle-btn-group-vertical .shiny-input-container,
+.toggle-btn-group-vertical .form-group { width: auto !important; margin-bottom:10px !important; }
+.toggle-btn-group .shiny-options-group {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0;
+  margin-top: 2px !important;
+  margin-bottom: 0;
+  border: 1px solid #c8c0b0;
+  border-radius: 5px;
+  overflow: hidden;
+}
+/* BS3: label.radio-inline IS the label */
+.toggle-btn-group label.radio-inline,
+/* BS5: .form-check.form-check-inline is the wrapper div */
+.toggle-btn-group .form-check.form-check-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  background: #fefcf8;
+  border-right: 1px solid #c8c0b0;
+  transition: background 0.12s, color 0.12s;
+}
+.toggle-btn-group label.radio-inline:last-child,
+.toggle-btn-group .form-check.form-check-inline:last-child {
+  border-right: none;
+}
+/* Hide the actual radio inputs */
+.toggle-btn-group label.radio-inline input[type='radio'],
+.toggle-btn-group .form-check-input[type='radio'] {
+  display: none;
+}
+/* Active state */
+.toggle-btn-group label.radio-inline:has(input[type='radio']:checked),
+.toggle-btn-group .form-check.form-check-inline:has(.form-check-input:checked) {
+  background: #495057;
+  color: #fff;
+  font-weight: 500;
+}
+/* Test Type: ensure toggle style applies (conditionalPanel/bslib may use different markup) */
+.map-selection-group-test-type .toggle-btn-group input[type='radio'],
+.map-selection-group-test-type .toggle-btn-group .form-check-input {
+  display: none !important;
+}
+.map-selection-group-test-type .toggle-btn-group .form-check,
+.map-selection-group-test-type .toggle-btn-group .radio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  margin: 0;
+  font-size: 12px;
+  border-right: 1px solid #c8c0b0;
+  background: #fefcf8;
+  cursor: pointer;
+  border-radius: 0;
+}
+.map-selection-group-test-type .toggle-btn-group .form-check:last-child,
+.map-selection-group-test-type .toggle-btn-group .radio:last-child {
+  border-right: none;
+}
+.map-selection-group-test-type .toggle-btn-group .form-check:has(.form-check-input:checked),
+.map-selection-group-test-type .toggle-btn-group .radio:has(input[type='radio']:checked) {
+  background: #495057;
+  color: #fff;
+  font-weight: 500;
+}
+/* --- Non-inline (vertical) toggle variant — used for Run Mode --- */
+/* Shiny non-inline radioButtons generates .radio (BS3) or .form-check (BS5, no -inline modifier) */
+.toggle-btn-group-vertical .shiny-options-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 10px !important;
+  margin-bottom: 0;
+  border-radius: 5px;
+  border: 1px solid #c8c0b0;
+  overflow: hidden;
+}
+/* BS3 non-inline: div.radio > label */
+.toggle-btn-group-vertical .radio,
+/* BS5 non-inline: div.form-check (no form-check-inline) */
+.toggle-btn-group-vertical .form-check:not(.form-check-inline) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 14px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  background: #fefcf8;
+  border-bottom: 1px solid #c8c0b0;
+  transition: background 0.12s, color 0.12s;
+}
+.toggle-btn-group-vertical .radio:last-child,
+.toggle-btn-group-vertical .form-check:not(.form-check-inline):last-child {
+  border-bottom: none;
+}
+/* BS3 label inside .radio */
+.toggle-btn-group-vertical .radio label {
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+/* Hide actual radio inputs */
+.toggle-btn-group-vertical .radio input[type='radio'],
+.toggle-btn-group-vertical .form-check-input[type='radio'] {
+  display: none;
+}
+/* Active state */
+.toggle-btn-group-vertical .radio:has(input[type='radio']:checked),
+.toggle-btn-group-vertical .form-check:not(.form-check-inline):has(.form-check-input:checked) {
+  background: #495057;
+  color: #fff;
+  font-weight: 500;
+}
+
+/* --- Run Mode toggle: dark styling (section bg comes from .map-section-mode) --- */
+.map-selection-group-run-mode {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.2);
+  padding: 4px 8px;
+}
+.map-selection-group-run-mode .toggle-btn-group-vertical .shiny-options-group {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+/* BS3 and BS5 non-inline segments in run mode */
+.map-selection-group-run-mode .toggle-btn-group-vertical .radio,
+.map-selection-group-run-mode .toggle-btn-group-vertical .form-check:not(.form-check-inline) {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  border-bottom-color: rgba(255, 255, 255, 0.2);
+}
+.map-selection-group-run-mode .toggle-btn-group-vertical .radio label {
+  color: rgba(255, 255, 255, 0.85);
+}
+/* Active segment in Run Mode */
+.map-selection-group-run-mode .toggle-btn-group-vertical .radio:has(input[type='radio']:checked),
+.map-selection-group-run-mode .toggle-btn-group-vertical .form-check:not(.form-check-inline):has(.form-check-input:checked) {
+  background: #ffffff;
+  color: #2e3a47;
+  font-weight: 600;
+}
+.map-selection-group-run-mode .toggle-btn-group-vertical .radio:has(input[type='radio']:checked) label {
+  color: #2e3a47;
+  font-weight: 600;
+}
+.map-auto-policy-note {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #ece7dc;
+}
+/* --- Status strip (below map, above run bar) --- */
+.map-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-top: 6px;
+  background: #f6f2ea;
+  border: 1px solid #ddd7cc;
+  border-radius: 8px;
+}
+.map-positivity-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: #3e3f3a;
+}
+.map-positivity-none {
+  color: #9a9590;
+  font-weight: 400;
+}
+.positivity-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-green  { background: #2ecc71; }
+.dot-amber  { background: #f39c12; }
+.dot-red    { background: #e74c3c; }
+.map-status-clear {
+  flex-shrink: 0;
+  min-width: 0 !important;
+}
+.map-status-advance {
+  flex-shrink: 0;
+}
+
+/* --- Run bar (playback transport) --- */
+#map-run_rail {
+  margin-top: 6px;
+}
+.map-run-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid #d5cebf;
+  border-radius: 8px;
+  background: #faf9f6;
+  padding: 6px 10px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.map-run-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.map-run-transport .btn {
+  min-width: 76px;
+}
+.map-run-divider {
+  width: 1px;
+  align-self: stretch;
+  background: #d5cebf;
+  margin: 0 12px;
+  flex-shrink: 0;
+}
+.map-run-settings {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+.map-run-settings .form-group,
+.map-run-settings .shiny-input-container {
+  margin-bottom: 0;
+}
+.map-run-settings .irs {
+  margin-bottom: 4px;
+}
+.map-run-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.map-run-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6c757d;
+  margin-bottom: 2px;
+}
+.map-run-field-speed .toggle-btn-group .shiny-options-group {
+  margin-top: 0 !important;
+}
+.map-run-batch {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+/* Progress bar */
+.map-run-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 140px;
+  align-self: flex-end;
+  padding-bottom: 4px;
+}
+.map-run-progress-label {
+  font-size: 11px;
+  color: #6c757d;
+  white-space: nowrap;
+}
+.map-run-progress-bar {
+  height: 6px !important;
+  border-radius: 3px;
+}
+.map-run-progress-bar .progress-bar {
+  background-color: #3b4856;
+  transition: width 0.3s ease;
+}
+/* Disabled button styling */
+.btn:disabled,
+.btn.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+/* Manual mode hint */
+.map-run-manual-hint {
+  padding: 8px 4px;
+}
+@media (max-width: 992px) {
+  .map-run-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .map-run-divider {
+    width: 100%;
+    height: 1px;
+    margin: 4px 0;
+  }
+  .map-run-settings {
+    width: 100%;
+  }
+  .map-run-batch {
+    width: 100%;
+  }
+  .map-run-batch .btn {
+    width: 100%;
+  }
+}
+@media (max-width: 768px) {
+  #map-map {
+    height: 320px !important;
+    min-height: 320px;
+    max-height: 320px;
+  }
+  .header-actions {
+    justify-content: flex-start;
+  }
+  .header-seed-controls {
+    width: 100%;
+  }
+  .map-selection-group {
+    min-width: 100%;
+  }
+  .map-run-field,
+  .map-run-field .form-group,
+  .map-run-field .form-control,
+  .map-run-field .irs {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  .map-status-strip {
+    flex-wrap: wrap;
+  }
+  .map-status-advance {
+    width: 100%;
+  }
+}

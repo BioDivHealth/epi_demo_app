@@ -42,8 +42,8 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('controls-auto_speed').offsetParent === null")
   app$wait_for_js("document.getElementById('controls-allocation_policy').offsetParent === null")
   app$wait_for_js("document.getElementById('controls-start_run').offsetParent === null")
-  app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent !== null")
-  app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent !== null")
+  app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent !== null", timeout = 8000)
+  app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent !== null", timeout = 8000)
 
   app$set_inputs(`controls-run_mode` = "guided_auto")
   app$wait_for_js("document.getElementById('controls-auto_turns').offsetParent !== null", timeout = 8000)
@@ -56,8 +56,12 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent === null")
 
   app$set_inputs(`controls-allocation_policy` = "manual")
-  app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent !== null")
-  app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent !== null")
+  app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent === null")
+  app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent === null")
+
+  app$set_inputs(`controls-run_mode` = "manual")
+  app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent !== null", timeout = 8000)
+  app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent !== null", timeout = 8000)
 
   advance_count <- app$get_value(input = "map-advance")
   expect_equal(as.integer(advance_count), 0L)
