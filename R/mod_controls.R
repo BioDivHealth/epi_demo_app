@@ -1,11 +1,39 @@
 # Controls module -------------------------------------------------------------
 
+build_info_tooltip <- function(ns, id, text, placement = "top") {
+  bslib::tooltip(
+    trigger = shiny::tags$button(
+      id = ns(id),
+      type = "button",
+      class = "info-tooltip-trigger",
+      `aria-label` = "More information",
+      shiny::icon("info-circle")
+    ),
+    text,
+    placement = placement,
+    options = list(customClass = "epi-help-tooltip")
+  )
+}
+
 mod_controls_testing_pool_ui <- function(id) {
   ns <- shiny::NS(id)
 
   shiny::div(
     class = "map-selection-group map-selection-group-testing-pool",
-    shiny::tags$label(class = "map-selection-label", "Testing pool"),
+    shiny::div(
+      class = "map-label-with-tooltip",
+      shiny::tags$label(class = "map-selection-label", "Testing pool"),
+      build_info_tooltip(
+        ns = ns,
+        id = "testing_pool_info",
+        text = shiny::HTML(
+          "<ul class='mb-0'>
+            <li>Random samples from the whole population.</li>
+            <li>Symptomatic samples from a smaller, higher-risk pool, so positivity is usually higher.</li>
+          </ul>"
+        )
+      )
+    ),
     shiny::div(
       class = "map-selection-options toggle-btn-group",
       shiny::radioButtons(
@@ -83,7 +111,21 @@ mod_controls_borough_policy_ui <- function(id) {
 
   shiny::div(
     class = "map-selection-group map-selection-group-borough-policy",
-    shiny::tags$label(class = "map-selection-label", "Borough policy"),
+    shiny::div(
+      class = "map-label-with-tooltip",
+      shiny::tags$label(class = "map-selection-label", "Borough policy"),
+      build_info_tooltip(
+        ns = ns,
+        id = "allocation_policy_info",
+        text = shiny::HTML(
+          "<ul class='mb-0'>
+            <li>Manual keeps your direct allocations.</li>
+            <li>All Boroughs ensures borough-wide coverage when affordable, then distributes tests by population.</li>
+            <li>Symptomatic prioritises boroughs with stronger recent observed positive-test signals.</li>
+          </ul>"
+        )
+      )
+    ),
     shiny::div(
       class = "map-selection-options toggle-btn-group",
       shiny::radioButtons(
@@ -91,7 +133,7 @@ mod_controls_borough_policy_ui <- function(id) {
         label = NULL,
         choices = c(
           "Manual" = "manual",
-          "Random" = "random_population",
+          "All Boroughs" = "all_boroughs",
           "Symptomatic" = "symptomatic_proxy"
         ),
         selected = "symptomatic_proxy",
@@ -636,7 +678,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       speed_lookup <- c(slow = 1200L, normal = 700L, fast = 250L)
 
       policy_id <- input$allocation_policy
-      if (is.null(policy_id) || !policy_id %in% c("manual", "random_population", "symptomatic_proxy")) {
+      if (is.null(policy_id) || !policy_id %in% c("manual", "all_boroughs", "random_population", "symptomatic_proxy")) {
         policy_id <- "symptomatic_proxy"
       }
 

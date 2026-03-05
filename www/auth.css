@@ -1,0 +1,114 @@
+/* Auth page only: targeted to shinymanager markup */
+
+body {
+  background:
+    radial-gradient(1200px 550px at 10% -10%, rgba(13, 110, 253, 0.08), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(59, 72, 86, 0.08), transparent 50%),
+    linear-gradient(180deg, #f8f5ee 0%, #f2ede2 100%);
+}
+
+#auth-auth-mod.panel-auth {
+  padding: 8vh 16px 24px !important;
+}
+
+#auth-auth-mod > .row {
+  margin: 0 !important;
+  width: 100% !important;
+}
+
+#auth-auth-mod > .row > .col-sm-4.offset-md-4.col-sm-offset-4 {
+  float: none !important;
+  margin: 0 auto !important;
+  width: min(640px, 94vw) !important;
+  max-width: 640px !important;
+  padding: 0 !important;
+}
+
+#auth-auth-mod .panel.panel-primary {
+  border: 1px solid #d5cebf !important;
+  border-radius: 14px !important;
+  background: rgba(255, 255, 255, 0.86) !important;
+  box-shadow: 0 14px 30px rgba(44, 62, 80, 0.12) !important;
+}
+
+#auth-auth-mod .panel-body {
+  padding: 30px 28px !important;
+}
+
+#auth-shinymanager-auth-head {
+  color: #2c3e50 !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em;
+  margin-top: 0 !important;
+}
+
+#auth-auth-mod .control-label,
+#auth-auth-mod .form-group > label,
+#auth-auth-mod .form-group label,
+#auth-auth-mod .form-label,
+#auth-auth-mod label[for="auth_user"],
+#auth-auth-mod label[for="auth_pwd"],
+#auth-auth-mod label[for^="auth_"],
+#auth-auth-mod .form-group p,
+#auth-auth-mod .form-group .help-block {
+  color: #3b4856 !important;
+  font-size: 1.35rem !important;
+  line-height: 1.25 !important;
+  font-weight: 700 !important;
+}
+
+#auth-auth-mod input[type="text"],
+#auth-auth-mod input[type="password"] {
+  border: 1px solid #d5cebf !important;
+  border-radius: 9px !important;
+  background: #fffdf9 !important;
+  color: #2c3e50 !important;
+  box-shadow: none !important;
+  min-height: 44px;
+}
+
+#auth-auth-mod input[type="text"]:focus,
+#auth-auth-mod input[type="password"]:focus {
+  border-color: #0d6efd !important;
+  box-shadow: 0 0 0 0.18rem rgba(13, 110, 253, 0.18) !important;
+}
+
+#auth-go_auth {
+  border: 1px solid #3b4856 !important;
+  border-radius: 10px !important;
+  background: linear-gradient(180deg, #3b4856 0%, #33404d 100%) !important;
+  color: #f8f5ee !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em;
+  min-height: 48px;
+  box-shadow: 0 5px 14px rgba(51, 64, 77, 0.25) !important;
+}
+
+#auth-go_auth:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(51, 64, 77, 0.3) !important;
+}
+
+#auth-go_auth:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25) !important;
+}
+
+#auth-result_auth .text-danger {
+  color: #b94a48 !important;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  #auth-auth-mod.panel-auth {
+    padding: 18px 10px !important;
+  }
+
+  #auth-auth-mod > .row > .col-sm-4.offset-md-4.col-sm-offset-4 {
+    width: min(96vw, 640px) !important;
+  }
+
+  #auth-auth-mod .panel-body {
+    padding: 22px 16px !important;
+  }
+}

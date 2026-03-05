@@ -72,6 +72,11 @@ make_branch_payload <- function() {
     budget_remaining = 1980,
     interventions_active = "None"
   )
+  run_log_player <- tibble::tibble(
+    turn = c(0L, 1L),
+    active_interventions = c("None", "Social distancing"),
+    intervention_cost = c(0, 50)
+  )
 
   actions_baseline <- tibble::tibble(
     branch = "baseline",
@@ -90,6 +95,11 @@ make_branch_payload <- function() {
     budget_remaining = 1990,
     interventions_active = "None"
   )
+  run_log_baseline <- tibble::tibble(
+    turn = c(0L, 1L),
+    active_interventions = c("None", "None"),
+    intervention_cost = c(0, 0)
+  )
 
   list(
     branches = list(
@@ -97,12 +107,14 @@ make_branch_payload <- function() {
         truth = player_truth,
         observations = obs_player,
         actions = actions_player,
+        run_log = run_log_player,
         truth_history = list(c(3L, 1L), c(4L, 2L))
       ),
       baseline = list(
         truth = baseline_truth,
         observations = obs_baseline,
         actions = actions_baseline,
+        run_log = run_log_baseline,
         truth_history = list(c(2L, 1L), c(2L, 2L))
       )
     )
@@ -171,6 +183,9 @@ test_that("replay_get_branch_logs returns selected branch and falls back for mis
   legacy_logs <- replay_get_branch_logs(make_legacy_payload(), branch = "player")
   expect_true(is.list(legacy_logs$truth_history))
   expect_equal(nrow(legacy_logs$observations), 1)
+  expect_true("run_log" %in% names(baseline_logs))
+  expect_equal(nrow(baseline_logs$run_log), 2)
+  expect_equal(nrow(legacy_logs$run_log), 0)
 })
 
 test_that("replay_filter_branch filters when branch column exists and no-ops otherwise", {
@@ -224,4 +239,135 @@ test_that("replay observation/action summaries respect branch selection", {
 
   expect_equal(sum(actions_player$tests_ag), 10)
   expect_equal(sum(actions_baseline$tests_ag), 5)
+})
+
+test_that("intervention timeline builds full turn grid from run log labels", {
+  defs <- tibble::tibble(
+    id = c("distancing", "quarantine", "rapid"),
+    label = c("Social distancing", "Targeted quarantine", "Rapid labs")
+  )
+  run_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    active_interventions = c("None", "Social distancing, Targeted quarantine", "Rapid labs")
+  )
+
+  timeline <- replay_build_intervention_timeline(
+    run_log = run_log,
+    turns = 0:2,
+    intervention_defs = defs
+  )
+
+  expect_equal(nrow(timeline), 3L * nrow(defs))
+  active_t1 <- timeline |>
+    dplyr::filter(turn == 1L, active) |>
+    dplyr::pull(intervention_label) |>
+    sort()
+  expect_equal(active_t1, sort(c("Social distancing", "Targeted quarantine")))
+})
+
+test_that("intervention timeline falls back to action log labels when run log missing", {
+  defs <- tibble::tibble(
+    id = c("distancing", "quarantine", "rapid"),
+    label = c("Social distancing", "Targeted quarantine", "Rapid labs")
+  )
+  action_log <- tibble::tibble(
+    turn = c(0L, 0L, 1L),
+    interventions_active = c("None", "None", "Rapid labs")
+  )
+
+  timeline <- replay_build_intervention_timeline(
+    run_log = tibble::tibble(),
+    turns = 0:1,
+    intervention_defs = defs,
+    action_log = action_log
+  )
+
+  rapid_active_t1 <- timeline |>
+    dplyr::filter(turn == 1L, intervention_id == "rapid") |>
+    dplyr::pull(active)
+  expect_true(isTRUE(rapid_active_t1))
+})
+
+test_that("intervention timeline plot returns ggplot and includes fallback-derived active state", {
+  defs <- tibble::tibble(
+    id = c("distancing", "quarantine", "rapid"),
+    label = c("Social distancing", "Targeted quarantine", "Rapid labs")
+  )
+  action_log <- tibble::tibble(
+    turn = c(0L, 1L),
+    interventions_active = c("None", "Rapid labs")
+  )
+
+  plot_obj <- replay_plot_intervention_timeline(
+    run_log = tibble::tibble(),
+    action_log = action_log,
+    intervention_defs = defs,
+    turns = 0:1
+  )
+
+  expect_s3_class(plot_obj, "ggplot")
+  rapid_state <- plot_obj$data |>
+    dplyr::filter(turn == 1L, intervention_id == "rapid") |>
+    dplyr::pull(active)
+  expect_true(isTRUE(rapid_state))
+  expect_equal(sort(unique(plot_obj$data$strip_state)), c("Active", "Inactive"))
+})
+
+test_that("intervention timeline plot returns NULL when no turns are available", {
+  defs <- tibble::tibble(
+    id = c("distancing", "quarantine"),
+    label = c("Social distancing", "Targeted quarantine")
+  )
+
+  expect_null(replay_plot_intervention_timeline(
+    run_log = tibble::tibble(),
+    action_log = tibble::tibble(),
+    intervention_defs = defs,
+    turns = integer()
+  ))
+})
+
+test_that("prevalence plot no longer carries intervention fill scale", {
+  defs <- tibble::tibble(
+    id = c("distancing", "quarantine"),
+    label = c("Social distancing", "Targeted quarantine")
+  )
+  truth_log <- tibble::tibble(
+    turn = c(0L, 1L),
+    borough_index = c(1L, 1L),
+    incidence = c(4L, 6L)
+  )
+  baseline_truth_log <- tibble::tibble(
+    turn = c(0L, 1L),
+    borough_index = c(1L, 1L),
+    incidence = c(3L, 5L)
+  )
+  obs_log <- tibble::tibble(
+    turn_reported = c(0L, 1L),
+    n_returned = c(20L, 20L),
+    positives = c(1L, 2L)
+  )
+  run_log <- tibble::tibble(
+    turn = c(0L, 1L),
+    active_interventions = c("None", "Social distancing")
+  )
+  action_log <- tibble::tibble(
+    turn = c(0L, 1L),
+    interventions_active = c("None", "Social distancing")
+  )
+
+  plot_obj <- replay_plot_prevalence(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000),
+    window = 2L,
+    baseline_truth_log = baseline_truth_log,
+    player_run_log = run_log,
+    player_action_log = action_log,
+    intervention_defs = defs
+  )
+
+  expect_s3_class(plot_obj, "ggplot")
+  expect_null(plot_obj$scales$get_scales("fill"))
+  expect_equal(plot_obj$labels$y, "Prevalence (%)")
 })

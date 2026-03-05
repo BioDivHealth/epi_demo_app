@@ -53,6 +53,38 @@
 .turn-badge { font-size: 1.1rem; font-weight: 600; }
 .dashboard-card-header-inner .turn-badge { flex-shrink: 0; }
 .scenario-label { font-size: 0.85rem; color: #6c757d; }
+
+/* Keep notifications in a bounded zone so they cannot cover core controls. */
+.shiny-notification-panel {
+  top: auto !important;
+  right: 12px !important;
+  bottom: 12px !important;
+  left: auto !important;
+  width: min(360px, calc(100vw - 24px));
+  max-width: 360px;
+  max-height: 34vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  z-index: 1055;
+  pointer-events: none;
+}
+
+.shiny-notification-panel .shiny-notification {
+  margin-bottom: 8px;
+  pointer-events: auto;
+}
+
+@media (max-width: 768px) {
+  .shiny-notification-panel {
+    left: 12px !important;
+    right: 12px !important;
+    width: auto;
+    max-width: none;
+    max-height: 28vh;
+  }
+}
+
 #map-map {
   height: 400px !important;
   min-height: 400px;
@@ -120,6 +152,52 @@
   color: #9a9590;
   margin: 0;
   white-space: nowrap;
+}
+.map-label-with-tooltip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.map-label-with-tooltip .map-section-label,
+.map-label-with-tooltip .map-selection-label {
+  margin: 0;
+}
+.info-tooltip-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #7a7772;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  cursor: help;
+}
+.info-tooltip-trigger:hover,
+.info-tooltip-trigger:focus {
+  color: #3e3f3a71;
+}
+.info-tooltip-trigger:focus-visible {
+  outline: 2px solid #0d6efd;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.epi-help-tooltip {
+  --bs-tooltip-bg: rgba(255, 255, 255, 0.86);
+  --bs-tooltip-color: #2c3e50;
+  --bs-tooltip-opacity: 1;
+  --bs-tooltip-max-width: 280px;
+}
+.epi-help-tooltip .tooltip-inner {
+  text-transform: none !important;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  border: 1px solid #d5cebf;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14);
+  padding: 8px 10px;
 }
 /* Section 1: Run Mode — dark slate */
 .map-section-mode {
@@ -199,6 +277,12 @@
   text-transform: uppercase;
   color: #6c757d;
   white-space: nowrap;
+}
+.map-choice-with-tooltip {
+  cursor: help;
+}
+.map-choice-with-tooltip:hover {
+  text-decoration: underline dotted;
 }
 /* --- Toggle button group (BS3 + BS5 selectors) --- */
 .toggle-btn-group .shiny-input-container,

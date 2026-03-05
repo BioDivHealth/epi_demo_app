@@ -28,6 +28,21 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('map-run_rail') !== null")
   app$wait_for_js("document.getElementById('map-run_mode_box') !== null")
   app$wait_for_js("document.getElementById('controls-run_mode') !== null")
+  app$wait_for_js("document.getElementById('controls-testing_pool_info') !== null")
+  app$wait_for_js("document.getElementById('controls-allocation_policy_info') !== null")
+  app$wait_for_js("document.getElementById('map-interventions_info') !== null")
+  app$wait_for_js(
+    "(() => {
+      const nodes = document.querySelectorAll('#map-interventions bslib-tooltip');
+      if (!nodes || nodes.length === 0) return false;
+      return Array.from(nodes).some((node) => {
+        const label = node.querySelector('.map-choice-with-tooltip');
+        const tip = node.querySelector('template');
+        if (!label || !tip) return false;
+        return (tip.textContent || '').trim().length > 0;
+      });
+    })();"
+  )
   app$wait_for_js("document.getElementById('controls-rng_seed') !== null")
   app$wait_for_js("document.getElementById('controls-reseed') !== null")
   app$wait_for_js("document.getElementById('controls-end') !== null")
@@ -51,7 +66,7 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('controls-allocation_policy').offsetParent !== null", timeout = 8000)
   app$wait_for_js("document.getElementById('controls-start_run').offsetParent !== null", timeout = 8000)
 
-  app$set_inputs(`controls-allocation_policy` = "random_population")
+  app$set_inputs(`controls-allocation_policy` = "all_boroughs")
   app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent === null")
   app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent === null")
 

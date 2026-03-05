@@ -150,6 +150,79 @@ allocate_integer_by_weights <- function(total, weights) {
   as.integer(base)
 }
 
+allocate_integer_with_floor <- function(total, weights, floor_each = 0L) {
+  total <- suppressWarnings(as.integer(total))
+  if (is.na(total) || total <= 0L) {
+    return(as.integer(rep(0L, length(weights))))
+  }
+
+  n <- length(weights)
+  if (n == 0L) {
+    return(integer())
+  }
+
+  floor_each <- suppressWarnings(as.integer(floor_each))
+  if (is.na(floor_each) || floor_each < 0L) {
+    floor_each <- 0L
+  }
+
+  floor_total <- as.integer(n * floor_each)
+  if (floor_total > 0L && total >= floor_total) {
+    base <- as.integer(rep(floor_each, n))
+    remainder <- as.integer(total - floor_total)
+    if (remainder > 0L) {
+      base <- base + allocate_integer_by_weights(remainder, weights)
+    }
+    return(as.integer(base))
+  }
+
+  allocate_integer_by_weights(total, weights)
+}
+
+allocate_with_capacity <- function(total, capacity) {
+  total <- suppressWarnings(as.integer(total))
+  capacity <- as_non_negative_integer(capacity)
+  n <- length(capacity)
+
+  if (n == 0L || is.na(total) || total <= 0L) {
+    return(as.integer(rep(0L, n)))
+  }
+
+  max_assignable <- as.integer(sum(capacity))
+  if (max_assignable <= 0L) {
+    return(as.integer(rep(0L, n)))
+  }
+
+  total <- min(total, max_assignable)
+  shares <- normalise_policy_weights(capacity)
+  raw <- total * shares
+  alloc <- pmin(floor(raw), capacity)
+  remaining <- as.integer(total - sum(alloc))
+  if (remaining <= 0L) {
+    return(as.integer(alloc))
+  }
+
+  fractional <- raw - floor(raw)
+  order_idx <- order(-fractional, -capacity, seq_along(capacity))
+
+  while (remaining > 0L) {
+    for (idx in order_idx) {
+      if (remaining <= 0L) {
+        break
+      }
+
+      if (alloc[idx] >= capacity[idx]) {
+        next
+      }
+
+      alloc[idx] <- alloc[idx] + 1L
+      remaining <- remaining - 1L
+    }
+  }
+
+  as.integer(alloc)
+}
+
 policy_budget_components <- function(budget, intervention_cost) {
   total_budget <- suppressWarnings(as.numeric(budget$budget))
   if (!is.finite(total_budget)) {
@@ -260,7 +333,7 @@ policy_manual <- function(request) {
   request$allocs_manual
 }
 
-policy_random_population <- function(request) {
+policy_all_boroughs <- function(request) {
   base_alloc <- policy_base_allocations(request$pop_tbl)
   budget_parts <- policy_budget_components(request$budget, request$intervention_cost)
 
@@ -299,12 +372,22 @@ policy_random_population <- function(request) {
     total_pcr <- as.integer(floor(remaining / cost_pcr))
   }
 
-  if (total_ag > 0L) {
-    base_alloc$n_ag <- as.integer(stats::rmultinom(1, size = total_ag, prob = weights)[, 1])
+  total_tests <- as.integer(total_ag + total_pcr)
+  if (total_tests <= 0L) {
+    return(base_alloc)
   }
-  if (total_pcr > 0L) {
-    base_alloc$n_pcr <- as.integer(stats::rmultinom(1, size = total_pcr, prob = weights)[, 1])
-  }
+
+  coverage_floor <- if (total_tests >= nrow(base_alloc)) 1L else 0L
+  tests_by_borough <- allocate_integer_with_floor(total_tests, weights, floor_each = coverage_floor)
+
+  pcr_by_borough <- allocate_with_capacity(
+    total = total_pcr,
+    capacity = tests_by_borough
+  )
+  ag_by_borough <- as.integer(tests_by_borough - pcr_by_borough)
+
+  base_alloc$n_ag <- ag_by_borough
+  base_alloc$n_pcr <- pcr_by_borough
 
   base_alloc
 }
@@ -481,7 +564,8 @@ build_policy_allocations <- function(request) {
   allocs <- switch(
     policy_id,
     manual = policy_manual(request),
-    random_population = policy_random_population(request),
+    all_boroughs = policy_all_boroughs(request),
+    random_population = policy_all_boroughs(request),
     symptomatic_proxy = policy_symptomatic_proxy(request),
     stop("unknown policy_id: ", policy_id)
   )

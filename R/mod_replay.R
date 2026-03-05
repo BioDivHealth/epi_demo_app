@@ -81,16 +81,6 @@ mod_replay_ui <- function(id) {
         leaflet::leafletOutput(ns("map_truth"), height = 380)
       )
     ),
-    shiny::fluidRow(
-      shiny::column(
-        width = 6,
-        shiny::plotOutput(ns("incidence_plot"), height = 250)
-      ),
-      shiny::column(
-        width = 6,
-        shiny::plotOutput(ns("testing_plot"), height = 250)
-      )
-    ),
     shiny::div(
       class = "mt-3",
       shiny::tags$strong("Selected turn branch comparison"),
@@ -103,7 +93,7 @@ mod_replay_ui <- function(id) {
   )
 }
 
-mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NULL) {
+mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NULL, intervention_defs = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     if (is.null(open_signal)) {
@@ -161,24 +151,8 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     branch_logs <- shiny::reactive({
       replay_get_branch_logs(log_data(), branch = selected_branch())
     })
-    player_logs <- shiny::reactive({
-      replay_get_branch_logs(log_data(), branch = "player")
-    })
     truth_log <- shiny::reactive({
       replay_resolve_truth_log(log_data(), borough_names, branch = selected_branch())
-    })
-    player_truth_log <- shiny::reactive({
-      if ("player" %in% branch_choices()) {
-        replay_resolve_truth_log(log_data(), borough_names, branch = "player")
-      } else {
-        replay_resolve_truth_log(log_data(), borough_names, branch = selected_branch())
-      }
-    })
-    baseline_truth_log <- shiny::reactive({
-      if (!("baseline" %in% branch_choices())) {
-        return(tibble::tibble())
-      }
-      replay_resolve_truth_log(log_data(), borough_names, branch = "baseline")
     })
 
     output$notice <- shiny::renderUI({
@@ -667,20 +641,5 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       selected
     }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 1, na = "")
 
-    output$incidence_plot <- shiny::renderPlot({
-      shiny::req(has_ended())
-      replay_plot_prevalence(
-        truth_log = player_truth_log(),
-        obs_log = player_logs()$observations,
-        pop_tbl = pop_tbl,
-        window = input$infectious_period,
-        baseline_truth_log = baseline_truth_log()
-      )
-    })
-
-    output$testing_plot <- shiny::renderPlot({
-      shiny::req(has_ended())
-      replay_plot_testing(branch_logs()$actions)
-    })
   })
 }

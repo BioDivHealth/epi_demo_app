@@ -15,7 +15,7 @@ empty_results_tbl <- function() {
 make_autorun_fixture <- function(
     run_mode = "guided_auto",
     config_turns = 4L,
-    policy_id = "random_population",
+    policy_id = "all_boroughs",
     budget = list(budget = 300, costs = list(ag = 2, pcr = 10)),
     active_ids = character()) {
   pop_tbl <- tibble::tibble(
@@ -180,7 +180,7 @@ derive_turn_seed_fixture <- function(master_seed, turn_index) {
 }
 
 test_that("guided auto-run completes exactly N turns", {
-  state <- make_autorun_fixture(config_turns = 4L, policy_id = "random_population")
+  state <- make_autorun_fixture(config_turns = 4L, policy_id = "all_boroughs")
   state <- start_autorun_fixture(state)
 
   set.seed(777)
@@ -194,7 +194,7 @@ test_that("guided auto-run completes exactly N turns", {
 })
 
 test_that("pause and resume preserve counters and continue correctly", {
-  state <- make_autorun_fixture(config_turns = 5L, policy_id = "random_population")
+  state <- make_autorun_fixture(config_turns = 5L, policy_id = "all_boroughs")
   state <- start_autorun_fixture(state)
 
   set.seed(101)
@@ -238,7 +238,7 @@ test_that("low-budget run with interventions does not false-stop under capped pr
 })
 
 test_that("manual mode does not auto-advance", {
-  state <- make_autorun_fixture(run_mode = "manual", config_turns = 4L, policy_id = "random_population")
+  state <- make_autorun_fixture(run_mode = "manual", config_turns = 4L, policy_id = "all_boroughs")
   state <- start_autorun_fixture(state)
 
   for (i in seq_len(3)) {
@@ -252,7 +252,7 @@ test_that("manual mode does not auto-advance", {
 })
 
 test_that("dual-branch auto-run preserves exact N-turn lockstep", {
-  player <- make_autorun_fixture(config_turns = 3L, policy_id = "random_population")
+  player <- make_autorun_fixture(config_turns = 3L, policy_id = "all_boroughs")
   baseline <- make_autorun_fixture(config_turns = 3L, policy_id = "manual")
   baseline$allocs_manual$n_ag <- 0L
   baseline$allocs_manual$n_pcr <- 0L

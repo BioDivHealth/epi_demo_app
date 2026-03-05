@@ -50,7 +50,7 @@ make_policy_request_fixture <- function(policy_id = "manual") {
 }
 
 test_that("policy outputs have valid allocation schema", {
-  policy_ids <- c("manual", "random_population", "symptomatic_proxy")
+  policy_ids <- c("manual", "all_boroughs", "symptomatic_proxy")
 
   for (policy_id in policy_ids) {
     request <- make_policy_request_fixture(policy_id = policy_id)
@@ -65,7 +65,7 @@ test_that("policy outputs have valid allocation schema", {
 })
 
 test_that("policies return non-negative integer allocations", {
-  policy_ids <- c("manual", "random_population", "symptomatic_proxy")
+  policy_ids <- c("manual", "all_boroughs", "symptomatic_proxy")
 
   for (policy_id in policy_ids) {
     request <- make_policy_request_fixture(policy_id = policy_id)
@@ -96,15 +96,29 @@ test_that("cap_allocations_to_budget enforces budget feasibility", {
   expect_lte(spend, limit + 1e-6)
 })
 
-test_that("random_population policy is deterministic under fixed seed", {
-  request <- make_policy_request_fixture(policy_id = "random_population")
+test_that("all_boroughs policy is deterministic across RNG seeds", {
+  request <- make_policy_request_fixture(policy_id = "all_boroughs")
 
   set.seed(812)
   allocs_a <- build_policy_allocations(request)
-  set.seed(812)
+  set.seed(47)
   allocs_b <- build_policy_allocations(request)
 
   expect_equal(allocs_a, allocs_b)
+})
+
+test_that("all_boroughs policy covers every borough when affordable", {
+  request <- make_policy_request_fixture(policy_id = "all_boroughs")
+  request$budget <- list(
+    budget = 80,
+    costs = list(ag = 1, pcr = 5)
+  )
+  request$intervention_cost <- 0
+
+  allocs <- build_policy_allocations(request)
+  totals <- allocs$n_ag + allocs$n_pcr
+
+  expect_true(all(totals >= 1L))
 })
 
 test_that("manual policy returns exact manual allocations when affordable", {

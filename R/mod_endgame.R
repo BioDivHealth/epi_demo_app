@@ -91,6 +91,26 @@ build_endgame_modal <- function(metrics, comparison, detection_rate) {
         )
       )
     ),
+    fluidRow(
+      column(12,
+        tags$div(
+          class = "card bg-light mb-3",
+          tags$div(class = "card-header", tags$strong("Key Outcome Plots")),
+          tags$div(
+            class = "card-body",
+            tags$div(
+              class = "mb-3",
+              tags$strong("Prevalence and Interventions Over Turns"),
+              plotOutput("endgame_prevalence_plot", height = "600px")
+            ),
+            tags$div(
+              tags$strong("Testing Allocation Over Turns"),
+              plotOutput("endgame_testing_plot", height = "280px")
+            )
+          )
+        )
+      )
+    ),
     tags$hr(),
     tags$h5("Turn-by-Turn Branch Comparison"),
     tags$div(

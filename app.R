@@ -95,7 +95,8 @@ app_ui <- page_fluid(
   useShinyjs(),
   tags$head(
     tags$link(rel = "stylesheet", href = "style.css"),
-    tags$script(src = "help-auto.js")
+    tags$script(src = "help-auto.js"),
+    tags$script(src = "auth-enter-fix.js")
   ),
   div(
     class = "main-header d-flex justify-content-between align-items-center",
@@ -119,9 +120,22 @@ app_ui <- page_fluid(
   )
 )
 
-ui <- if (auth_disabled) app_ui else secure_app(app_ui, enable_admin = FALSE)
+ui <- if (auth_disabled) {
+  app_ui
+} else {
+  secure_app(
+    app_ui,
+    enable_admin = FALSE,
+    head_auth = tagList(
+      tags$link(rel = "stylesheet", href = "auth.css"),
+      tags$script(src = "auth-enter-fix.js")
+    )
+  )
+}
 
 server <- function(input, output, session) {
+  turn_progress_notification_id <- "turn-progress-toast"
+
   auth <- NULL
   if (auth_disabled) {
     is_admin <- reactive(FALSE)
@@ -369,6 +383,91 @@ server <- function(input, output, session) {
     req(report_dual$turn_comparison)
     report_dual$turn_comparison
   }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 2)
+
+  output$endgame_prevalence_plot <- renderPlot({
+    req(isTRUE(replay_unlocked()))
+    snapshot <- replay_snapshot()
+    player_logs <- replay_get_branch_logs(snapshot, branch = "player")
+    player_truth_log <- replay_resolve_truth_log(
+      log_data = snapshot,
+      borough_names = inputs$boros$borough_name,
+      branch = "player"
+    )
+    baseline_truth_log <- replay_resolve_truth_log(
+      log_data = snapshot,
+      borough_names = inputs$boros$borough_name,
+      branch = "baseline"
+    )
+    common_turns <- sort(unique(c(
+      suppressWarnings(as.integer(player_truth_log$turn)),
+      suppressWarnings(as.integer(player_logs$observations$turn_reported)),
+      suppressWarnings(as.integer(baseline_truth_log$turn))
+    )))
+    common_turns <- common_turns[is.finite(common_turns)]
+
+    prevalence_plot <- replay_plot_prevalence(
+      truth_log = player_truth_log,
+      obs_log = player_logs$observations,
+      pop_tbl = inputs$pop_tbl,
+      window = 3L,
+      baseline_truth_log = baseline_truth_log
+    )
+    timeline_plot <- replay_plot_intervention_timeline(
+      run_log = player_logs$run_log,
+      action_log = player_logs$actions,
+      intervention_defs = intervention_defs,
+      turns = common_turns
+    )
+
+    if (length(common_turns) > 0) {
+      x_limits <- range(common_turns, na.rm = TRUE)
+      prevalence_plot <- prevalence_plot + ggplot2::coord_cartesian(xlim = x_limits)
+      timeline_plot <- timeline_plot + ggplot2::coord_cartesian(xlim = x_limits)
+    }
+
+    if (is.null(prevalence_plot) && is.null(timeline_plot)) {
+      return(invisible(NULL))
+    }
+    if (is.null(prevalence_plot)) {
+      print(timeline_plot)
+      return(invisible(NULL))
+    }
+    if (is.null(timeline_plot)) {
+      print(prevalence_plot)
+      return(invisible(NULL))
+    }
+
+    prevalence_grob <- ggplot2::ggplotGrob(prevalence_plot)
+    timeline_grob <- ggplot2::ggplotGrob(timeline_plot)
+    shared_widths <- grid::unit.pmax(prevalence_grob$widths, timeline_grob$widths)
+    prevalence_grob$widths <- shared_widths
+    timeline_grob$widths <- shared_widths
+
+    grid::grid.newpage()
+    grid::pushViewport(grid::viewport(
+      layout = grid::grid.layout(
+        nrow = 2,
+        ncol = 1,
+        heights = grid::unit(c(4.6, 1.4), "null")
+      )
+    ))
+    grid::grid.draw(grid::editGrob(
+      prevalence_grob,
+      vp = grid::viewport(layout.pos.row = 1, layout.pos.col = 1)
+    ))
+    grid::grid.draw(grid::editGrob(
+      timeline_grob,
+      vp = grid::viewport(layout.pos.row = 2, layout.pos.col = 1)
+    ))
+    grid::popViewport()
+  }, res = 96)
+
+  output$endgame_testing_plot <- renderPlot({
+    req(isTRUE(replay_unlocked()))
+    snapshot <- replay_snapshot()
+    player_logs <- replay_get_branch_logs(snapshot, branch = "player")
+    replay_plot_testing(player_logs$actions)
+  }, res = 96)
 
   current_player_branch <- function() {
     new_branch_state(
@@ -636,7 +735,9 @@ server <- function(input, output, session) {
     showNotification(
       result$notification$message,
       type = result$notification$type,
-      duration = result$notification$duration
+      duration = result$notification$duration,
+      id = turn_progress_notification_id,
+      closeButton = FALSE
     )
   }
 
@@ -778,6 +879,7 @@ server <- function(input, output, session) {
   }
 
   observeEvent(shared_reset_signal(), {
+    removeNotification(turn_progress_notification_id)
     reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
     showNotification("Admin reset triggered", type = "message")
@@ -802,6 +904,7 @@ server <- function(input, output, session) {
       app_ready(FALSE)
     }
 
+    removeNotification(turn_progress_notification_id)
     reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
 
@@ -814,6 +917,7 @@ server <- function(input, output, session) {
   }, ignoreNULL = FALSE)
 
   observeEvent(controls$reset(), {
+    removeNotification(turn_progress_notification_id)
     reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
   })
@@ -1035,7 +1139,8 @@ server <- function(input, output, session) {
     boros = inputs$boros,
     pop_tbl = inputs$pop_tbl,
     ended = reactive(replay_unlocked()),
-    open_signal = reactive(replay_open_id())
+    open_signal = reactive(replay_open_id()),
+    intervention_defs = intervention_defs
   )
 }
 

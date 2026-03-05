@@ -1,5 +1,55 @@
 # Map module -----------------------------------------------------------------
 
+intervention_tooltip_lookup <- function(catalog) {
+  validate_intervention_catalog(catalog)
+
+  defaults <- c(
+    distancing = "Lowers transmission (Rt multiplier 0.8). Costs budget each turn while active.",
+    quarantine = "Reduces imported infections (imports multiplier 0.5). Costs budget each turn while active.",
+    rapid = "Returns PCR results 1 turn sooner. Costs budget each turn while active."
+  )
+
+  ids <- as.character(catalog$id)
+  tips <- defaults[ids]
+  missing <- is.na(tips)
+  if (any(missing)) {
+    tips[missing] <- "Applies its listed effect while active and consumes budget each turn."
+  }
+
+  stats::setNames(as.character(tips), ids)
+}
+
+build_intervention_choice_ui <- function(catalog, turn_budget = NULL) {
+  validate_intervention_catalog(catalog)
+
+  choice_map <- format_intervention_choice_labels(catalog, turn_budget = turn_budget)
+  choice_values <- as.character(unname(choice_map))
+  choice_labels <- as.character(names(choice_map))
+  tooltips <- intervention_tooltip_lookup(catalog)
+
+  choice_names <- lapply(seq_along(choice_values), function(i) {
+    id <- choice_values[[i]]
+    tip <- unname(tooltips[id])
+    if (length(tip) == 0 || is.na(tip) || identical(tip, "")) {
+      tip <- "Applies its listed effect while active and consumes budget each turn."
+    }
+    bslib::tooltip(
+      trigger = shiny::tags$span(
+        class = "map-choice-with-tooltip",
+        choice_labels[[i]]
+      ),
+      tip,
+      placement = "top",
+      options = list(customClass = "epi-help-tooltip")
+    )
+  })
+
+  list(
+    choice_names = choice_names,
+    choice_values = choice_values
+  )
+}
+
 mod_map_ui <- function(
     id,
     intervention_defs = intervention_catalog(),
@@ -8,7 +58,7 @@ mod_map_ui <- function(
     testing_pool_ui = NULL,
     borough_policy_ui = NULL) {
   ns <- shiny::NS(id)
-  intervention_choices <- format_intervention_choice_labels(intervention_defs)
+  intervention_choices <- build_intervention_choice_ui(intervention_defs)
   bslib::card(
     full_screen = TRUE,
     bslib::card_header(
@@ -93,11 +143,23 @@ mod_map_ui <- function(
       # Section 3: Interventions
       shiny::div(
         class = "map-section map-section-interventions",
-        shiny::tags$div(class = "map-section-label", "Interventions"),
+        shiny::div(
+          class = "map-label-with-tooltip",
+          shiny::tags$div(class = "map-section-label", "Interventions"),
+          build_info_tooltip(
+            ns = ns,
+            id = "interventions_info",
+            text = paste(
+              "Interventions trade testing budget for outbreak-control effects each turn.",
+              "Hover each intervention option for its specific effect."
+            )
+          )
+        ),
         shiny::checkboxGroupInput(
           ns("interventions"),
           label = NULL,
-          choices = intervention_choices,
+          choiceNames = intervention_choices$choice_names,
+          choiceValues = intervention_choices$choice_values,
           selected = character(),
           inline = TRUE
         )
@@ -374,13 +436,15 @@ mod_map_server <- function(
       req(ready())
       budget <- budget_info()
       selected <- selected_interventions()
+      intervention_choices <- build_intervention_choice_ui(
+        intervention_defs,
+        turn_budget = budget$budget
+      )
       shiny::updateCheckboxGroupInput(
         session,
         "interventions",
-        choices = format_intervention_choice_labels(
-          intervention_defs,
-          turn_budget = budget$budget
-        ),
+        choiceNames = intervention_choices$choice_names,
+        choiceValues = intervention_choices$choice_values,
         selected = selected
       )
     })

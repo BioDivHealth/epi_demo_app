@@ -8,6 +8,7 @@ build_replay_snapshot <- function(player_branch, baseline_branch, comparison_rep
     truth = empty_logs$truth,
     observations = empty_logs$observations,
     actions = empty_logs$actions,
+    run_log = tibble::tibble(),
     truth_history = list()
   )
 
@@ -19,6 +20,7 @@ build_replay_snapshot <- function(player_branch, baseline_branch, comparison_rep
       truth = branch_state$turn_logs$truth,
       observations = branch_state$turn_logs$observations,
       actions = branch_state$turn_logs$actions,
+      run_log = branch_state$run_log,
       truth_history = branch_state$truth_history
     )
   }
@@ -74,6 +76,7 @@ replay_get_branch_logs <- function(log_data, branch = "player") {
     truth = tibble::tibble(),
     observations = tibble::tibble(),
     actions = tibble::tibble(),
+    run_log = tibble::tibble(),
     truth_history = list()
   )
 
@@ -117,6 +120,7 @@ replay_get_branch_logs <- function(log_data, branch = "player") {
       truth = normalize_tbl(branch_logs$truth),
       observations = normalize_tbl(branch_logs$observations),
       actions = normalize_tbl(branch_logs$actions),
+      run_log = normalize_tbl(branch_logs$run_log),
       truth_history = normalize_history(branch_logs$truth_history)
     ))
   }
@@ -125,6 +129,7 @@ replay_get_branch_logs <- function(log_data, branch = "player") {
     truth = normalize_tbl(log_data$truth),
     observations = normalize_tbl(log_data$observations),
     actions = normalize_tbl(log_data$actions),
+    run_log = normalize_tbl(log_data$run_log),
     truth_history = normalize_history(log_data$truth_history)
   )
 }
@@ -510,7 +515,129 @@ replay_action_table <- function(actions_df) {
     dplyr::arrange(desc(spend))
 }
 
-replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L, baseline_truth_log = NULL) {
+replay_build_intervention_timeline <- function(run_log, turns, intervention_defs, action_log = NULL) {
+  turns <- suppressWarnings(as.integer(turns))
+  turns <- turns[is.finite(turns)]
+  turns <- sort(unique(turns))
+  if (length(turns) == 0) {
+    return(tibble::tibble())
+  }
+
+  if (is.null(intervention_defs) || !is.data.frame(intervention_defs) || nrow(intervention_defs) == 0) {
+    return(tibble::tibble())
+  }
+  if (!all(c("id", "label") %in% names(intervention_defs))) {
+    return(tibble::tibble())
+  }
+
+  defs <- tibble::as_tibble(intervention_defs) |>
+    dplyr::select(dplyr::any_of(c("id", "label"))) |>
+    dplyr::filter(!is.na(id), !is.na(label), id != "", label != "") |>
+    dplyr::distinct(id, label)
+  if (nrow(defs) == 0) {
+    return(tibble::tibble())
+  }
+
+  parse_labels <- function(x) {
+    if (is.null(x) || length(x) == 0 || is.na(x) || x == "" || identical(x, "None")) {
+      return(character())
+    }
+    parts <- trimws(unlist(strsplit(as.character(x), ",", fixed = TRUE), use.names = FALSE))
+    parts <- parts[nzchar(parts)]
+    if (length(parts) == 0) character() else unique(parts)
+  }
+
+  labels_by_turn <- tibble::tibble(turn = turns, active_interventions = "None")
+
+  if (!is.null(run_log) && is.data.frame(run_log) && nrow(run_log) > 0 &&
+      "turn" %in% names(run_log) && "active_interventions" %in% names(run_log)) {
+    run_by_turn <- tibble::as_tibble(run_log) |>
+      dplyr::filter(!is.na(turn)) |>
+      dplyr::group_by(turn) |>
+      dplyr::summarise(
+        active_interventions = dplyr::first(active_interventions[!is.na(active_interventions)]),
+        .groups = "drop"
+      )
+    labels_by_turn <- labels_by_turn |>
+      dplyr::left_join(run_by_turn, by = "turn", suffix = c("", "_log")) |>
+      dplyr::mutate(active_interventions = dplyr::coalesce(active_interventions_log, active_interventions)) |>
+      dplyr::select(turn, active_interventions)
+  }
+
+  if (!is.null(action_log) && is.data.frame(action_log) && nrow(action_log) > 0 &&
+      "turn" %in% names(action_log) && "interventions_active" %in% names(action_log)) {
+    action_by_turn <- tibble::as_tibble(action_log) |>
+      dplyr::filter(!is.na(turn)) |>
+      dplyr::group_by(turn) |>
+      dplyr::summarise(
+        interventions_active = dplyr::first(interventions_active[!is.na(interventions_active)]),
+        .groups = "drop"
+      )
+    labels_by_turn <- labels_by_turn |>
+      dplyr::left_join(action_by_turn, by = "turn") |>
+      dplyr::mutate(
+        active_interventions = ifelse(
+          is.na(active_interventions) | active_interventions == "" | active_interventions == "None",
+          interventions_active,
+          active_interventions
+        ),
+        active_interventions = dplyr::coalesce(active_interventions, "None")
+      ) |>
+      dplyr::select(turn, active_interventions)
+  }
+
+  labels_lookup <- stats::setNames(defs$id, defs$label)
+  active_rows <- lapply(seq_len(nrow(labels_by_turn)), function(i) {
+    turn_i <- labels_by_turn$turn[[i]]
+    labels_i <- parse_labels(labels_by_turn$active_interventions[[i]])
+    if (length(labels_i) == 0) {
+      return(NULL)
+    }
+
+    ids_i <- unname(labels_lookup[labels_i])
+    ids_i <- ids_i[!is.na(ids_i) & ids_i != ""]
+    if (length(ids_i) == 0) {
+      return(NULL)
+    }
+
+    tibble::tibble(
+      turn = turn_i,
+      intervention_id = as.character(ids_i)
+    )
+  })
+  active_df <- dplyr::bind_rows(active_rows)
+
+  grid_df <- expand.grid(
+    turn = turns,
+    intervention_id = as.character(defs$id),
+    stringsAsFactors = FALSE
+  ) |>
+    tibble::as_tibble() |>
+    dplyr::left_join(
+      defs |>
+        dplyr::rename(intervention_id = id, intervention_label = label),
+      by = "intervention_id"
+    ) |>
+    dplyr::mutate(active = FALSE)
+
+  if (nrow(active_df) > 0) {
+    active_keys <- paste(active_df$turn, active_df$intervention_id, sep = "||")
+    grid_keys <- paste(grid_df$turn, grid_df$intervention_id, sep = "||")
+    grid_df$active <- grid_keys %in% active_keys
+  }
+
+  grid_df
+}
+
+replay_plot_prevalence <- function(
+    truth_log,
+    obs_log,
+    pop_tbl,
+    window = 3L,
+    baseline_truth_log = NULL,
+    player_run_log = NULL,
+    player_action_log = NULL,
+    intervention_defs = NULL) {
   if (is.null(truth_log) || nrow(truth_log) == 0) {
     return(NULL)
   }
@@ -602,54 +729,150 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L, bas
   )
 
   if (nrow(combined) <= 1) {
-    return(
-      ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
-        ggplot2::geom_point(
-          ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
-          size = 3
-        ) +
-        ggplot2::geom_point(
-          ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
-          size = 3,
-          shape = 17
-        ) +
-        ggplot2::geom_point(
-          ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
-          size = 3,
-          shape = 15
-        ) +
-        ggplot2::labs(
-          x = "Turn",
-          y = "Prevalence (%)",
-          colour = NULL
-        ) +
-        ggplot2::scale_colour_manual(values = legend_cols) +
-        ggplot2::theme_minimal()
-    )
+    plot_obj <- ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
+      ggplot2::geom_point(
+        ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
+        size = 2.4
+      ) +
+      ggplot2::geom_point(
+        ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
+        size = 2.4,
+        shape = 17
+      ) +
+      ggplot2::geom_point(
+        ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
+        size = 2.4,
+        shape = 15
+      )
+  } else {
+    plot_obj <- ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
+      ggplot2::geom_line(
+        ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
+        linewidth = 1
+      ) +
+      ggplot2::geom_line(
+        ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
+        linewidth = 1,
+        linetype = "dashed"
+      ) +
+      ggplot2::geom_line(
+        ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
+        linewidth = 1,
+        linetype = "dotdash"
+      )
   }
 
-  ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
-    ggplot2::geom_line(
-      ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
-      linewidth = 1
-    ) +
-    ggplot2::geom_line(
-      ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
-      linewidth = 1,
-      linetype = "dashed"
-    ) +
-    ggplot2::geom_line(
-      ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
-      linewidth = 1,
-      linetype = "dotdash"
-    ) +
+  plot_obj <- plot_obj +
     ggplot2::labs(
       x = "Turn",
       y = "Prevalence (%)",
       colour = NULL
     ) +
     ggplot2::scale_colour_manual(values = legend_cols) +
-    ggplot2::theme_minimal()
+    ggplot2::scale_x_continuous(
+      breaks = scales::breaks_pretty(n = 8)
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      axis.title = ggplot2::element_text(size = 12),
+      axis.text = ggplot2::element_text(size = 10),
+      legend.title = ggplot2::element_text(size = 10),
+      legend.text = ggplot2::element_text(size = 10),
+      legend.key.size = grid::unit(0.45, "cm"),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.direction = "horizontal",
+      legend.margin = ggplot2::margin(0, 0, 0, 0),
+      legend.spacing.x = grid::unit(0.2, "cm")
+    )
+
+  plot_obj
+}
+
+replay_plot_intervention_timeline <- function(run_log, action_log, intervention_defs, turns = NULL) {
+  if (is.null(turns)) {
+    turn_values <- integer()
+    if (!is.null(run_log) && is.data.frame(run_log) && "turn" %in% names(run_log)) {
+      turn_values <- c(turn_values, run_log$turn)
+    }
+    if (!is.null(action_log) && is.data.frame(action_log) && "turn" %in% names(action_log)) {
+      turn_values <- c(turn_values, action_log$turn)
+    }
+    turns <- turn_values
+  }
+
+  turns <- suppressWarnings(as.integer(turns))
+  turns <- turns[is.finite(turns)]
+  turns <- sort(unique(turns))
+  if (length(turns) == 0) {
+    return(NULL)
+  }
+
+  timeline <- replay_build_intervention_timeline(
+    run_log = run_log,
+    turns = turns,
+    intervention_defs = intervention_defs,
+    action_log = action_log
+  )
+  if (nrow(timeline) == 0) {
+    return(NULL)
+  }
+
+  defs <- tibble::as_tibble(intervention_defs) |>
+    dplyr::select(dplyr::any_of(c("id", "label"))) |>
+    dplyr::filter(!is.na(id), !is.na(label), id != "", label != "") |>
+    dplyr::distinct(id, label)
+  row_order <- as.character(defs$id[defs$id %in% timeline$intervention_id])
+  if (length(row_order) == 0) {
+    row_order <- sort(unique(timeline$intervention_id))
+  }
+
+  label_order <- defs |>
+    dplyr::filter(id %in% row_order) |>
+    dplyr::pull(label)
+  if (length(label_order) == 0) {
+    label_order <- unique(timeline$intervention_label)
+  }
+
+  timeline <- timeline |>
+    dplyr::mutate(
+      intervention_id = factor(intervention_id, levels = row_order),
+      intervention_label = factor(intervention_label, levels = rev(label_order)),
+      strip_state = ifelse(active, "Active", "Inactive")
+    )
+
+  ggplot2::ggplot(
+    timeline,
+    ggplot2::aes(x = turn, y = intervention_label, fill = strip_state)
+  ) +
+    ggplot2::geom_tile(width = 0.9, height = 0.72) +
+    ggplot2::labs(
+      x = "Turn",
+      y = NULL,
+      fill = "Intervention status"
+    ) +
+    ggplot2::scale_x_continuous(
+      breaks = scales::breaks_pretty(n = 8)
+    ) +
+    ggplot2::scale_fill_manual(
+      values = c("Active" = "#4d4d4d", "Inactive" = "#ececec")
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      axis.title.x = ggplot2::element_text(size = 10),
+      axis.text.x = ggplot2::element_text(size = 9),
+      axis.text.y = ggplot2::element_text(size = 9),
+      panel.grid.major.y = ggplot2::element_blank(),
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.direction = "horizontal",
+      legend.title = ggplot2::element_text(size = 9),
+      legend.text = ggplot2::element_text(size = 9),
+      legend.key.size = grid::unit(0.4, "cm"),
+      legend.margin = ggplot2::margin(0, 0, 0, 0),
+      plot.margin = ggplot2::margin(2, 5.5, 2, 5.5)
+    )
 }
 
 replay_plot_testing <- function(action_log) {
@@ -683,6 +906,20 @@ replay_plot_testing <- function(action_log) {
       y = "Tests allocated",
       fill = "Test type"
     ) +
+    ggplot2::scale_x_continuous(
+      breaks = scales::breaks_pretty(n = 8)
+    ) +
     ggplot2::scale_fill_manual(values = c("Antigen" = "#74c476", "PCR" = "#6baed6")) +
-    ggplot2::theme_minimal()
+    ggplot2::theme_minimal(base_size = 11) +
+    ggplot2::theme(
+      axis.title = ggplot2::element_text(size = 11),
+      axis.text = ggplot2::element_text(size = 10),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.direction = "horizontal",
+      legend.title = ggplot2::element_text(size = 10),
+      legend.text = ggplot2::element_text(size = 10),
+      legend.key.size = grid::unit(0.45, "cm"),
+      legend.margin = ggplot2::margin(0, 0, 0, 0)
+    )
 }
