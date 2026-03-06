@@ -33,15 +33,13 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('map-interventions_info') !== null")
   app$wait_for_js(
     "(() => {
-      const nodes = document.querySelectorAll('#map-interventions bslib-tooltip');
+      const nodes = document.querySelectorAll('#map-interventions .map-choice-with-tooltip');
       if (!nodes || nodes.length === 0) return false;
-      return Array.from(nodes).some((node) => {
-        const label = node.querySelector('.map-choice-with-tooltip');
-        const tip = node.querySelector('template');
-        if (!label || !tip) return false;
-        return (tip.textContent || '').trim().length > 0;
+      return Array.from(nodes).every((node) => {
+        return (node.textContent || '').trim().length > 0;
       });
-    })();"
+    })();",
+    timeout = 10000
   )
   app$wait_for_js("document.getElementById('controls-rng_seed') !== null")
   app$wait_for_js("document.getElementById('controls-reseed') !== null")

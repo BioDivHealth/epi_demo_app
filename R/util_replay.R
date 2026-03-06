@@ -629,16 +629,19 @@ replay_build_intervention_timeline <- function(run_log, turns, intervention_defs
   grid_df
 }
 
-replay_plot_prevalence <- function(
+replay_prepare_prevalence_series <- function(
     truth_log,
     obs_log,
     pop_tbl,
     window = 3L,
-    baseline_truth_log = NULL,
-    player_run_log = NULL,
-    player_action_log = NULL,
-    intervention_defs = NULL) {
-  if (is.null(truth_log) || nrow(truth_log) == 0) {
+    baseline_truth_log = NULL) {
+  if (is.null(truth_log) || !is.data.frame(truth_log) || nrow(truth_log) == 0) {
+    return(NULL)
+  }
+  if (!all(c("turn", "incidence") %in% names(truth_log))) {
+    return(NULL)
+  }
+  if (is.null(pop_tbl) || !is.data.frame(pop_tbl) || !"pop" %in% names(pop_tbl)) {
     return(NULL)
   }
 
@@ -647,14 +650,19 @@ replay_plot_prevalence <- function(
     return(NULL)
   }
 
-  truth_ts <- truth_log |>
-    dplyr::group_by(turn) |>
-    dplyr::summarise(truth_incidence = sum(incidence), .groups = "drop") |>
-    dplyr::arrange(turn)
-
   window <- as.integer(window)
   if (length(window) != 1 || is.na(window) || window < 1) {
     window <- 3L
+  }
+
+  truth_ts <- tibble::as_tibble(truth_log) |>
+    dplyr::mutate(turn = suppressWarnings(as.integer(turn))) |>
+    dplyr::filter(is.finite(turn)) |>
+    dplyr::group_by(turn) |>
+    dplyr::summarise(truth_incidence = sum(incidence, na.rm = TRUE), .groups = "drop") |>
+    dplyr::arrange(turn)
+  if (nrow(truth_ts) == 0) {
+    return(NULL)
   }
 
   active_total <- vapply(
@@ -667,42 +675,67 @@ replay_plot_prevalence <- function(
   )
   truth_ts$truth_prev_pct <- 100 * active_total / pop_total
 
+  has_baseline_truth <- !is.null(baseline_truth_log) &&
+    is.data.frame(baseline_truth_log) &&
+    nrow(baseline_truth_log) > 0 &&
+    all(c("turn", "incidence") %in% names(baseline_truth_log))
   baseline_ts <- NULL
-  if (!is.null(baseline_truth_log) && nrow(baseline_truth_log) > 0) {
-    baseline_ts <- baseline_truth_log |>
+  if (isTRUE(has_baseline_truth)) {
+    baseline_ts <- tibble::as_tibble(baseline_truth_log) |>
+      dplyr::mutate(turn = suppressWarnings(as.integer(turn))) |>
+      dplyr::filter(is.finite(turn)) |>
       dplyr::group_by(turn) |>
-      dplyr::summarise(truth_incidence = sum(incidence), .groups = "drop") |>
+      dplyr::summarise(truth_incidence = sum(incidence, na.rm = TRUE), .groups = "drop") |>
       dplyr::arrange(turn)
 
-    baseline_active_total <- vapply(
-      seq_len(nrow(baseline_ts)),
-      function(i) {
-        start <- max(1L, i - window + 1L)
-        sum(baseline_ts$truth_incidence[start:i], na.rm = TRUE)
-      },
-      numeric(1)
-    )
-    baseline_ts$baseline_truth_prev_pct <- 100 * baseline_active_total / pop_total
-    baseline_ts <- baseline_ts |>
-      dplyr::select(turn, baseline_truth_prev_pct)
+    if (nrow(baseline_ts) > 0) {
+      baseline_active_total <- vapply(
+        seq_len(nrow(baseline_ts)),
+        function(i) {
+          start <- max(1L, i - window + 1L)
+          sum(baseline_ts$truth_incidence[start:i], na.rm = TRUE)
+        },
+        numeric(1)
+      )
+      baseline_ts$baseline_truth_prev_pct <- 100 * baseline_active_total / pop_total
+      baseline_ts <- baseline_ts |>
+        dplyr::transmute(
+          turn,
+          baseline_truth_prev_pct,
+          baseline_truth_incidence = truth_incidence
+        )
+    } else {
+      has_baseline_truth <- FALSE
+      baseline_ts <- NULL
+    }
   }
 
-  obs_ts <- if (is.null(obs_log) || nrow(obs_log) == 0) {
-    tibble::tibble(
+  obs_ts <- NULL
+  if (is.null(obs_log) || !is.data.frame(obs_log) || nrow(obs_log) == 0) {
+    obs_ts <- tibble::tibble(
+      turn = truth_ts$turn,
+      observed_tests = 0,
+      observed_positives = 0
+    )
+  } else if (!all(c("turn_reported", "n_returned", "positives") %in% names(obs_log))) {
+    obs_ts <- tibble::tibble(
       turn = truth_ts$turn,
       observed_tests = 0,
       observed_positives = 0
     )
   } else {
-    obs_log |>
+    obs_ts <- tibble::as_tibble(obs_log) |>
+      dplyr::mutate(turn_reported = suppressWarnings(as.integer(turn_reported))) |>
+      dplyr::filter(is.finite(turn_reported)) |>
       dplyr::group_by(turn_reported) |>
       dplyr::summarise(
-        observed_tests = sum(n_returned),
-        observed_positives = sum(positives),
+        observed_tests = sum(n_returned, na.rm = TRUE),
+        observed_positives = sum(positives, na.rm = TRUE),
         .groups = "drop"
       ) |>
       dplyr::rename(turn = turn_reported)
   }
+
   obs_ts$observed_prev_pct <- ifelse(
     obs_ts$observed_tests > 0,
     100 * obs_ts$observed_positives / obs_ts$observed_tests,
@@ -714,22 +747,76 @@ replay_plot_prevalence <- function(
     combined <- dplyr::full_join(combined, baseline_ts, by = "turn")
   } else {
     combined$baseline_truth_prev_pct <- NA_real_
+    combined$baseline_truth_incidence <- NA_real_
   }
   if (nrow(combined) == 0) {
     return(NULL)
   }
+
+  combined <- combined |>
+    dplyr::mutate(turn = suppressWarnings(as.integer(turn))) |>
+    dplyr::filter(is.finite(turn)) |>
+    dplyr::arrange(turn)
+  if (nrow(combined) == 0) {
+    return(NULL)
+  }
+
+  combined$truth_incidence[is.na(combined$truth_incidence)] <- 0
+  combined$observed_positives[is.na(combined$observed_positives)] <- 0
+  combined$baseline_truth_incidence[is.na(combined$baseline_truth_incidence)] <- 0
   combined$truth_prev_pct[is.na(combined$truth_prev_pct)] <- 0
   combined$observed_prev_pct[is.na(combined$observed_prev_pct)] <- 0
   combined$baseline_truth_prev_pct[is.na(combined$baseline_truth_prev_pct)] <- 0
+
+  combined <- combined |>
+    dplyr::mutate(
+      player_truth_cumulative = cumsum(truth_incidence),
+      observed_cumulative = cumsum(observed_positives),
+      baseline_truth_cumulative = cumsum(baseline_truth_incidence)
+    )
+
+  list(
+    series = combined,
+    has_baseline_truth = isTRUE(has_baseline_truth)
+  )
+}
+
+replay_plot_prevalence <- function(
+    truth_log,
+    obs_log,
+    pop_tbl,
+    window = 3L,
+    baseline_truth_log = NULL,
+    player_run_log = NULL,
+    player_action_log = NULL,
+    intervention_defs = NULL,
+    show_cumulative = FALSE,
+    cumulative_series = c("observed", "player_truth", "baseline_truth")) {
+  prep <- replay_prepare_prevalence_series(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = pop_tbl,
+    window = window,
+    baseline_truth_log = baseline_truth_log
+  )
+  if (is.null(prep) || nrow(prep$series) == 0) {
+    return(NULL)
+  }
+  combined <- prep$series
+  has_baseline_truth <- isTRUE(prep$has_baseline_truth)
 
   legend_cols <- c(
     "Observed prevalence" = "#ef6548",
     "Truth prevalence (active)" = "#08519c",
     "Baseline truth prevalence (active)" = "#31a354"
   )
+  if (!isTRUE(has_baseline_truth)) {
+    legend_cols <- legend_cols[names(legend_cols) != "Baseline truth prevalence (active)"]
+  }
 
+  plot_obj <- ggplot2::ggplot(combined, ggplot2::aes(x = turn))
   if (nrow(combined) <= 1) {
-    plot_obj <- ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
+    plot_obj <- plot_obj +
       ggplot2::geom_point(
         ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
         size = 2.4
@@ -738,14 +825,17 @@ replay_plot_prevalence <- function(
         ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
         size = 2.4,
         shape = 17
-      ) +
-      ggplot2::geom_point(
-        ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
-        size = 2.4,
-        shape = 15
       )
+    if (isTRUE(has_baseline_truth)) {
+      plot_obj <- plot_obj +
+        ggplot2::geom_point(
+          ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
+          size = 2.4,
+          shape = 15
+        )
+    }
   } else {
-    plot_obj <- ggplot2::ggplot(combined, ggplot2::aes(x = turn)) +
+    plot_obj <- plot_obj +
       ggplot2::geom_line(
         ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
         linewidth = 1
@@ -754,12 +844,15 @@ replay_plot_prevalence <- function(
         ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
         linewidth = 1,
         linetype = "dashed"
-      ) +
-      ggplot2::geom_line(
-        ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
-        linewidth = 1,
-        linetype = "dotdash"
       )
+    if (isTRUE(has_baseline_truth)) {
+      plot_obj <- plot_obj +
+        ggplot2::geom_line(
+          ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
+          linewidth = 1,
+          linetype = "dotdash"
+        )
+    }
   }
 
   plot_obj <- plot_obj +
@@ -784,6 +877,273 @@ replay_plot_prevalence <- function(
       legend.direction = "horizontal",
       legend.margin = ggplot2::margin(0, 0, 0, 0),
       legend.spacing.x = grid::unit(0.2, "cm")
+    )
+
+  plot_obj
+}
+
+replay_plot_cumulative <- function(
+    truth_log,
+    obs_log,
+    pop_tbl,
+    window = 3L,
+    baseline_truth_log = NULL,
+    cumulative_series = c("observed", "player_truth", "baseline_truth"),
+    show_legend = TRUE) {
+  prep <- replay_prepare_prevalence_series(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = pop_tbl,
+    window = window,
+    baseline_truth_log = baseline_truth_log
+  )
+  if (is.null(prep) || nrow(prep$series) == 0) {
+    return(NULL)
+  }
+
+  combined <- prep$series
+  has_baseline_truth <- isTRUE(prep$has_baseline_truth)
+
+  series_meta <- list(
+    observed = list(
+      column = "observed_cumulative",
+      label = "Observed cumulative cases",
+      short_label = "Observed",
+      colour = "#ef6548",
+      linetype = "dashed"
+    ),
+    player_truth = list(
+      column = "player_truth_cumulative",
+      label = "Player true cumulative cases",
+      short_label = "Player truth",
+      colour = "#08519c",
+      linetype = "solid"
+    ),
+    baseline_truth = list(
+      column = "baseline_truth_cumulative",
+      label = "Baseline true cumulative cases",
+      short_label = "Baseline truth",
+      colour = "#31a354",
+      linetype = "dotdash"
+    )
+  )
+
+  cumulative_series <- unique(as.character(cumulative_series))
+  cumulative_series <- cumulative_series[cumulative_series %in% names(series_meta)]
+  if (!isTRUE(has_baseline_truth)) {
+    cumulative_series <- setdiff(cumulative_series, "baseline_truth")
+  }
+  if (length(cumulative_series) == 0) {
+    return(NULL)
+  }
+
+  legend_cols <- stats::setNames(
+    vapply(cumulative_series, function(series_id) series_meta[[series_id]]$colour, character(1)),
+    vapply(cumulative_series, function(series_id) series_meta[[series_id]]$label, character(1))
+  )
+
+  observed_df <- combined |>
+    dplyr::transmute(turn, value = observed_cumulative)
+  player_df <- combined |>
+    dplyr::transmute(turn, value = player_truth_cumulative)
+  baseline_df <- if (isTRUE(has_baseline_truth) && "baseline_truth" %in% cumulative_series) {
+    combined |>
+      dplyr::transmute(turn, value = baseline_truth_cumulative)
+  } else {
+    NULL
+  }
+
+  value_max <- max(
+    c(
+      observed_df$value,
+      player_df$value,
+      if (!is.null(baseline_df)) baseline_df$value else numeric()
+    ),
+    na.rm = TRUE
+  )
+  if (!is.finite(value_max) || value_max <= 0) {
+    value_max <- 1
+  }
+
+  plot_obj <- ggplot2::ggplot()
+
+  if (!is.null(baseline_df)) {
+    gap_df <- combined |>
+      dplyr::transmute(
+        turn,
+        ymin = pmin(player_truth_cumulative, baseline_truth_cumulative),
+        ymax = pmax(player_truth_cumulative, baseline_truth_cumulative)
+      )
+    plot_obj <- plot_obj +
+      ggplot2::geom_ribbon(
+        data = gap_df,
+        ggplot2::aes(x = turn, ymin = ymin, ymax = ymax),
+        inherit.aes = FALSE,
+        fill = "#9eb7c7",
+        alpha = 0.16,
+        show.legend = FALSE
+      )
+  }
+
+  if ("observed" %in% cumulative_series) {
+    if (sum(!is.na(observed_df$value)) >= 2) {
+      plot_obj <- plot_obj +
+        ggplot2::geom_step(
+          data = observed_df,
+          ggplot2::aes(x = turn, y = value, colour = "Observed cumulative cases"),
+          linewidth = 1.1,
+          linetype = series_meta$observed$linetype,
+          direction = "hv"
+        )
+    }
+    plot_obj <- plot_obj +
+      ggplot2::geom_point(
+        data = observed_df |>
+          dplyr::filter(turn == max(turn, na.rm = TRUE)),
+        ggplot2::aes(x = turn, y = value, colour = "Observed cumulative cases"),
+        size = 2.4,
+        show.legend = FALSE
+      )
+  }
+
+  if ("player_truth" %in% cumulative_series) {
+    if (sum(!is.na(player_df$value)) >= 2) {
+      plot_obj <- plot_obj +
+        ggplot2::geom_line(
+          data = player_df,
+          ggplot2::aes(x = turn, y = value, colour = "Player true cumulative cases"),
+          linewidth = 1.5,
+          linetype = series_meta$player_truth$linetype
+        )
+    }
+    plot_obj <- plot_obj +
+      ggplot2::geom_point(
+        data = player_df |>
+          dplyr::filter(turn == max(turn, na.rm = TRUE)),
+        ggplot2::aes(x = turn, y = value, colour = "Player true cumulative cases"),
+        size = 2.6,
+        show.legend = FALSE
+      )
+  }
+
+  if (!is.null(baseline_df)) {
+    if (sum(!is.na(baseline_df$value)) >= 2) {
+      plot_obj <- plot_obj +
+        ggplot2::geom_line(
+          data = baseline_df,
+          ggplot2::aes(x = turn, y = value, colour = "Baseline true cumulative cases"),
+          linewidth = 1.1,
+          linetype = series_meta$baseline_truth$linetype
+        )
+    }
+    plot_obj <- plot_obj +
+      ggplot2::geom_point(
+        data = baseline_df |>
+          dplyr::filter(turn == max(turn, na.rm = TRUE)),
+        ggplot2::aes(x = turn, y = value, colour = "Baseline true cumulative cases"),
+        size = 2.4,
+        show.legend = FALSE
+      )
+  }
+
+  end_points <- dplyr::bind_rows(
+    if ("observed" %in% cumulative_series) {
+      observed_df |>
+        dplyr::filter(turn == max(turn, na.rm = TRUE)) |>
+        dplyr::mutate(
+          label = series_meta$observed$short_label,
+          colour_label = series_meta$observed$label
+        )
+    },
+    if ("player_truth" %in% cumulative_series) {
+      player_df |>
+        dplyr::filter(turn == max(turn, na.rm = TRUE)) |>
+        dplyr::mutate(
+          label = series_meta$player_truth$short_label,
+          colour_label = series_meta$player_truth$label
+        )
+    },
+    if (!is.null(baseline_df)) {
+      baseline_df |>
+        dplyr::filter(turn == max(turn, na.rm = TRUE)) |>
+        dplyr::mutate(
+          label = series_meta$baseline_truth$short_label,
+          colour_label = series_meta$baseline_truth$label
+        )
+    }
+  )
+
+  if (nrow(end_points) > 0) {
+    label_gap <- max(1, value_max * 0.07)
+    label_positions <- end_points |>
+      dplyr::arrange(value) |>
+      dplyr::mutate(label_y = value)
+    if (nrow(label_positions) > 1) {
+      for (i in 2:nrow(label_positions)) {
+        label_positions$label_y[[i]] <- max(
+          label_positions$label_y[[i]],
+          label_positions$label_y[[i - 1]] + label_gap
+        )
+      }
+    }
+    max_label_y <- max(label_positions$label_y, na.rm = TRUE)
+    if (is.finite(max_label_y) && max_label_y > value_max) {
+      label_positions$label_y <- pmax(0, label_positions$label_y - (max_label_y - value_max))
+    }
+
+    end_points <- end_points |>
+      dplyr::left_join(
+        label_positions |>
+          dplyr::select(colour_label, label_y),
+        by = "colour_label"
+      )
+
+    plot_obj <- plot_obj +
+      ggplot2::geom_label(
+        data = end_points,
+        ggplot2::aes(
+          x = turn,
+          y = label_y,
+          label = label,
+          colour = colour_label
+        ),
+        hjust = -0.08,
+        label.size = 0,
+        label.padding = grid::unit(0.08, "lines"),
+        fill = scales::alpha("white", 0.9),
+        size = 3,
+        fontface = "bold",
+        show.legend = FALSE
+      )
+  }
+
+  plot_obj <- plot_obj +
+    ggplot2::labs(
+      x = "Turn",
+      y = "Cumulative cases",
+      colour = NULL
+    ) +
+    ggplot2::scale_colour_manual(values = legend_cols) +
+    ggplot2::scale_y_continuous(
+      labels = scales::label_number(scale_cut = scales::cut_short_scale())
+    ) +
+    ggplot2::scale_x_continuous(
+      breaks = scales::breaks_pretty(n = 8),
+      expand = ggplot2::expansion(mult = c(0.01, 0.07))
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      axis.title = ggplot2::element_text(size = 12),
+      axis.text = ggplot2::element_text(size = 10),
+      legend.title = ggplot2::element_text(size = 10),
+      legend.text = ggplot2::element_text(size = 10),
+      legend.key.size = grid::unit(0.45, "cm"),
+      legend.position = if (isTRUE(show_legend)) "bottom" else "none",
+      legend.box = "horizontal",
+      legend.direction = "horizontal",
+      legend.margin = ggplot2::margin(0, 0, 0, 0),
+      legend.spacing.x = grid::unit(0.2, "cm"),
+      plot.margin = ggplot2::margin(5.5, 45, 5.5, 5.5)
     )
 
   plot_obj

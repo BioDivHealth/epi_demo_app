@@ -371,3 +371,152 @@ test_that("prevalence plot no longer carries intervention fill scale", {
   expect_null(plot_obj$scales$get_scales("fill"))
   expect_equal(plot_obj$labels$y, "Prevalence (%)")
 })
+
+test_that("prevalence plot remains prevalence-only with no secondary axis", {
+  truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(3L, 5L, 2L)
+  )
+  baseline_truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(2L, 3L, 1L)
+  )
+  obs_log <- tibble::tibble(
+    turn_reported = c(0L, 1L, 2L),
+    n_returned = c(20L, 25L, 30L),
+    positives = c(1L, 2L, 1L)
+  )
+
+  plot_obj <- replay_plot_prevalence(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000),
+    window = 2L,
+    baseline_truth_log = baseline_truth_log
+  )
+
+  expect_s3_class(plot_obj, "ggplot")
+  y_scale <- plot_obj$scales$get_scales("y")
+  if (!is.null(y_scale)) {
+    expect_true(inherits(y_scale$secondary.axis, "waiver"))
+  }
+
+  layer_labels <- vapply(plot_obj$layers, function(layer) {
+    if (is.null(layer$mapping$colour)) return("")
+    paste(deparse(layer$mapping$colour), collapse = "")
+  }, character(1))
+  expect_true(any(grepl("Observed prevalence", layer_labels, fixed = TRUE)))
+  expect_true(any(grepl("Truth prevalence \\(active\\)", layer_labels)))
+  expect_true(any(grepl("Baseline truth prevalence \\(active\\)", layer_labels)))
+  expect_false(any(grepl("cumulative", layer_labels, ignore.case = TRUE)))
+})
+
+test_that("cumulative plot uses ribbon, step, and direct labels on a linear scale", {
+  truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(3L, 5L, 2L)
+  )
+  baseline_truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(2L, 3L, 1L)
+  )
+  obs_log <- tibble::tibble(
+    turn_reported = c(0L, 1L, 2L),
+    n_returned = c(20L, 25L, 30L),
+    positives = c(1L, 2L, 1L)
+  )
+
+  plot_obj <- replay_plot_cumulative(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000),
+    window = 2L,
+    baseline_truth_log = baseline_truth_log,
+    cumulative_series = c("observed", "player_truth", "baseline_truth")
+  )
+
+  expect_s3_class(plot_obj, "ggplot")
+  expect_equal(plot_obj$labels$y, "Cumulative cases")
+  geom_classes <- vapply(plot_obj$layers, function(layer) class(layer$geom)[1], character(1))
+  expect_true(any(grepl("GeomRibbon", geom_classes)))
+  expect_true(any(grepl("GeomStep", geom_classes)))
+  expect_true(any(grepl("GeomLine", geom_classes)))
+  expect_true(any(grepl("GeomPoint", geom_classes)))
+  expect_true(any(grepl("GeomLabel", geom_classes)))
+
+  y_scale <- plot_obj$scales$get_scales("y")
+  trans_name <- ""
+  if (!is.null(y_scale) && !is.null(y_scale$trans) && !is.null(y_scale$trans$name)) {
+    trans_name <- y_scale$trans$name
+  }
+  expect_false(grepl("pseudo_log", trans_name, fixed = TRUE))
+})
+
+test_that("cumulative plot omits baseline cumulative when baseline truth missing", {
+  truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(3L, 5L, 2L)
+  )
+  obs_log <- tibble::tibble(
+    turn_reported = c(0L, 1L, 2L),
+    n_returned = c(20L, 25L, 30L),
+    positives = c(1L, 2L, 1L)
+  )
+
+  plot_obj <- replay_plot_cumulative(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000),
+    window = 2L,
+    baseline_truth_log = tibble::tibble(),
+    cumulative_series = c("observed", "player_truth", "baseline_truth")
+  )
+
+  geom_classes <- vapply(plot_obj$layers, function(layer) class(layer$geom)[1], character(1))
+  expect_false(any(grepl("GeomRibbon", geom_classes)))
+
+  built_plot <- ggplot2::ggplot_build(plot_obj)
+  colours_seen <- unique(unlist(lapply(built_plot$data, function(layer_df) {
+    if (!"colour" %in% names(layer_df)) return(character())
+    as.character(layer_df$colour)
+  }), use.names = FALSE))
+  expect_false("#31a354" %in% colours_seen)
+})
+
+test_that("prevalence prep aligns turns across truth, observed, and baseline logs", {
+  truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(3L, 4L, 5L)
+  )
+  baseline_truth_log <- tibble::tibble(
+    turn = c(1L, 3L),
+    borough_index = c(1L, 1L),
+    incidence = c(2L, 6L)
+  )
+  obs_log <- tibble::tibble(
+    turn_reported = c(1L, 3L),
+    n_returned = c(20L, 30L),
+    positives = c(2L, 3L)
+  )
+
+  prep <- replay_prepare_prevalence_series(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000),
+    window = 2L,
+    baseline_truth_log = baseline_truth_log
+  )
+
+  expect_false(is.null(prep))
+  expect_true(isTRUE(prep$has_baseline_truth))
+  expect_equal(prep$series$turn, 0:3)
+  expect_true(all(diff(prep$series$observed_cumulative) >= 0))
+  expect_true(all(diff(prep$series$player_truth_cumulative) >= 0))
+  expect_true(all(diff(prep$series$baseline_truth_cumulative) >= 0))
+})

@@ -412,6 +412,15 @@ server <- function(input, output, session) {
       window = 3L,
       baseline_truth_log = baseline_truth_log
     )
+    cumulative_plot <- replay_plot_cumulative(
+      truth_log = player_truth_log,
+      obs_log = player_logs$observations,
+      pop_tbl = inputs$pop_tbl,
+      window = 3L,
+      baseline_truth_log = baseline_truth_log,
+      cumulative_series = c("observed", "player_truth", "baseline_truth"),
+      show_legend = FALSE
+    )
     timeline_plot <- replay_plot_intervention_timeline(
       run_log = player_logs$run_log,
       action_log = player_logs$actions,
@@ -419,46 +428,67 @@ server <- function(input, output, session) {
       turns = common_turns
     )
 
+    plot_list <- list(
+      prevalence = prevalence_plot,
+      cumulative = cumulative_plot,
+      interventions = timeline_plot
+    )
+
     if (length(common_turns) > 0) {
       x_limits <- range(common_turns, na.rm = TRUE)
-      prevalence_plot <- prevalence_plot + ggplot2::coord_cartesian(xlim = x_limits)
-      timeline_plot <- timeline_plot + ggplot2::coord_cartesian(xlim = x_limits)
+      plot_list <- list(
+        prevalence = if (is.null(plot_list$prevalence)) NULL else {
+          plot_list$prevalence + ggplot2::coord_cartesian(xlim = x_limits)
+        },
+        cumulative = if (is.null(plot_list$cumulative)) NULL else {
+          plot_list$cumulative + ggplot2::coord_cartesian(xlim = x_limits, clip = "off")
+        },
+        interventions = if (is.null(plot_list$interventions)) NULL else {
+          plot_list$interventions + ggplot2::coord_cartesian(xlim = x_limits)
+        }
+      )
     }
 
-    if (is.null(prevalence_plot) && is.null(timeline_plot)) {
+    available_names <- names(plot_list)[!vapply(plot_list, is.null, logical(1))]
+    if (length(available_names) == 0) {
       return(invisible(NULL))
     }
-    if (is.null(prevalence_plot)) {
-      print(timeline_plot)
-      return(invisible(NULL))
-    }
-    if (is.null(timeline_plot)) {
-      print(prevalence_plot)
+    if (length(available_names) == 1) {
+      print(plot_list[[available_names[[1]]]])
       return(invisible(NULL))
     }
 
-    prevalence_grob <- ggplot2::ggplotGrob(prevalence_plot)
-    timeline_grob <- ggplot2::ggplotGrob(timeline_plot)
-    shared_widths <- grid::unit.pmax(prevalence_grob$widths, timeline_grob$widths)
-    prevalence_grob$widths <- shared_widths
-    timeline_grob$widths <- shared_widths
+    grobs <- lapply(plot_list[available_names], ggplot2::ggplotGrob)
+    shared_widths <- Reduce(
+      grid::unit.pmax,
+      lapply(grobs, function(grob_obj) grob_obj$widths)
+    )
+    grobs <- lapply(grobs, function(grob_obj) {
+      grob_obj$widths <- shared_widths
+      grob_obj
+    })
+
+    panel_height_map <- c(
+      prevalence = 3.5,
+      cumulative = 2.5,
+      interventions = 1.4
+    )
+    panel_heights <- panel_height_map[available_names]
 
     grid::grid.newpage()
     grid::pushViewport(grid::viewport(
       layout = grid::grid.layout(
-        nrow = 2,
+        nrow = length(grobs),
         ncol = 1,
-        heights = grid::unit(c(4.6, 1.4), "null")
+        heights = grid::unit(panel_heights, "null")
       )
     ))
-    grid::grid.draw(grid::editGrob(
-      prevalence_grob,
-      vp = grid::viewport(layout.pos.row = 1, layout.pos.col = 1)
-    ))
-    grid::grid.draw(grid::editGrob(
-      timeline_grob,
-      vp = grid::viewport(layout.pos.row = 2, layout.pos.col = 1)
-    ))
+    for (i in seq_along(grobs)) {
+      grid::grid.draw(grid::editGrob(
+        grobs[[i]],
+        vp = grid::viewport(layout.pos.row = i, layout.pos.col = 1)
+      ))
+    }
     grid::popViewport()
   }, res = 96)
 

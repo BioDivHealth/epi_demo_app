@@ -100,8 +100,8 @@ build_endgame_modal <- function(metrics, comparison, detection_rate) {
             class = "card-body",
             tags$div(
               class = "mb-3",
-              tags$strong("Prevalence and Interventions Over Turns"),
-              plotOutput("endgame_prevalence_plot", height = "600px")
+              tags$strong("Prevalence, Cumulative Cases, and Interventions Over Turns"),
+              plotOutput("endgame_prevalence_plot", height = "720px")
             ),
             tags$div(
               tags$strong("Testing Allocation Over Turns"),
