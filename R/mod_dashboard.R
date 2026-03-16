@@ -122,7 +122,7 @@ mod_dashboard_server <- function(
         ""
       )
 
-      mode_label <- if (identical(mode, "manual")) "Manual mode" else "Guided auto mode"
+      mode_label <- if (identical(mode, "manual")) "Manual mode" else "Auto mode"
       progress_label <- if (turns_requested > 0L) {
         sprintf("%s/%s turns", turns_completed, turns_requested)
       } else {

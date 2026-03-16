@@ -411,6 +411,41 @@ test_that("prevalence plot remains prevalence-only with no secondary axis", {
   expect_true(any(grepl("Truth prevalence \\(active\\)", layer_labels)))
   expect_true(any(grepl("Baseline truth prevalence \\(active\\)", layer_labels)))
   expect_false(any(grepl("cumulative", layer_labels, ignore.case = TRUE)))
+
+  layer_param <- function(layer, name, default = NULL) {
+    value <- layer$aes_params[[name]]
+    if (is.null(value)) default else value
+  }
+
+  layer_styles <- lapply(plot_obj$layers, function(layer) {
+    list(
+      colour = if (is.null(layer$mapping$colour)) "" else paste(deparse(layer$mapping$colour), collapse = ""),
+      linewidth = layer_param(layer, "linewidth", NA_real_),
+      linetype = layer_param(layer, "linetype", NA_character_),
+      alpha = layer_param(layer, "alpha", NA_real_)
+    )
+  })
+
+  observed_style <- layer_styles[[which(vapply(layer_styles, function(x) {
+    grepl("Observed prevalence", x$colour, fixed = TRUE)
+  }, logical(1)))[1]]]
+  player_style <- layer_styles[[which(vapply(layer_styles, function(x) {
+    grepl("Truth prevalence \\(active\\)", x$colour) &&
+      !grepl("Baseline", x$colour, fixed = TRUE)
+  }, logical(1)))[1]]]
+  baseline_style <- layer_styles[[which(vapply(layer_styles, function(x) {
+    grepl("Baseline truth prevalence \\(active\\)", x$colour)
+  }, logical(1)))[1]]]
+
+  expect_equal(player_style$linewidth, 1.4)
+  expect_equal(player_style$linetype, "solid")
+  expect_equal(player_style$alpha, 1)
+  expect_equal(observed_style$linewidth, 0.8)
+  expect_equal(observed_style$linetype, "dashed")
+  expect_equal(observed_style$alpha, 0.7)
+  expect_equal(baseline_style$linewidth, 0.9)
+  expect_equal(baseline_style$linetype, "longdash")
+  expect_equal(baseline_style$alpha, 0.85)
 })
 
 test_that("cumulative plot uses ribbon, step, and direct labels on a linear scale", {
@@ -454,6 +489,17 @@ test_that("cumulative plot uses ribbon, step, and direct labels on a linear scal
     trans_name <- y_scale$trans$name
   }
   expect_false(grepl("pseudo_log", trans_name, fixed = TRUE))
+
+  ribbon_layer <- plot_obj$layers[[which(geom_classes == "GeomRibbon")[1]]]
+  step_layer <- plot_obj$layers[[which(geom_classes == "GeomStep")[1]]]
+  line_layers <- plot_obj$layers[geom_classes == "GeomLine"]
+
+  expect_equal(ribbon_layer$aes_params$alpha, 0.24)
+  expect_equal(step_layer$aes_params$linewidth, 0.8)
+  expect_equal(step_layer$aes_params$linetype, "dashed")
+  expect_equal(step_layer$aes_params$alpha, 0.7)
+  expect_true(any(vapply(line_layers, function(layer) identical(layer$aes_params$linetype, "solid"), logical(1))))
+  expect_true(any(vapply(line_layers, function(layer) identical(layer$aes_params$linetype, "longdash"), logical(1))))
 })
 
 test_that("cumulative plot omits baseline cumulative when baseline truth missing", {
@@ -486,6 +532,48 @@ test_that("cumulative plot omits baseline cumulative when baseline truth missing
     as.character(layer_df$colour)
   }), use.names = FALSE))
   expect_false("#31a354" %in% colours_seen)
+})
+
+test_that("replay metric panels share the same x-axis expansion", {
+  truth_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    borough_index = c(1L, 1L, 1L),
+    incidence = c(3L, 5L, 2L)
+  )
+  obs_log <- tibble::tibble(
+    turn_reported = c(0L, 1L, 2L),
+    n_returned = c(20L, 25L, 30L),
+    positives = c(1L, 2L, 1L)
+  )
+  defs <- tibble::tibble(
+    id = c("distancing"),
+    label = c("Social distancing")
+  )
+  run_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L),
+    active_interventions = c("None", "Social distancing", "Social distancing")
+  )
+
+  prevalence_plot <- replay_plot_prevalence(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000)
+  )
+  cumulative_plot <- replay_plot_cumulative(
+    truth_log = truth_log,
+    obs_log = obs_log,
+    pop_tbl = tibble::tibble(pop = 1000)
+  )
+  intervention_plot <- replay_plot_intervention_timeline(
+    run_log = run_log,
+    action_log = tibble::tibble(),
+    intervention_defs = defs,
+    turns = 0:2
+  )
+
+  expect_equal(prevalence_plot$scales$get_scales("x")$expand, c(0.01, 0, 0.07, 0))
+  expect_equal(cumulative_plot$scales$get_scales("x")$expand, c(0.01, 0, 0.07, 0))
+  expect_equal(intervention_plot$scales$get_scales("x")$expand, c(0.01, 0, 0.07, 0))
 })
 
 test_that("prevalence prep aligns turns across truth, observed, and baseline logs", {

@@ -257,6 +257,7 @@ server <- function(input, output, session) {
   turn <- reactiveVal(0L)
   total_spend <- reactiveVal(0)
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
+  intervention_state <- reactiveVal(init_intervention_state(intervention_defs))
   app_ready <- reactiveVal(FALSE)
   auto_running <- reactiveVal(FALSE)
   auto_turns_requested <- reactiveVal(0L)
@@ -340,6 +341,7 @@ server <- function(input, output, session) {
     app_ready = app_ready,
     run_mode = controls$run_mode,
     auto_running = auto_running,
+    intervention_state_info = reactive(intervention_state()),
     intervention_defs = intervention_defs
   )
 
@@ -377,13 +379,6 @@ server <- function(input, output, session) {
     app_ready = app_ready
   )
 
-  output$run_summary_table <- renderTable({
-    report_dual <- dual_report()
-    req(report_dual)
-    req(report_dual$turn_comparison)
-    report_dual$turn_comparison
-  }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 2)
-
   output$endgame_prevalence_plot <- renderPlot({
     req(isTRUE(replay_unlocked()))
     snapshot <- replay_snapshot()
@@ -401,7 +396,8 @@ server <- function(input, output, session) {
     common_turns <- sort(unique(c(
       suppressWarnings(as.integer(player_truth_log$turn)),
       suppressWarnings(as.integer(player_logs$observations$turn_reported)),
-      suppressWarnings(as.integer(baseline_truth_log$turn))
+      suppressWarnings(as.integer(baseline_truth_log$turn)),
+      suppressWarnings(as.integer(player_logs$actions$turn))
     )))
     common_turns <- common_turns[is.finite(common_turns)]
 
@@ -427,11 +423,16 @@ server <- function(input, output, session) {
       intervention_defs = intervention_defs,
       turns = common_turns
     )
+    testing_plot <- replay_plot_testing(
+      action_log = player_logs$actions,
+      turns = common_turns
+    )
 
     plot_list <- list(
       prevalence = prevalence_plot,
       cumulative = cumulative_plot,
-      interventions = timeline_plot
+      interventions = timeline_plot,
+      testing = testing_plot
     )
 
     if (length(common_turns) > 0) {
@@ -445,6 +446,9 @@ server <- function(input, output, session) {
         },
         interventions = if (is.null(plot_list$interventions)) NULL else {
           plot_list$interventions + ggplot2::coord_cartesian(xlim = x_limits)
+        },
+        testing = if (is.null(plot_list$testing)) NULL else {
+          plot_list$testing + ggplot2::coord_cartesian(xlim = x_limits)
         }
       )
     }
@@ -471,7 +475,8 @@ server <- function(input, output, session) {
     panel_height_map <- c(
       prevalence = 3.5,
       cumulative = 2.5,
-      interventions = 1.4
+      interventions = 1.4,
+      testing = 2.0
     )
     panel_heights <- panel_height_map[available_names]
 
@@ -492,13 +497,6 @@ server <- function(input, output, session) {
     grid::popViewport()
   }, res = 96)
 
-  output$endgame_testing_plot <- renderPlot({
-    req(isTRUE(replay_unlocked()))
-    snapshot <- replay_snapshot()
-    player_logs <- replay_get_branch_logs(snapshot, branch = "player")
-    replay_plot_testing(player_logs$actions)
-  }, res = 96)
-
   current_player_branch <- function() {
     new_branch_state(
       name = "player",
@@ -514,7 +512,8 @@ server <- function(input, output, session) {
         actions = turn_logs$actions
       ),
       total_spend = total_spend(),
-      spend_current = spend_current()
+      spend_current = spend_current(),
+      intervention_state = intervention_state()
     )
   }
 
@@ -602,7 +601,8 @@ server <- function(input, output, session) {
         total_turn_spend = starter_spend_stats$spend,
         cumulative_spend = 0,
         budget_remaining = budget$budget,
-        interventions_active = "None"
+        interventions_active = "None",
+        intervention_statuses = "None"
       )
     )
 
@@ -617,6 +617,7 @@ server <- function(input, output, session) {
     observation_state(base_observation)
     available_now(current_available)
     total_spend(0)
+    intervention_state(init_intervention_state(intervention_defs))
     spend_current(list(
       total = 0,
       last_turn = 0,
@@ -643,6 +644,7 @@ server <- function(input, output, session) {
       observed_positives = sum(current_available$positives),
       reported_deaths = sum(init$cumulative_deaths),
       active_interventions = "None",
+      intervention_statuses = "None",
       notes = starter_note,
       queue_pending = starter_queue
     ))
@@ -681,6 +683,7 @@ server <- function(input, output, session) {
         observed_positives = 0L,
         reported_deaths = sum(init$cumulative_deaths),
         active_interventions = "None",
+        intervention_statuses = "None",
         notes = "",
         queue_pending = 0L
       ),
@@ -692,7 +695,8 @@ server <- function(input, output, session) {
         remaining = budget$budget,
         within_budget = TRUE,
         interventions = "None"
-      )
+      ),
+      intervention_state = init_intervention_state(intervention_defs)
     ))
 
     dual_report(NULL)
@@ -719,6 +723,7 @@ server <- function(input, output, session) {
         observations = turn_logs$observations,
         actions = turn_logs$actions
       ),
+      branch_intervention_state = intervention_state(),
       truth_seed = NULL) {
     list(
       current_turn = current_turn,
@@ -729,6 +734,7 @@ server <- function(input, output, session) {
       testing_params = controls$testing(),
       active_ids = active_ids,
       intervention_defs = intervention_defs,
+      intervention_state = branch_intervention_state,
       total_spend = branch_total_spend,
       truth_state = branch_truth_state,
       observation_state = branch_observation_state,
@@ -748,6 +754,7 @@ server <- function(input, output, session) {
 
     observation_state(result$observation_state)
     available_now(result$available_now)
+    intervention_state(result$intervention_state)
 
     truth_state(result$truth_state)
     truth_history(result$truth_history)
@@ -809,6 +816,7 @@ server <- function(input, output, session) {
       branch_total_spend = baseline$total_spend,
       branch_run_log = baseline$run_log,
       branch_turn_logs = baseline$turn_logs,
+      branch_intervention_state = baseline$intervention_state,
       truth_seed = turn_seed
     )
 
@@ -843,8 +851,11 @@ server <- function(input, output, session) {
 
   build_policy_request <- function(policy_id, allocs_manual, active_ids, current_turn) {
     intervention_cost <- compute_intervention_effects(
-      active_ids,
-      intervention_defs,
+      selected = active_ids,
+      catalog = intervention_defs,
+      state = intervention_state(),
+      observation_history = observation_state()$history,
+      current_turn = current_turn,
       turn_budget = controls$budget()$budget
     )$cost
     list(

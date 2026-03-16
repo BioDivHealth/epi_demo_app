@@ -4,9 +4,11 @@ intervention_tooltip_lookup <- function(catalog) {
   validate_intervention_catalog(catalog)
 
   defaults <- c(
-    distancing = "Lowers transmission (Rt multiplier 0.8). Costs budget each turn while active.",
-    quarantine = "Reduces imported infections (imports multiplier 0.5). Costs budget each turn while active.",
-    rapid = "Returns PCR results 1 turn sooner. Costs budget each turn while active."
+    distancing = "Strong short-burst Rt reduction. Peak effect for the first 3 active turns, then settles to a weaker sustained effect.",
+    case_isolation_tracing = "Observation-linked control. Works best when recent reported positives are high; 1-turn warm-up.",
+    rapid_labs = "Laboratory infrastructure. 1-turn warm-up, then PCR results return 1 turn sooner while active.",
+    ventilation_guidance = "Slow-build structural Rt reduction. 2-turn warm-up, then steady sustained effect while active.",
+    community_case_finding = "Makes the same tests more informative. Stronger early effect, then a milder sustained boost."
   )
 
   ids <- as.character(catalog$id)
@@ -66,102 +68,102 @@ mod_map_ui <- function(
       shiny::span("Click boroughs to allocate tests"),
       shiny::uiOutput(ns("budget_badge"))
     ),
-    # 3-section horizontal strip
+    # Responsive controls strip
     shiny::div(
       id = ns("controls_strip"),
       class = "map-controls-strip mb-2",
-      # Section 1: Run Mode
       shiny::div(
         id = ns("run_mode_box"),
         class = "map-section map-section-mode",
         shiny::tags$div(class = "map-section-label", "Run mode"),
         run_mode_ui
       ),
-      # Section 2: Testing Strategy (content varies by mode)
       shiny::div(
-        class = "map-section map-section-strategy",
-        shiny::tags$div(class = "map-section-label", "Testing strategy"),
+        class = "map-controls-main-row",
         shiny::div(
-          class = "d-flex flex-wrap gap-2 align-items-center",
+          class = "map-section map-section-strategy",
+          shiny::tags$div(class = "map-section-label", "Testing strategy"),
           shiny::div(
-            id = ns("manual_test_type"),
-            style = "display: none;",
+            class = "d-flex flex-column gap-2 align-items-start",
             shiny::div(
-              class = "map-selection-group map-selection-group-test-type",
-              shiny::tags$label(class = "map-selection-label", "Test type"),
+              id = ns("manual_test_type"),
+              style = "display: none;",
               shiny::div(
-                class = "map-selection-options toggle-btn-group",
-                shiny::radioButtons(
-                  ns("test_type"),
-                  label = NULL,
-                  choices = c("Antigen (fast)" = "ag", "PCR (accurate)" = "pcr"),
-                  selected = "ag",
-                  inline = TRUE
+                class = "map-selection-group map-selection-group-test-type",
+                shiny::tags$label(class = "map-selection-label", "Test type"),
+                shiny::div(
+                  class = "map-selection-options toggle-btn-group",
+                  shiny::radioButtons(
+                    ns("test_type"),
+                    label = NULL,
+                    choices = c("Antigen (fast)" = "ag", "PCR (accurate)" = "pcr"),
+                    selected = "ag",
+                    inline = TRUE
+                  )
                 )
               )
-            )
-          ),
-          testing_pool_ui,
-          shiny::div(
-            id = ns("auto_borough_policy"),
-            style = "display: none;",
-            borough_policy_ui
-          ),
-          shiny::div(
-            id = ns("manual_click_controls"),
-            style = "display: none;",
+            ),
+            testing_pool_ui,
             shiny::div(
-              class = "d-flex gap-2 align-items-center",
-              shiny::tags$label(style = "font-size:12px; margin-bottom:0;", "Tests per click:"),
-              shiny::sliderInput(
-                ns("tests_per_click"),
-                label = NULL,
-                min = 1,
-                max = 20,
-                value = 5,
-                step = 1,
-                width = "120px",
-                ticks = FALSE
+              id = ns("auto_borough_policy"),
+              style = "display: none;",
+              borough_policy_ui
+            ),
+            shiny::div(
+              id = ns("manual_click_controls"),
+              style = "display: none;",
+              shiny::div(
+                class = "d-flex gap-2 align-items-center",
+                shiny::tags$label(style = "font-size:12px; margin-bottom:0;", "Tests per click:"),
+                shiny::sliderInput(
+                  ns("tests_per_click"),
+                  label = NULL,
+                  min = 1,
+                  max = 20,
+                  value = 5,
+                  step = 1,
+                  width = "120px",
+                  ticks = FALSE
+                )
+              ),
+              shiny::actionButton(
+                ns("mass_test"),
+                "Mass Testing",
+                class = "btn-outline-primary btn-sm"
               )
             ),
-            shiny::actionButton(
-              ns("mass_test"),
-              "Mass Testing",
-              class = "btn-outline-primary btn-sm"
-            )
-          ),
-          shiny::div(
-            id = ns("manual_alloc_summary"),
-            style = "display: none;",
-            shiny::tags$span(
-              class = "ms-auto small text-muted",
-              shiny::textOutput(ns("allocation_summary"), inline = TRUE)
-            )
-          )
-        )
-      ),
-      # Section 3: Interventions
-      shiny::div(
-        class = "map-section map-section-interventions",
-        shiny::div(
-          class = "map-label-with-tooltip",
-          shiny::tags$div(class = "map-section-label", "Interventions"),
-          build_info_tooltip(
-            ns = ns,
-            id = "interventions_info",
-            text = paste(
-              "Interventions trade testing budget for outbreak-control effects each turn.",
-              "Hover each intervention option for its specific effect."
+            shiny::div(
+              id = ns("manual_alloc_summary"),
+              style = "display: none;",
+              shiny::tags$span(
+                class = "ms-auto small text-muted",
+                shiny::textOutput(ns("allocation_summary"), inline = TRUE)
+              )
             )
           )
         ),
-        shiny::checkboxGroupInput(
-          ns("interventions"),
-          label = NULL,
-          choiceNames = intervention_choices$choice_names,
-          choiceValues = intervention_choices$choice_values,
-          selected = character(),
-          inline = TRUE
+        shiny::div(
+          class = "map-section map-section-interventions",
+          shiny::div(
+            class = "map-label-with-tooltip",
+            shiny::tags$div(class = "map-section-label", "Interventions"),
+            build_info_tooltip(
+              ns = ns,
+              id = "interventions_info",
+              text = paste(
+                "Interventions trade testing budget for outbreak-control effects each turn.",
+                "Hover each intervention option for its specific effect."
+              )
+            )
+          ),
+          shiny::checkboxGroupInput(
+            ns("interventions"),
+            label = NULL,
+            choiceNames = intervention_choices$choice_names,
+            choiceValues = intervention_choices$choice_values,
+            selected = character(),
+            inline = TRUE
+          )
         )
       )
     ),
@@ -190,6 +192,7 @@ mod_map_server <- function(
     app_ready = shiny::reactive(TRUE),
     run_mode = shiny::reactive("manual"),
     auto_running = shiny::reactive(FALSE),
+    intervention_state_info = NULL,
     intervention_defs = intervention_catalog()) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
@@ -209,11 +212,17 @@ mod_map_server <- function(
       sel <- input$interventions
       if (is.null(sel)) character() else sel
     })
+    if (is.null(intervention_state_info)) {
+      intervention_state_info <- shiny::reactive(init_intervention_state(intervention_defs))
+    }
     intervention_effects <- shiny::reactive({
       budget <- budget_info()
       compute_intervention_effects(
         selected = selected_interventions(),
         catalog = intervention_defs,
+        state = intervention_state_info(),
+        observation_history = observed_this_turn(),
+        current_turn = 0L,
         turn_budget = budget$budget
       )
     })

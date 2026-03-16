@@ -67,6 +67,11 @@ observe_tests <- function(
     pool_frac <- max(min(pool_frac, 1), 1e-6)
     prev <- truth_incidence / (pop_tbl$pop * pool_frac)
   }
+  sampling_yield_multiplier <- params$sampling_yield_multiplier %||% 1
+  if (!is.finite(sampling_yield_multiplier) || is.na(sampling_yield_multiplier) || sampling_yield_multiplier <= 0) {
+    sampling_yield_multiplier <- 1
+  }
+  prev <- prev * sampling_yield_multiplier
   prev <- pmax(prev, prev_floor)
   prev <- pmin(prev, 0.9)
 

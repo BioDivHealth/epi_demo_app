@@ -20,10 +20,13 @@ help_modal_body <- function(scenario_id = NULL, scenario_defs = scenario_catalog
     shiny::tags$p(
       "Choose between PCR and antigen tests, and use the Tests per click",
       "slider to set how many tests each manual allocation applies. You can",
-      "also activate interventions: Social distancing (lower Rt), Targeted",
-      "quarantine (reduce imports), and Rapid labs (shorter PCR turnaround).",
-      "Selected interventions consume a share of the turn budget while active,",
-      "so spending more on interventions leaves less budget for testing coverage.",
+      "also activate interventions. Some work quickly but fade into a weaker",
+      "steady effect (for example Social distancing), some need a warm-up but",
+      "stay useful over many turns (for example Rapid labs and Ventilation),",
+      "and some work best only when you are actually finding cases (Case",
+      "isolation and tracing). Selected interventions consume a share of the",
+      "turn budget while active, so spending more on interventions leaves less",
+      "budget for testing coverage.",
       "Use the questions below as a guide for interpreting what you see and",
       "comparing it with the replay."
     ),

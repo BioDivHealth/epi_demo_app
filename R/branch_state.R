@@ -14,7 +14,8 @@ new_branch_state <- function(
     turn_logs,
     total_spend,
     spend_current,
-    truth_history = NULL) {
+    truth_history = NULL,
+    intervention_state = NULL) {
   if (is.null(truth_history)) {
     truth_history <- truth_state$history
   }
@@ -29,7 +30,8 @@ new_branch_state <- function(
     total_spend = as.numeric(total_spend),
     spend_current = spend_current,
     run_log = tibble::as_tibble(run_log),
-    turn_logs = turn_logs
+    turn_logs = turn_logs,
+    intervention_state = normalise_intervention_state(intervention_state)
   )
 
   validate_branch_state(branch)
@@ -51,7 +53,8 @@ validate_branch_state <- function(branch) {
     "total_spend",
     "spend_current",
     "run_log",
-    "turn_logs"
+    "turn_logs",
+    "intervention_state"
   )
   missing_fields <- setdiff(required_fields, names(branch))
   if (length(missing_fields) > 0) {
@@ -99,6 +102,10 @@ validate_branch_state <- function(branch) {
   if (!is.list(branch$turn_logs) ||
       !all(c("truth", "observations", "actions") %in% names(branch$turn_logs))) {
     stop("branch$turn_logs must include truth, observations, and actions")
+  }
+
+  if (!inherits(branch$intervention_state, "data.frame")) {
+    stop("branch$intervention_state must be a data frame")
   }
 
   invisible(TRUE)
@@ -152,7 +159,8 @@ initialise_branch_pair <- function(init_truth, player_observation, player_availa
     run_log = tibble::tibble(),
     turn_logs = clone_branch_object(empty_logs),
     total_spend = 0,
-    spend_current = base_spend
+    spend_current = base_spend,
+    intervention_state = init_intervention_state()
   )
 
   baseline_branch <- new_branch_state(
@@ -165,7 +173,8 @@ initialise_branch_pair <- function(init_truth, player_observation, player_availa
     run_log = tibble::tibble(),
     turn_logs = clone_branch_object(empty_logs),
     total_spend = 0,
-    spend_current = base_spend
+    spend_current = base_spend,
+    intervention_state = init_intervention_state()
   )
 
   list(player = player_branch, baseline = baseline_branch)
@@ -187,6 +196,7 @@ apply_branch_turn_result <- function(branch, result) {
   branch$available_now <- result$available_now
   branch$turn_logs <- result$turn_logs
   branch$run_log <- result$run_log
+  branch$intervention_state <- result$intervention_state
 
   branch
 }

@@ -127,11 +127,18 @@
 .map-controls-strip {
   display: flex;
   gap: 0;
+  flex-direction: row;
   align-items: stretch;
   border: 1px solid #d5cebf;
   border-radius: 8px;
-  overflow-x: auto;
+  overflow: hidden;
   transition: opacity 0.2s ease;
+}
+.map-controls-main-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: stretch;
 }
 .strip-locked {
   opacity: 0.55;
@@ -216,29 +223,50 @@
 }
 /* Section 2: Testing Strategy — warm beige */
 .map-section-strategy {
-  flex: 1 1 auto;
+  flex: 0 0 250px;
+  min-width: 70px;
+  max-width: 250px;
   background: #f6f2ea;
   border-right: 1px solid #ddd7cc;
   justify-content: center;
 }
 /* Section 3: Interventions — off-white */
 .map-section-interventions {
-  flex: 0 0 auto;
+  flex: 1 1 620px;
+  min-width: 0;
   background: #faf9f6;
   justify-content: center;
+  overflow: visible;
 }
 /* Override Shiny's default margin-top: -5px on radio/checkbox option groups */
 .shiny-options-group {
   margin-top: 10px !important;
 }
 /* compact intervention checkboxes */
-.map-section-interventions .shiny-input-container { width: auto !important; margin: 0; }
-.map-section-interventions .shiny-options-group { margin-top: 10px !important; margin-bottom: 0; }
+.map-section-interventions .shiny-input-container {
+  width: 100% !important;
+  min-width: 0;
+  margin: 0;
+}
+.map-section-interventions .shiny-options-group {
+  margin-top: 10px !important;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
 .map-section-interventions .checkbox-inline,
 .map-section-interventions .form-check.form-check-inline,
 .map-section-interventions .form-check {
-  margin: 0 8px 0 0;
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
   padding: 0;
+  white-space: normal;
 }
 .map-section-interventions .shiny-options-group,
 .map-section-interventions .shiny-options-group .form-check,
@@ -249,13 +277,114 @@
   font-size: 12px !important;
   line-height: 1.35 !important;
   font-weight: 400 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .map-section-interventions .checkbox-inline input[type='checkbox'],
-.map-section-interventions .form-check-input { margin-right: 4px; }
+.map-section-interventions .form-check-input {
+  margin-right: 6px;
+  margin-top: 2px;
+}
+@media (max-width: 1120px) {
+  .map-controls-strip {
+    flex-direction: column;
+  }
+  .map-controls-main-row {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  #map-controls_strip .map-section-strategy {
+    flex: 0 0 250px !important;
+    width: 250px !important;
+    min-width: 250px !important;
+    max-width: 300px !important;
+  }
+  #map-controls_strip .map-section-interventions {
+    flex: 0 0 500px !important;
+    width: 500px !important;
+    min-width: 500px !important;
+  }
+  .map-section-mode {
+    width: 100%;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 12px;
+    border-right: none;
+    border-bottom: 1px solid #2e3a47;
+  }
+  .map-section-mode .map-section-label {
+    margin: 0;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive {
+    margin-bottom: 0;
+    padding: 0;
+    border: none;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .shiny-options-group {
+    flex-direction: row;
+    margin-top: 0 !important;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .radio,
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .form-check:not(.form-check-inline) {
+    border-bottom: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 5px 14px;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .radio:last-child,
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .form-check:not(.form-check-inline):last-child {
+    border-right: none;
+  }
+}
 @media (max-width: 768px) {
-  .map-controls-strip { flex-direction: column; }
-  .map-section { border-right: none; border-bottom: 1px solid #d5cebf; }
-  .map-section:last-child { border-bottom: none; }
+  .map-controls-main-row {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .map-section {
+    border-right: none;
+    border-bottom: 1px solid #d5cebf;
+  }
+  .map-section:last-child {
+    border-bottom: none;
+  }
+  .map-section-mode {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid #2e3a47;
+  }
+  .map-section-mode .map-section-label {
+    margin-top: auto;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive {
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    margin-bottom: auto;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .shiny-options-group {
+    flex-direction: column;
+    margin-top: 10px !important;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .radio,
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .form-check:not(.form-check-inline) {
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 4px 14px;
+  }
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .radio:last-child,
+  .map-section-mode .map-selection-group-run-mode-responsive .toggle-btn-group-vertical .form-check:not(.form-check-inline):last-child {
+    border-bottom: none;
+  }
+  .map-section-strategy,
+  .map-section-interventions {
+    min-width: 100%;
+    flex-basis: auto;
+  }
 }
 /* --- Selection group base (must come before run-mode override) --- */
 .map-selection-group {
@@ -555,9 +684,6 @@
   text-transform: uppercase;
   color: #6c757d;
   margin-bottom: 2px;
-}
-.map-run-field-speed .toggle-btn-group .shiny-options-group {
-  margin-top: 0 !important;
 }
 .map-run-batch {
   display: flex;

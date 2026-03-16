@@ -63,6 +63,7 @@ make_autorun_fixture <- function(
     truth_state = init_truth(n_boroughs = 3, seed_boroughs = 1L, seed_cases = 20L),
     observation_state = init_observation_state(),
     available_now = empty_results_tbl(),
+    intervention_state = init_intervention_state(),
     run_log = tibble::tibble(),
     turn_logs = init_turn_logs(pop_tbl),
     auto_running = FALSE,
@@ -101,8 +102,11 @@ start_autorun_fixture <- function(state) {
 
 run_auto_iteration_fixture <- function(state) {
   intervention_cost <- compute_intervention_effects(
-    state$active_ids,
-    state$intervention_defs,
+    selected = state$active_ids,
+    catalog = state$intervention_defs,
+    state = state$intervention_state,
+    observation_history = state$observation_state$history,
+    current_turn = state$turn,
     turn_budget = state$budget$budget
   )$cost
   policy_request <- list(
@@ -126,6 +130,7 @@ run_auto_iteration_fixture <- function(state) {
     testing_params = state$testing_params,
     active_ids = state$active_ids,
     intervention_defs = state$intervention_defs,
+    intervention_state = state$intervention_state,
     total_spend = state$total_spend,
     truth_state = state$truth_state,
     observation_state = state$observation_state,
@@ -148,6 +153,7 @@ run_auto_iteration_fixture <- function(state) {
   state$truth_state <- result$truth_state
   state$observation_state <- result$observation_state
   state$available_now <- result$available_now
+  state$intervention_state <- result$intervention_state
   state$turn <- result$next_turn
   state$run_log <- result$run_log
   state$turn_logs <- result$turn_logs
@@ -179,7 +185,7 @@ derive_turn_seed_fixture <- function(master_seed, turn_index) {
   as.integer((as.integer(master_seed) * 1009L + as.integer(turn_index) * 9176L) %% .Machine$integer.max)
 }
 
-test_that("guided auto-run completes exactly N turns", {
+test_that("auto-run completes exactly N turns", {
   state <- make_autorun_fixture(config_turns = 4L, policy_id = "all_boroughs")
   state <- start_autorun_fixture(state)
 
@@ -222,7 +228,7 @@ test_that("low-budget run with interventions does not false-stop under capped pr
     config_turns = 3L,
     policy_id = "manual",
     budget = low_budget,
-    active_ids = c("distancing", "rapid")
+    active_ids = c("distancing", "rapid_labs")
   )
   state$allocs_manual$n_ag <- 0L
   state$allocs_manual$n_pcr <- 0L
@@ -264,8 +270,11 @@ test_that("dual-branch auto-run preserves exact N-turn lockstep", {
     turn_seed <- derive_turn_seed_fixture(master_seed, player$turn)
 
     player_intervention_cost <- compute_intervention_effects(
-      player$active_ids,
-      player$intervention_defs,
+      selected = player$active_ids,
+      catalog = player$intervention_defs,
+      state = player$intervention_state,
+      observation_history = player$observation_state$history,
+      current_turn = player$turn,
       turn_budget = player$budget$budget
     )$cost
     player_allocs <- build_policy_allocations(list(
@@ -300,6 +309,7 @@ test_that("dual-branch auto-run preserves exact N-turn lockstep", {
       testing_params = player$testing_params,
       active_ids = player$active_ids,
       intervention_defs = player$intervention_defs,
+      intervention_state = player$intervention_state,
       total_spend = player$total_spend,
       truth_state = player$truth_state,
       observation_state = player$observation_state,
@@ -321,6 +331,7 @@ test_that("dual-branch auto-run preserves exact N-turn lockstep", {
       testing_params = baseline$testing_params,
       active_ids = character(),
       intervention_defs = baseline$intervention_defs,
+      intervention_state = baseline$intervention_state,
       total_spend = baseline$total_spend,
       truth_state = baseline$truth_state,
       observation_state = baseline$observation_state,
@@ -340,6 +351,7 @@ test_that("dual-branch auto-run preserves exact N-turn lockstep", {
     player$truth_state <- player_result$truth_state
     player$observation_state <- player_result$observation_state
     player$available_now <- player_result$available_now
+    player$intervention_state <- player_result$intervention_state
     player$turn <- player_result$next_turn
     player$run_log <- player_result$run_log
     player$turn_logs <- player_result$turn_logs
@@ -348,6 +360,7 @@ test_that("dual-branch auto-run preserves exact N-turn lockstep", {
     baseline$truth_state <- baseline_result$truth_state
     baseline$observation_state <- baseline_result$observation_state
     baseline$available_now <- baseline_result$available_now
+    baseline$intervention_state <- baseline_result$intervention_state
     baseline$turn <- baseline_result$next_turn
     baseline$run_log <- baseline_result$run_log
     baseline$turn_logs <- baseline_result$turn_logs

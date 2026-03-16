@@ -52,7 +52,6 @@ test_that("app launches and key UI elements exist", {
 
   app$set_inputs(`controls-run_mode` = "manual")
   app$wait_for_js("document.getElementById('controls-auto_turns').offsetParent === null")
-  app$wait_for_js("document.getElementById('controls-auto_speed').offsetParent === null")
   app$wait_for_js("document.getElementById('controls-allocation_policy').offsetParent === null")
   app$wait_for_js("document.getElementById('controls-start_run').offsetParent === null")
   app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent !== null", timeout = 8000)
@@ -60,7 +59,6 @@ test_that("app launches and key UI elements exist", {
 
   app$set_inputs(`controls-run_mode` = "guided_auto")
   app$wait_for_js("document.getElementById('controls-auto_turns').offsetParent !== null", timeout = 8000)
-  app$wait_for_js("document.getElementById('controls-auto_speed').offsetParent !== null", timeout = 8000)
   app$wait_for_js("document.getElementById('controls-allocation_policy').offsetParent !== null", timeout = 8000)
   app$wait_for_js("document.getElementById('controls-start_run').offsetParent !== null", timeout = 8000)
 

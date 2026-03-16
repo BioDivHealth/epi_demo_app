@@ -37,8 +37,9 @@ make_turn_request_fixture <- function(current_turn = 0L) {
       sampling_mode = "random",
       sampling_pool_frac = 0.1
     ),
-    active_ids = c("distancing", "rapid"),
+    active_ids = c("distancing", "rapid_labs"),
     intervention_defs = intervention_catalog(),
+    intervention_state = init_intervention_state(),
     total_spend = 40,
     truth_state = {
       state <- init_truth(
@@ -75,11 +76,15 @@ legacy_turn_reference <- function(request) {
   testing_params <- request$testing_params
   active_ids <- request$active_ids
   effects <- compute_intervention_effects(
-    active_ids,
-    request$intervention_defs,
+    selected = active_ids,
+    catalog = request$intervention_defs,
+    state = request$intervention_state,
+    observation_history = request$observation_state$history,
+    current_turn = current_turn,
     turn_budget = request$budget$budget
   )
   intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
+  intervention_phases <- intervention_status_summary(effects$status_by_intervention)
 
   params_epi$Rt <- params_epi$Rt * effects$Rt_multiplier
   params_epi$imports_prob <- min(1, max(0, params_epi$imports_prob * effects$imports_multiplier))
@@ -115,7 +120,7 @@ legacy_turn_reference <- function(request) {
     last_turn = turn_spend,
     remaining = remaining_budget,
     within_budget = remaining_budget >= -1e-6,
-    interventions = intervention_label
+    interventions = intervention_phases
   )
 
   action_log <- append_action_log(
@@ -130,7 +135,8 @@ legacy_turn_reference <- function(request) {
       total_turn_spend = turn_spend,
       cumulative_spend = new_total_spend,
       budget_remaining = remaining_budget,
-      interventions_active = intervention_label
+      interventions_active = intervention_label,
+      intervention_statuses = intervention_phases
     )
   )
 
@@ -192,6 +198,7 @@ legacy_turn_reference <- function(request) {
     observed_positives = sum(obs$available$positives),
     reported_deaths = current_deaths,
     active_interventions = intervention_label,
+    intervention_statuses = intervention_phases,
     notes = "",
     queue_pending = sum(obs$queue$n)
   )
@@ -227,6 +234,7 @@ legacy_turn_reference <- function(request) {
     truth_history = next_truth$history,
     observation_state = next_observation_state,
     available_now = obs$available,
+    intervention_state = effects$next_state,
     next_turn = current_turn + 1L,
     turn_logs = list(
       truth = truth_log,

@@ -276,6 +276,10 @@ build_run_report <- function(truth_history, observed_history, pop_tbl, total_spe
     turn_summary$active_interventions[is.na(turn_summary$active_interventions) | turn_summary$active_interventions == ""] <- "None"
   }
 
+  if ("intervention_statuses" %in% names(turn_summary)) {
+    turn_summary$intervention_statuses[is.na(turn_summary$intervention_statuses) | turn_summary$intervention_statuses == ""] <- "None"
+  }
+
   if ("notes" %in% names(turn_summary)) {
     turn_summary$notes[is.na(turn_summary$notes)] <- ""
   }

@@ -781,6 +781,71 @@ replay_prepare_prevalence_series <- function(
   )
 }
 
+replay_plot_series_styles <- function() {
+  list(
+    observed = list(
+      colour = "#ef6548",
+      prevalence_label = "Observed prevalence",
+      cumulative_label = "Observed cumulative cases",
+      short_label = "Observed",
+      linetype = "dashed",
+      linewidth = 0.8,
+      alpha = 0.7,
+      point_size = 2.4,
+      point_shape = 17
+    ),
+    player_truth = list(
+      colour = "#08519c",
+      prevalence_label = "Truth prevalence (active)",
+      cumulative_label = "Player true cumulative cases",
+      short_label = "Player truth",
+      linetype = "solid",
+      linewidth = 1.4,
+      alpha = 1,
+      point_size = 2.6,
+      point_shape = 16
+    ),
+    baseline_truth = list(
+      colour = "#31a354",
+      prevalence_label = "Baseline truth prevalence (active)",
+      cumulative_label = "Baseline true cumulative cases",
+      short_label = "Baseline truth",
+      linetype = "longdash",
+      linewidth = 0.9,
+      alpha = 0.85,
+      point_size = 2.4,
+      point_shape = 15
+    )
+  )
+}
+
+replay_plot_metric_theme <- function(show_legend = TRUE, plot_margin = ggplot2::margin()) {
+  ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      axis.title = ggplot2::element_text(size = 12),
+      axis.text = ggplot2::element_text(size = 10),
+      legend.title = ggplot2::element_text(size = 10),
+      legend.text = ggplot2::element_text(size = 10),
+      legend.key.size = grid::unit(0.45, "cm"),
+      legend.key.width = grid::unit(1.2, "cm"),
+      legend.position = if (isTRUE(show_legend)) "bottom" else "none",
+      legend.box = "horizontal",
+      legend.direction = "horizontal",
+      legend.margin = ggplot2::margin(0, 0, 0, 0),
+      legend.spacing.x = grid::unit(0.2, "cm"),
+      panel.grid.major = ggplot2::element_line(colour = "#e5e5e5", linewidth = 0.3),
+      panel.grid.minor = ggplot2::element_blank(),
+      plot.margin = plot_margin
+    )
+}
+
+replay_plot_turn_scale <- function(right_mult = 0.07) {
+  ggplot2::scale_x_continuous(
+    breaks = scales::breaks_pretty(n = 8),
+    expand = ggplot2::expansion(mult = c(0.01, right_mult))
+  )
+}
+
 replay_plot_prevalence <- function(
     truth_log,
     obs_log,
@@ -804,11 +869,12 @@ replay_plot_prevalence <- function(
   }
   combined <- prep$series
   has_baseline_truth <- isTRUE(prep$has_baseline_truth)
+  series_styles <- replay_plot_series_styles()
 
   legend_cols <- c(
-    "Observed prevalence" = "#ef6548",
-    "Truth prevalence (active)" = "#08519c",
-    "Baseline truth prevalence (active)" = "#31a354"
+    "Observed prevalence" = series_styles$observed$colour,
+    "Truth prevalence (active)" = series_styles$player_truth$colour,
+    "Baseline truth prevalence (active)" = series_styles$baseline_truth$colour
   )
   if (!isTRUE(has_baseline_truth)) {
     legend_cols <- legend_cols[names(legend_cols) != "Baseline truth prevalence (active)"]
@@ -818,39 +884,65 @@ replay_plot_prevalence <- function(
   if (nrow(combined) <= 1) {
     plot_obj <- plot_obj +
       ggplot2::geom_point(
-        ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
-        size = 2.4
+        ggplot2::aes(
+          y = truth_prev_pct,
+          colour = series_styles$player_truth$prevalence_label
+        ),
+        size = series_styles$player_truth$point_size,
+        shape = series_styles$player_truth$point_shape,
+        alpha = series_styles$player_truth$alpha
       ) +
       ggplot2::geom_point(
-        ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
-        size = 2.4,
-        shape = 17
+        ggplot2::aes(
+          y = observed_prev_pct,
+          colour = series_styles$observed$prevalence_label
+        ),
+        size = series_styles$observed$point_size,
+        shape = series_styles$observed$point_shape,
+        alpha = series_styles$observed$alpha
       )
     if (isTRUE(has_baseline_truth)) {
       plot_obj <- plot_obj +
         ggplot2::geom_point(
-          ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
-          size = 2.4,
-          shape = 15
+          ggplot2::aes(
+            y = baseline_truth_prev_pct,
+            colour = series_styles$baseline_truth$prevalence_label
+          ),
+          size = series_styles$baseline_truth$point_size,
+          shape = series_styles$baseline_truth$point_shape,
+          alpha = series_styles$baseline_truth$alpha
         )
     }
   } else {
     plot_obj <- plot_obj +
       ggplot2::geom_line(
-        ggplot2::aes(y = truth_prev_pct, colour = "Truth prevalence (active)"),
-        linewidth = 1
+        ggplot2::aes(
+          y = truth_prev_pct,
+          colour = series_styles$player_truth$prevalence_label
+        ),
+        linewidth = series_styles$player_truth$linewidth,
+        linetype = series_styles$player_truth$linetype,
+        alpha = series_styles$player_truth$alpha
       ) +
       ggplot2::geom_line(
-        ggplot2::aes(y = observed_prev_pct, colour = "Observed prevalence"),
-        linewidth = 1,
-        linetype = "dashed"
+        ggplot2::aes(
+          y = observed_prev_pct,
+          colour = series_styles$observed$prevalence_label
+        ),
+        linewidth = series_styles$observed$linewidth,
+        linetype = series_styles$observed$linetype,
+        alpha = series_styles$observed$alpha
       )
     if (isTRUE(has_baseline_truth)) {
       plot_obj <- plot_obj +
         ggplot2::geom_line(
-          ggplot2::aes(y = baseline_truth_prev_pct, colour = "Baseline truth prevalence (active)"),
-          linewidth = 1,
-          linetype = "dotdash"
+          ggplot2::aes(
+            y = baseline_truth_prev_pct,
+            colour = series_styles$baseline_truth$prevalence_label
+          ),
+          linewidth = series_styles$baseline_truth$linewidth,
+          linetype = series_styles$baseline_truth$linetype,
+          alpha = series_styles$baseline_truth$alpha
         )
     }
   }
@@ -862,22 +954,13 @@ replay_plot_prevalence <- function(
       colour = NULL
     ) +
     ggplot2::scale_colour_manual(values = legend_cols) +
-    ggplot2::scale_x_continuous(
-      breaks = scales::breaks_pretty(n = 8)
+    ggplot2::guides(
+      colour = ggplot2::guide_legend(
+        override.aes = list(linewidth = 1.2, alpha = 1)
+      )
     ) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      axis.title = ggplot2::element_text(size = 12),
-      axis.text = ggplot2::element_text(size = 10),
-      legend.title = ggplot2::element_text(size = 10),
-      legend.text = ggplot2::element_text(size = 10),
-      legend.key.size = grid::unit(0.45, "cm"),
-      legend.position = "bottom",
-      legend.box = "horizontal",
-      legend.direction = "horizontal",
-      legend.margin = ggplot2::margin(0, 0, 0, 0),
-      legend.spacing.x = grid::unit(0.2, "cm")
-    )
+    replay_plot_turn_scale() +
+    replay_plot_metric_theme(show_legend = TRUE)
 
   plot_obj
 }
@@ -903,28 +986,38 @@ replay_plot_cumulative <- function(
 
   combined <- prep$series
   has_baseline_truth <- isTRUE(prep$has_baseline_truth)
+  series_styles <- replay_plot_series_styles()
 
   series_meta <- list(
     observed = list(
       column = "observed_cumulative",
-      label = "Observed cumulative cases",
-      short_label = "Observed",
-      colour = "#ef6548",
-      linetype = "dashed"
+      label = series_styles$observed$cumulative_label,
+      short_label = series_styles$observed$short_label,
+      colour = series_styles$observed$colour,
+      linetype = series_styles$observed$linetype,
+      linewidth = series_styles$observed$linewidth,
+      alpha = series_styles$observed$alpha,
+      point_size = series_styles$observed$point_size
     ),
     player_truth = list(
       column = "player_truth_cumulative",
-      label = "Player true cumulative cases",
-      short_label = "Player truth",
-      colour = "#08519c",
-      linetype = "solid"
+      label = series_styles$player_truth$cumulative_label,
+      short_label = series_styles$player_truth$short_label,
+      colour = series_styles$player_truth$colour,
+      linetype = series_styles$player_truth$linetype,
+      linewidth = series_styles$player_truth$linewidth,
+      alpha = series_styles$player_truth$alpha,
+      point_size = series_styles$player_truth$point_size
     ),
     baseline_truth = list(
       column = "baseline_truth_cumulative",
-      label = "Baseline true cumulative cases",
-      short_label = "Baseline truth",
-      colour = "#31a354",
-      linetype = "dotdash"
+      label = series_styles$baseline_truth$cumulative_label,
+      short_label = series_styles$baseline_truth$short_label,
+      colour = series_styles$baseline_truth$colour,
+      linetype = series_styles$baseline_truth$linetype,
+      linewidth = series_styles$baseline_truth$linewidth,
+      alpha = series_styles$baseline_truth$alpha,
+      point_size = series_styles$baseline_truth$point_size
     )
   )
 
@@ -980,7 +1073,7 @@ replay_plot_cumulative <- function(
         ggplot2::aes(x = turn, ymin = ymin, ymax = ymax),
         inherit.aes = FALSE,
         fill = "#9eb7c7",
-        alpha = 0.16,
+        alpha = 0.24,
         show.legend = FALSE
       )
   }
@@ -991,8 +1084,9 @@ replay_plot_cumulative <- function(
         ggplot2::geom_step(
           data = observed_df,
           ggplot2::aes(x = turn, y = value, colour = "Observed cumulative cases"),
-          linewidth = 1.1,
+          linewidth = series_meta$observed$linewidth,
           linetype = series_meta$observed$linetype,
+          alpha = series_meta$observed$alpha,
           direction = "hv"
         )
     }
@@ -1001,7 +1095,7 @@ replay_plot_cumulative <- function(
         data = observed_df |>
           dplyr::filter(turn == max(turn, na.rm = TRUE)),
         ggplot2::aes(x = turn, y = value, colour = "Observed cumulative cases"),
-        size = 2.4,
+        size = series_meta$observed$point_size,
         show.legend = FALSE
       )
   }
@@ -1012,8 +1106,9 @@ replay_plot_cumulative <- function(
         ggplot2::geom_line(
           data = player_df,
           ggplot2::aes(x = turn, y = value, colour = "Player true cumulative cases"),
-          linewidth = 1.5,
-          linetype = series_meta$player_truth$linetype
+          linewidth = series_meta$player_truth$linewidth,
+          linetype = series_meta$player_truth$linetype,
+          alpha = series_meta$player_truth$alpha
         )
     }
     plot_obj <- plot_obj +
@@ -1021,7 +1116,7 @@ replay_plot_cumulative <- function(
         data = player_df |>
           dplyr::filter(turn == max(turn, na.rm = TRUE)),
         ggplot2::aes(x = turn, y = value, colour = "Player true cumulative cases"),
-        size = 2.6,
+        size = series_meta$player_truth$point_size,
         show.legend = FALSE
       )
   }
@@ -1032,8 +1127,9 @@ replay_plot_cumulative <- function(
         ggplot2::geom_line(
           data = baseline_df,
           ggplot2::aes(x = turn, y = value, colour = "Baseline true cumulative cases"),
-          linewidth = 1.1,
-          linetype = series_meta$baseline_truth$linetype
+          linewidth = series_meta$baseline_truth$linewidth,
+          linetype = series_meta$baseline_truth$linetype,
+          alpha = series_meta$baseline_truth$alpha
         )
     }
     plot_obj <- plot_obj +
@@ -1041,7 +1137,7 @@ replay_plot_cumulative <- function(
         data = baseline_df |>
           dplyr::filter(turn == max(turn, na.rm = TRUE)),
         ggplot2::aes(x = turn, y = value, colour = "Baseline true cumulative cases"),
-        size = 2.4,
+        size = series_meta$baseline_truth$point_size,
         show.legend = FALSE
       )
   }
@@ -1108,7 +1204,7 @@ replay_plot_cumulative <- function(
           colour = colour_label
         ),
         hjust = -0.08,
-        label.size = 0,
+        linewidth = 0,
         label.padding = grid::unit(0.08, "lines"),
         fill = scales::alpha("white", 0.9),
         size = 3,
@@ -1124,26 +1220,18 @@ replay_plot_cumulative <- function(
       colour = NULL
     ) +
     ggplot2::scale_colour_manual(values = legend_cols) +
+    ggplot2::guides(
+      colour = ggplot2::guide_legend(
+        override.aes = list(linewidth = 1.2, alpha = 1)
+      )
+    ) +
     ggplot2::scale_y_continuous(
       labels = scales::label_number(scale_cut = scales::cut_short_scale())
     ) +
-    ggplot2::scale_x_continuous(
-      breaks = scales::breaks_pretty(n = 8),
-      expand = ggplot2::expansion(mult = c(0.01, 0.07))
-    ) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      axis.title = ggplot2::element_text(size = 12),
-      axis.text = ggplot2::element_text(size = 10),
-      legend.title = ggplot2::element_text(size = 10),
-      legend.text = ggplot2::element_text(size = 10),
-      legend.key.size = grid::unit(0.45, "cm"),
-      legend.position = if (isTRUE(show_legend)) "bottom" else "none",
-      legend.box = "horizontal",
-      legend.direction = "horizontal",
-      legend.margin = ggplot2::margin(0, 0, 0, 0),
-      legend.spacing.x = grid::unit(0.2, "cm"),
-      plot.margin = ggplot2::margin(5.5, 45, 5.5, 5.5)
+    replay_plot_turn_scale() +
+    replay_plot_metric_theme(
+      show_legend = show_legend,
+      plot_margin = ggplot2::margin(5.5, 45, 5.5, 5.5)
     )
 
   plot_obj
@@ -1211,9 +1299,7 @@ replay_plot_intervention_timeline <- function(run_log, action_log, intervention_
       y = NULL,
       fill = "Intervention status"
     ) +
-    ggplot2::scale_x_continuous(
-      breaks = scales::breaks_pretty(n = 8)
-    ) +
+    replay_plot_turn_scale() +
     ggplot2::scale_fill_manual(
       values = c("Active" = "#4d4d4d", "Inactive" = "#ececec")
     ) +
@@ -1235,12 +1321,18 @@ replay_plot_intervention_timeline <- function(run_log, action_log, intervention_
     )
 }
 
-replay_plot_testing <- function(action_log) {
+replay_plot_testing <- function(
+    action_log,
+    turns = NULL,
+    show_legend = TRUE,
+    plot_margin = ggplot2::margin(5.5, 5.5, 5.5, 5.5)) {
   if (is.null(action_log) || nrow(action_log) == 0) {
     return(NULL)
   }
 
   actions_ts <- action_log |>
+    dplyr::mutate(turn = suppressWarnings(as.integer(turn))) |>
+    dplyr::filter(is.finite(turn)) |>
     dplyr::group_by(turn) |>
     dplyr::summarise(
       antigen = sum(ifelse(test_type == "ag", n_allocated, 0L)),
@@ -1252,6 +1344,20 @@ replay_plot_testing <- function(action_log) {
     return(NULL)
   }
 
+  if (!is.null(turns)) {
+    turns <- suppressWarnings(as.integer(turns))
+    turns <- turns[is.finite(turns)]
+    turns <- sort(unique(turns))
+    if (length(turns) > 0) {
+      actions_ts <- tibble::tibble(turn = turns) |>
+        dplyr::left_join(actions_ts, by = "turn") |>
+        dplyr::mutate(
+          antigen = dplyr::coalesce(antigen, 0),
+          PCR = dplyr::coalesce(PCR, 0)
+        )
+    }
+  }
+
   actions_long <- dplyr::bind_rows(
     actions_ts |>
       dplyr::transmute(turn, test_type = "Antigen", tests = antigen),
@@ -1260,26 +1366,25 @@ replay_plot_testing <- function(action_log) {
   )
 
   ggplot2::ggplot(actions_long, ggplot2::aes(x = turn, y = tests, fill = test_type)) +
-    ggplot2::geom_col(position = "dodge") +
+    ggplot2::geom_col() +
     ggplot2::labs(
       x = "Turn",
       y = "Tests allocated",
       fill = "Test type"
     ) +
-    ggplot2::scale_x_continuous(
-      breaks = scales::breaks_pretty(n = 8)
-    ) +
+    replay_plot_turn_scale() +
     ggplot2::scale_fill_manual(values = c("Antigen" = "#74c476", "PCR" = "#6baed6")) +
     ggplot2::theme_minimal(base_size = 11) +
     ggplot2::theme(
       axis.title = ggplot2::element_text(size = 11),
       axis.text = ggplot2::element_text(size = 10),
-      legend.position = "bottom",
+      legend.position = if (isTRUE(show_legend)) "bottom" else "none",
       legend.box = "horizontal",
       legend.direction = "horizontal",
       legend.title = ggplot2::element_text(size = 10),
       legend.text = ggplot2::element_text(size = 10),
       legend.key.size = grid::unit(0.45, "cm"),
-      legend.margin = ggplot2::margin(0, 0, 0, 0)
+      legend.margin = ggplot2::margin(0, 0, 0, 0),
+      plot.margin = plot_margin
     )
 }

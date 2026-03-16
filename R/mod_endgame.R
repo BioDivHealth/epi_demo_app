@@ -59,13 +59,8 @@ build_endgame_modal <- function(metrics, comparison, detection_rate) {
           tags$div(
             class = "card-body",
             tags$p(tags$strong("Peak true incidence: "), metrics$peak_true_incidence, " cases"),
-            tags$p(tags$strong("Calibration gap: "), sprintf("%.3f RMSE", metrics$calibration_gap)),
-            tags$p(tags$strong("True cumulative prevalence (final turn): "), true_prev_pct),
-            tags$p(tags$strong("Rt from truth incidence: "), truth_rt_txt),
-            tags$p(
-              class = "text-muted small",
-              "The calibration gap measures how far your inferred prevalence was from the truth."
-            )
+            tags$p(tags$strong("Cumulative incidence by final turn: "), true_prev_pct),
+            tags$p(tags$strong("Rt from truth incidence: "), truth_rt_txt)
           )
         )
       )
@@ -100,22 +95,12 @@ build_endgame_modal <- function(metrics, comparison, detection_rate) {
             class = "card-body",
             tags$div(
               class = "mb-3",
-              tags$strong("Prevalence, Cumulative Cases, and Interventions Over Turns"),
-              plotOutput("endgame_prevalence_plot", height = "720px")
-            ),
-            tags$div(
-              tags$strong("Testing Allocation Over Turns"),
-              plotOutput("endgame_testing_plot", height = "280px")
+              tags$strong("Prevalence, Cumulative Cases, Interventions, and Testing Over Turns"),
+              plotOutput("endgame_prevalence_plot", height = "980px")
             )
           )
         )
       )
-    ),
-    tags$hr(),
-    tags$h5("Turn-by-Turn Branch Comparison"),
-    tags$div(
-      style = "max-height: 300px; overflow-y: auto;",
-      tableOutput("run_summary_table")
     ),
     tags$hr(),
     tags$div(

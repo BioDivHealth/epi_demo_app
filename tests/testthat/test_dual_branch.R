@@ -65,6 +65,7 @@ build_dual_request <- function(fx, branch, allocs, active_ids = character(), tru
     testing_params = fx$testing_params,
     active_ids = active_ids,
     intervention_defs = fx$intervention_defs,
+    intervention_state = branch$intervention_state,
     total_spend = branch$total_spend,
     truth_state = branch$truth_state,
     observation_state = branch$observation_state,

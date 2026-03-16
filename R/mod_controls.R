@@ -92,13 +92,13 @@ mod_controls_run_mode_ui <- function(id) {
   ns <- shiny::NS(id)
 
   shiny::div(
-    class = "map-selection-group map-selection-group-run-mode",
+    class = "map-selection-group map-selection-group-run-mode map-selection-group-run-mode-responsive",
     shiny::div(
       class = "map-selection-options toggle-btn-group-vertical",
       shiny::radioButtons(
         ns("run_mode"),
         label = NULL,
-        choices = c("Guided auto" = "guided_auto", "Manual" = "manual"),
+        choices = c("Auto" = "guided_auto", "Manual" = "manual"),
         selected = "guided_auto",
         inline = FALSE
       )
@@ -133,10 +133,10 @@ mod_controls_borough_policy_ui <- function(id) {
         label = NULL,
         choices = c(
           "Manual" = "manual",
-          "All Boroughs" = "all_boroughs",
+          "All" = "all_boroughs",
           "Symptomatic" = "symptomatic_proxy"
         ),
-        selected = "symptomatic_proxy",
+        selected = "all_boroughs",
         inline = TRUE
       )
     )
@@ -184,23 +184,6 @@ mod_controls_run_ui <- function(id) {
               step = 1,
               ticks = FALSE,
               width = "170px"
-            )
-          ),
-          shiny::div(
-            class = "map-run-field map-run-field-speed",
-            shiny::tags$label(
-              class = "map-run-field-label",
-              "Speed"
-            ),
-            shiny::div(
-              class = "map-selection-options toggle-btn-group",
-              shiny::radioButtons(
-                ns("auto_speed"),
-                label = NULL,
-                choices = c("Slow" = "slow", "Normal" = "normal", "Fast" = "fast"),
-                selected = "normal",
-                inline = TRUE
-              )
             )
           ),
           shiny::uiOutput(ns("turn_progress"))
@@ -671,15 +654,12 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       }
       turns <- max(1L, min(50L, turns))
 
-      speed <- input$auto_speed
-      if (is.null(speed) || !speed %in% c("slow", "normal", "fast")) {
-        speed <- "normal"
-      }
-      speed_lookup <- c(slow = 1200L, normal = 700L, fast = 250L)
+      speed <- "normal"
+      speed_lookup <- c(normal = 700L)
 
       policy_id <- input$allocation_policy
       if (is.null(policy_id) || !policy_id %in% c("manual", "all_boroughs", "random_population", "symptomatic_proxy")) {
-        policy_id <- "symptomatic_proxy"
+        policy_id <- "all_boroughs"
       }
 
       list(

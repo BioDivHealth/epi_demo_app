@@ -60,7 +60,8 @@ init_turn_logs <- function(pop_tbl) {
     total_turn_spend = numeric(),
     cumulative_spend = numeric(),
     budget_remaining = numeric(),
-    interventions_active = character()
+    interventions_active = character(),
+    intervention_statuses = character()
   )
 
   attr(truth_cols, "pop_reference") <- pop_tbl
@@ -245,7 +246,8 @@ append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, met
     total_turn_spend = sum(addition$spend),
     cumulative_spend = NA_real_,
     budget_remaining = NA_real_,
-    interventions_active = "None"
+    interventions_active = "None",
+    intervention_statuses = "None"
   )
   meta_full <- utils::modifyList(meta_defaults, meta, keep.null = TRUE)
 
@@ -256,7 +258,8 @@ append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, met
       total_turn_spend = meta_full$total_turn_spend,
       cumulative_spend = meta_full$cumulative_spend,
       budget_remaining = meta_full$budget_remaining,
-      interventions_active = meta_full$interventions_active
+      interventions_active = meta_full$interventions_active,
+      intervention_statuses = meta_full$intervention_statuses
     ) |>
     dplyr::select(
       branch,
@@ -273,7 +276,8 @@ append_action_log <- function(action_log, turn, allocations, pop_tbl, costs, met
       total_turn_spend,
       cumulative_spend,
       budget_remaining,
-      interventions_active
+      interventions_active,
+      intervention_statuses
     )
 
   dplyr::bind_rows(action_log, addition)

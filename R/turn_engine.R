@@ -28,6 +28,7 @@ validate_turn_request <- function(request) {
     "testing_params",
     "active_ids",
     "intervention_defs",
+    "intervention_state",
     "total_spend",
     "truth_state",
     "observation_state",
@@ -69,6 +70,10 @@ validate_turn_request <- function(request) {
 
   if (!is.list(request$testing_params)) {
     stop("request$testing_params must be a list")
+  }
+
+  if (!inherits(request$intervention_state, "data.frame")) {
+    stop("request$intervention_state must be a data frame")
   }
 
   if (!is.list(request$truth_state)) {
@@ -178,6 +183,7 @@ apply_interventions_to_params <- function(params_epi, testing_params, effects) {
 
   testing_params$delays$ag <- max(0, testing_params$delays$ag + effects$delay_adjust$ag)
   testing_params$delays$pcr <- max(0, testing_params$delays$pcr + effects$delay_adjust$pcr)
+  testing_params$sampling_yield_multiplier <- effects$sampling_yield_multiplier
 
   list(
     params_epi = params_epi,
@@ -215,11 +221,15 @@ run_single_turn <- function(request) {
   active_ids <- request$active_ids
 
   effects <- compute_intervention_effects(
-    active_ids,
-    request$intervention_defs,
+    selected = active_ids,
+    catalog = request$intervention_defs,
+    state = request$intervention_state,
+    observation_history = request$observation_state$history,
+    current_turn = current_turn,
     turn_budget = request$budget$budget
   )
   intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
+  intervention_phases <- intervention_status_summary(effects$status_by_intervention)
 
   adjusted <- apply_interventions_to_params(params_epi, testing_params, effects)
   params_epi <- adjusted$params_epi
@@ -250,7 +260,7 @@ run_single_turn <- function(request) {
     last_turn = spend$turn_spend,
     remaining = spend$remaining_budget,
     within_budget = spend$remaining_budget >= -1e-6,
-    interventions = intervention_label
+    interventions = intervention_phases
   )
 
   action_log <- append_action_log(
@@ -266,7 +276,8 @@ run_single_turn <- function(request) {
       total_turn_spend = spend$turn_spend,
       cumulative_spend = new_total_spend,
       budget_remaining = spend$remaining_budget,
-      interventions_active = intervention_label
+      interventions_active = intervention_label,
+      intervention_statuses = intervention_phases
     )
   )
 
@@ -333,6 +344,7 @@ run_single_turn <- function(request) {
     observed_positives = sum(obs$available$positives),
     reported_deaths = current_deaths,
     active_interventions = intervention_label,
+    intervention_statuses = intervention_phases,
     notes = "",
     queue_pending = sum(obs$queue$n)
   )
@@ -349,6 +361,7 @@ run_single_turn <- function(request) {
     truth_history = next_truth$history,
     observation_state = next_observation_state,
     available_now = obs$available,
+    intervention_state = effects$next_state,
     next_turn = current_turn + 1L,
     turn_logs = list(
       truth = truth_log,
