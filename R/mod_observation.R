@@ -13,7 +13,8 @@ init_observation_state <- function() {
       n = integer(),
       positives = integer(),
       turn_sampled = integer(),
-      turn_available = integer()
+      turn_available = integer(),
+      source = character()
     ),
     history = tibble::tibble(
       borough_index = integer(),
@@ -22,7 +23,8 @@ init_observation_state <- function() {
       n = integer(),
       positives = integer(),
       turn_sampled = integer(),
-      turn_available = integer()
+      turn_available = integer(),
+      source = character()
     )
   )
 }
@@ -44,7 +46,8 @@ observe_tests <- function(
     allocations,
     truth_incidence,
     pop_tbl,
-    params) {
+    params,
+    source = "player_turn") {
   if (missing(state) || is.null(state$queue)) {
     stop("state must be created with init_observation_state()")
   }
@@ -55,6 +58,11 @@ observe_tests <- function(
 
   if (length(truth_incidence) != nrow(allocations)) {
     stop("truth_incidence must align with allocations")
+  }
+
+  allowed_sources <- c("starter_intel", "player_turn", "baseline_turn")
+  if (!is.character(source) || length(source) != 1L || is.na(source) || !(source %in% allowed_sources)) {
+    stop("source must be one of: ", paste(allowed_sources, collapse = ", "))
   }
 
   prev_floor <- params$prev_floor %||% 1e-6
@@ -101,7 +109,8 @@ observe_tests <- function(
       n = n_tests,
       positives = positives,
       turn_sampled = turn,
-      turn_available = turn + delay
+      turn_available = turn + delay,
+      source = source
     ) |> 
       dplyr::filter(n > 0)
   }
@@ -112,7 +121,10 @@ observe_tests <- function(
   new_results <- dplyr::bind_rows(ag_results, pcr_results)
 
   # Separate queued vs available
-  prior_queue <- state$queue
+  prior_queue <- tibble::as_tibble(state$queue)
+  if (!"source" %in% names(prior_queue)) {
+    prior_queue$source <- NA_character_
+  }
   available_from_queue <- dplyr::filter(prior_queue, turn_available <= turn)
   retained_queue <- dplyr::filter(prior_queue, turn_available > turn)
 
@@ -125,7 +137,11 @@ observe_tests <- function(
   }
 
   available_now <- dplyr::arrange(available_now, borough_index, type)
-  history <- dplyr::bind_rows(state$history, available_now)
+  prior_history <- tibble::as_tibble(state$history)
+  if (!"source" %in% names(prior_history)) {
+    prior_history$source <- NA_character_
+  }
+  history <- dplyr::bind_rows(prior_history, available_now)
 
   list(
     queue = retained_queue,

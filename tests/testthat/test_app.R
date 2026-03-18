@@ -46,9 +46,28 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('controls-end') !== null")
   app$wait_for_js("document.getElementById('controls-reset') !== null")
   app$wait_for_js("document.querySelector('.bslib-sidebar-layout') === null")
+  app$wait_for_js("document.querySelector('.main-header-title .scenario-label') === null")
   app$wait_for_js("document.getElementById('controls-auto_turns') !== null")
   app$wait_for_js("document.getElementById('controls-allocation_policy') !== null")
   app$wait_for_js("document.getElementById('controls-start_run') !== null")
+  app$wait_for_js("document.getElementById('dashboard-signal_quality_panel') !== null")
+  app$wait_for_js("document.getElementById('dashboard-budget_mix_panel') !== null")
+  app$wait_for_js(
+    "document.getElementById('dashboard-signal_quality_panel').textContent.includes('Recent signal')",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('dashboard-signal_quality_panel').textContent.includes('Starter alert only')",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('dashboard-signal_quality_panel').textContent.includes('This batch')",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('dashboard-budget_mix_panel').textContent.includes('No turn plan yet')",
+    timeout = 10000
+  )
 
   app$set_inputs(`controls-run_mode` = "manual")
   app$wait_for_js("document.getElementById('controls-auto_turns').offsetParent === null")
@@ -56,17 +75,30 @@ test_that("app launches and key UI elements exist", {
   app$wait_for_js("document.getElementById('controls-start_run').offsetParent === null")
   app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent !== null", timeout = 8000)
   app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent !== null", timeout = 8000)
+  app$wait_for_js(
+    "!document.getElementById('dashboard-signal_quality_panel').textContent.includes('This batch')",
+    timeout = 10000
+  )
+  app$set_inputs(`map-interventions` = "distancing")
+  app$wait_for_js(
+    "!document.getElementById('dashboard-budget_mix_panel').textContent.includes('No turn plan yet')",
+    timeout = 10000
+  )
 
   app$set_inputs(`controls-run_mode` = "guided_auto")
   app$wait_for_js("document.getElementById('controls-auto_turns').offsetParent !== null", timeout = 8000)
   app$wait_for_js("document.getElementById('controls-allocation_policy').offsetParent !== null", timeout = 8000)
   app$wait_for_js("document.getElementById('controls-start_run').offsetParent !== null", timeout = 8000)
+  app$wait_for_js(
+    "document.getElementById('dashboard-signal_quality_panel').textContent.includes('This batch')",
+    timeout = 10000
+  )
 
-  app$set_inputs(`controls-allocation_policy` = "all_boroughs")
+  app$set_inputs(`controls-allocation_policy` = "all_boroughs", wait_ = FALSE)
   app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent === null")
   app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent === null")
 
-  app$set_inputs(`controls-allocation_policy` = "manual")
+  app$set_inputs(`controls-allocation_policy` = "manual", wait_ = FALSE)
   app$wait_for_js("document.querySelector('.map-selection-group-test-type').offsetParent === null")
   app$wait_for_js("document.getElementById('map-tests_per_click').offsetParent === null")
 
@@ -100,8 +132,43 @@ test_that("replay unlocks after reveal and supports branch switching", {
   app$wait_for_js("document.getElementById('controls-end') !== null")
   app$wait_for_js("document.getElementById('show_replay') === null")
 
+  app$set_inputs(`map-interventions` = "distancing")
+  app$set_inputs(`map-advance` = 1L, wait_ = FALSE)
+  app$wait_for_js(
+    "(Shiny.shinyapp && Shiny.shinyapp.$inputValues && Shiny.shinyapp.$inputValues['map-advance'] >= 1)",
+    timeout = 10000
+  )
+
   app$set_inputs(`controls-end` = "click")
 
+  app$wait_for_js(
+    "document.getElementById('endgame-response_score_card') !== null",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('endgame-response_score_value') !== null",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('endgame-response_verdict') !== null",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('endgame-subscore-outbreak') !== null",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('endgame-subscore-surveillance') !== null",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('endgame-subscore-balance') !== null",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('endgame-response_score_card').textContent.includes('Response Score')",
+    timeout = 10000
+  )
   app$wait_for_js(
     "document.getElementById('show_replay') !== null",
     timeout = 10000
@@ -111,6 +178,20 @@ test_that("replay unlocks after reveal and supports branch switching", {
 
   app$wait_for_js("document.getElementById('replay-replay_branch') !== null")
   app$wait_for_js("document.getElementById('replay-turn_slider') !== null")
+  app$wait_for_js("document.getElementById('replay-decision_markers') !== null", timeout = 10000)
+  app$wait_for_js(
+    "document.getElementById('replay-decision_markers').textContent.includes('Decision moments')",
+    timeout = 10000
+  )
+  app$wait_for_js(
+    "document.getElementById('replay-decision_markers').textContent.includes('Intervention started')",
+    timeout = 10000
+  )
+  app$wait_for_js("document.getElementById('replay-decision_note') !== null", timeout = 10000)
+  app$wait_for_js(
+    "document.getElementById('replay-decision_note').textContent.includes('Decision moment')",
+    timeout = 10000
+  )
 
   app$set_inputs(`replay-replay_branch` = "baseline")
   selected_branch <- app$get_value(input = "replay-replay_branch")

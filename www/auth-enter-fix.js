@@ -4,7 +4,15 @@
       return false;
     }
 
-    if (el.matches && (el.matches("#auth_user") || el.matches("#auth_pwd"))) {
+    if (
+      el.matches &&
+      (
+        el.matches("#auth_user") ||
+        el.matches("#auth_pwd") ||
+        el.matches("#admin_login_user") ||
+        el.matches("#admin_login_password")
+      )
+    ) {
       return true;
     }
 
@@ -21,6 +29,7 @@
 
   function findLoginButton() {
     return (
+      document.querySelector("#admin_login_submit") ||
       document.querySelector("#auth_button") ||
       document.querySelector("#auth-go_auth") ||
       document.querySelector("button#go_auth") ||
@@ -59,9 +68,11 @@
       e.stopPropagation();
 
       var userInput =
+        document.querySelector("#admin_login_user") ||
         document.querySelector("#auth_user") ||
         document.querySelector("input[name='auth_user'], input[name='user']");
       var passInput =
+        document.querySelector("#admin_login_password") ||
         document.querySelector("#auth_pwd") ||
         document.querySelector("input[type='password']");
 

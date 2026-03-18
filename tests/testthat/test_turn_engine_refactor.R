@@ -146,7 +146,8 @@ legacy_turn_reference <- function(request) {
     allocations = allocs,
     truth_incidence = request$truth_state$incidence,
     pop_tbl = request$effective_pop_tbl,
-    params = testing_params
+    params = testing_params,
+    source = "player_turn"
   )
   next_observation_state <- list(queue = obs$queue, history = obs$history)
 
@@ -159,7 +160,8 @@ legacy_turn_reference <- function(request) {
     observation_log = request$turn_logs$observations,
     available_results = obs$available,
     turn_reported = current_turn,
-    pop_tbl = request$pop_tbl
+    pop_tbl = request$pop_tbl,
+    branch = "player"
   )
 
   next_truth <- step_truth(
@@ -270,6 +272,7 @@ test_that("run_single_turn matches legacy deterministic behavior", {
   expect_equal(nrow(engine$turn_logs$truth), nrow(legacy$turn_logs$truth))
   expect_true(all(engine$truth_state$incidence >= 0))
   expect_true(all(engine$available_now$n >= 0))
+  expect_true(all(engine$available_now$source == "player_turn"))
   expect_true(engine$spend_current$total >= 0)
   expect_true(engine$spend_current$last_turn >= 0)
 })

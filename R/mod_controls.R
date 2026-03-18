@@ -92,15 +92,15 @@ mod_controls_run_mode_ui <- function(id) {
   ns <- shiny::NS(id)
 
   shiny::div(
-    class = "map-selection-group map-selection-group-run-mode map-selection-group-run-mode-responsive",
+    class = "map-selection-group map-selection-group-run-mode map-selection-group-run-mode-inline",
     shiny::div(
-      class = "map-selection-options toggle-btn-group-vertical",
+      class = "map-selection-options toggle-btn-group",
       shiny::radioButtons(
         ns("run_mode"),
         label = NULL,
         choices = c("Auto" = "guided_auto", "Manual" = "manual"),
         selected = "guided_auto",
-        inline = FALSE
+        inline = TRUE
       )
     )
   )
@@ -121,7 +121,7 @@ mod_controls_borough_policy_ui <- function(id) {
           "<ul class='mb-0'>
             <li>Manual keeps your direct allocations.</li>
             <li>All Boroughs ensures borough-wide coverage when affordable, then distributes tests by population.</li>
-            <li>Symptomatic prioritises boroughs with stronger recent observed positive-test signals.</li>
+            <li>Symptomatic stays broad when signal is weak, then focuses tests on the 12 boroughs with the strongest recent observed positive-test signals.</li>
           </ul>"
         )
       )
@@ -245,6 +245,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       kernel_key = default_scenario$kernel_key[[1]],
       susceptible_frac = default_scenario$susceptible_frac[[1]],
       scenario_id = default_scenario$id[[1]],
+      show_scenario = FALSE,
       death_ifr = default_death_ifr,
       death_delay = default_death_delay
     )
@@ -260,9 +261,14 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         kernel_key = admin_defaults$kernel_key,
         susceptible_frac = admin_defaults$susceptible_frac,
         scenario_id = admin_defaults$scenario_id,
+        show_scenario = admin_defaults$show_scenario,
         death_ifr = admin_defaults$death_ifr,
         death_delay = admin_defaults$death_delay
       )
+    }
+
+    if (is.null(shiny::isolate(shared_admin$show_scenario))) {
+      shared_admin$show_scenario <- admin_defaults$show_scenario
     }
 
     if (is.null(reset_signal)) {
@@ -283,7 +289,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       }
     }
 
-    apply_scenario_defaults <- function(scenario_id) {
+    apply_scenario_defaults <- function(scenario_id, reset_show_scenario = FALSE) {
       scenario <- scenario_lookup(scenario_id, scenario_defs)
       death_ifr <- scenario$death_ifr[[1]]
       if (is.null(death_ifr) || is.na(death_ifr)) {
@@ -310,6 +316,9 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       shared_admin$scenario_id <- scenario$id[[1]]
       shared_admin$death_ifr <- death_ifr
       shared_admin$death_delay <- death_delay
+      if (isTRUE(reset_show_scenario)) {
+        shared_admin$show_scenario <- admin_defaults$show_scenario
+      }
 
       shiny::updateNumericInput(
         session,
@@ -351,6 +360,13 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         "admin_death_delay",
         value = death_delay
       )
+      if (isTRUE(reset_show_scenario)) {
+        shiny::updateCheckboxInput(
+          session,
+          "admin_show_scenario",
+          value = admin_defaults$show_scenario
+        )
+      }
     }
 
     # Fixed parameters - students focus on testing strategy, not epidemiology
@@ -427,6 +443,11 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
           label = "Scenario template",
           choices = scenario_labels,
           selected = scenario_selected
+        ),
+        shiny::checkboxInput(
+          ns("admin_show_scenario"),
+          label = "Show scenario to students",
+          value = isTRUE(shiny::isolate(shared_admin$show_scenario))
         ),
         shiny::uiOutput(ns("admin_scenario_note")),
         shiny::numericInput(
@@ -588,6 +609,12 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       apply_scenario_defaults(scenario_id)
     }, ignoreInit = TRUE)
 
+    observeEvent(input$admin_show_scenario, {
+      shiny::req(is_admin())
+      shiny::req(!is.null(input$admin_show_scenario))
+      shared_admin$show_scenario <- isTRUE(input$admin_show_scenario)
+    }, ignoreInit = TRUE)
+
     observeEvent(input$admin_reset_all, {
       shiny::req(is_admin())
       reset_signal(reset_signal() + 1L)
@@ -599,7 +626,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       if (is.null(scenario_id) || scenario_id == "" || is.na(scenario_id)) {
         scenario_id <- "custom"
       }
-      apply_scenario_defaults(scenario_id)
+      apply_scenario_defaults(scenario_id, reset_show_scenario = TRUE)
     })
 
     # Force a visible default on first render for the shared map control.

@@ -1,13 +1,50 @@
 # Help modal -----------------------------------------------------------------
 
-help_modal_body <- function(scenario_id = NULL, scenario_defs = scenario_catalog()) {
+student_scenario_display <- function(scenario_id = NULL, show_scenario = FALSE, scenario_defs = scenario_catalog()) {
+  hidden_display <- list(
+    visible = FALSE,
+    header_text = "",
+    label = NULL,
+    objective = NULL
+  )
+
+  if (!isTRUE(show_scenario)) {
+    return(hidden_display)
+  }
+
   if (is.null(scenario_id) || is.na(scenario_id) || scenario_id == "") {
     scenario_id <- "custom"
   }
 
   current <- scenario_lookup(scenario_id, scenario_defs)
-  current_label <- current$label[[1]]
-  current_objective <- current$objective[[1]]
+  if (identical(current$id[[1]], "custom")) {
+    return(hidden_display)
+  }
+
+  label <- current$label[[1]]
+  if (is.null(label) || is.na(label) || identical(label, "")) {
+    return(hidden_display)
+  }
+
+  objective <- current$objective[[1]]
+  if (is.null(objective) || is.na(objective) || identical(objective, "")) {
+    objective <- NULL
+  }
+
+  list(
+    visible = TRUE,
+    header_text = paste("Scenario:", label),
+    label = label,
+    objective = objective
+  )
+}
+
+help_modal_body <- function(scenario_id = NULL, show_scenario = FALSE, scenario_defs = scenario_catalog()) {
+  scenario_display <- student_scenario_display(
+    scenario_id = scenario_id,
+    show_scenario = show_scenario,
+    scenario_defs = scenario_defs
+  )
 
   shiny::tagList(
     shiny::tags$p(
@@ -30,16 +67,19 @@ help_modal_body <- function(scenario_id = NULL, scenario_defs = scenario_catalog
       "Use the questions below as a guide for interpreting what you see and",
       "comparing it with the replay."
     ),
-    shiny::tags$h5("Current scenario"),
-    shiny::tags$div(
-      class = "mb-3",
-      shiny::tags$div(shiny::tags$strong(current_label)),
-      if (!is.null(current_objective) && !is.na(current_objective) &&
-          !identical(current_objective, "")) {
-        shiny::tags$div(class = "text-muted small", current_objective)
-      }
-    ),
-    shiny::tags$hr(),
+    if (isTRUE(scenario_display$visible)) {
+      shiny::tagList(
+        shiny::tags$h5("Current scenario"),
+        shiny::tags$div(
+          class = "mb-3",
+          shiny::tags$div(shiny::tags$strong(scenario_display$label)),
+          if (!is.null(scenario_display$objective)) {
+            shiny::tags$div(class = "text-muted small", scenario_display$objective)
+          }
+        ),
+        shiny::tags$hr()
+      )
+    },
     shiny::tags$h5("What you might think of during play"),
     shiny::tags$ul(
       shiny::tags$li("How is your testing strategy evolving (targeted vs broad, PCR vs antigen), and why?"),

@@ -144,7 +144,8 @@ initialise_branch_pair <- function(init_truth, player_observation, player_availa
       n = integer(),
       positives = integer(),
       turn_sampled = integer(),
-      turn_available = integer()
+      turn_available = integer(),
+      source = character()
     )
   }
   baseline_available <- player_available[0, , drop = FALSE]

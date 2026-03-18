@@ -56,6 +56,322 @@ estimate_rt_series <- function(incid_vector, mean_si = 3.5, std_si = 1.5) {
   )
 }
 
+clamp_range <- function(x, lower = 0, upper = 1) {
+  x <- as.numeric(x)
+  pmin(pmax(x, lower), upper)
+}
+
+compute_first_signal_turn <- function(observed_history) {
+  observed_history <- tibble::as_tibble(observed_history)
+  required_cols <- c("positives", "turn_available")
+  if (nrow(observed_history) == 0 || !all(required_cols %in% names(observed_history))) {
+    return(NA_integer_)
+  }
+
+  detection_turns <- observed_history |>
+    dplyr::filter(positives > 0) |>
+    dplyr::pull(turn_available)
+
+  if (length(detection_turns) == 0 || all(is.na(detection_turns))) {
+    return(NA_integer_)
+  }
+
+  first_turn <- suppressWarnings(as.integer(min(detection_turns, na.rm = TRUE)))
+  if (is.infinite(first_turn)) {
+    return(NA_integer_)
+  }
+
+  first_turn
+}
+
+compute_player_confirmation_turn <- function(observed_history, min_turn = 1L) {
+  observed_history <- tibble::as_tibble(observed_history)
+  required_cols <- c("turn_available", "borough_index", "positives")
+  if (nrow(observed_history) == 0 || !all(required_cols %in% names(observed_history))) {
+    return(NA_integer_)
+  }
+
+  eligible <- observed_history |>
+    dplyr::filter(turn_available >= as.integer(min_turn))
+
+  if ("source" %in% names(eligible)) {
+    eligible <- eligible |>
+      dplyr::filter(is.na(source) | source != "starter_intel")
+  }
+
+  if (nrow(eligible) == 0) {
+    return(NA_integer_)
+  }
+
+  turn_summary <- eligible |>
+    dplyr::group_by(turn_available, borough_index) |>
+    dplyr::summarise(positives = sum(positives, na.rm = TRUE), .groups = "drop") |>
+    dplyr::group_by(turn_available) |>
+    dplyr::summarise(
+      positive_boroughs = sum(positives > 0, na.rm = TRUE),
+      total_positives = sum(positives, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::filter(positive_boroughs >= 2L | total_positives >= 3L)
+
+  if (nrow(turn_summary) == 0) {
+    return(NA_integer_)
+  }
+
+  as.integer(min(turn_summary$turn_available, na.rm = TRUE))
+}
+
+compute_mean_coverage_share <- function(observed_history, total_boroughs, min_turn = 1L) {
+  observed_history <- tibble::as_tibble(observed_history)
+  total_boroughs <- suppressWarnings(as.numeric(total_boroughs)[1])
+  required_cols <- c("turn_available", "borough_index")
+
+  if (!is.finite(total_boroughs) || total_boroughs <= 0 || nrow(observed_history) == 0 ||
+      !all(required_cols %in% names(observed_history))) {
+    return(0)
+  }
+
+  coverage_tbl <- observed_history |>
+    dplyr::filter(turn_available >= as.integer(min_turn))
+
+  if ("source" %in% names(coverage_tbl)) {
+    coverage_tbl <- coverage_tbl |>
+      dplyr::filter(is.na(source) | source != "starter_intel")
+  }
+
+  coverage_tbl <- coverage_tbl |>
+    dplyr::group_by(turn_available) |>
+    dplyr::summarise(
+      boroughs_observed = dplyr::n_distinct(borough_index),
+      .groups = "drop"
+    )
+
+  if (nrow(coverage_tbl) == 0) {
+    return(0)
+  }
+
+  mean(coverage_tbl$boroughs_observed / total_boroughs)
+}
+
+score_player_confirmation <- function(turn_value) {
+  turn_value <- suppressWarnings(as.integer(turn_value)[1])
+  if (is.na(turn_value) || turn_value < 1L) {
+    return(0L)
+  }
+
+  if (turn_value <= 5L) {
+    return(10L)
+  }
+  if (turn_value <= 10L) {
+    return(8L)
+  }
+  if (turn_value <= 15L) {
+    return(6L)
+  }
+  if (turn_value <= 20L) {
+    return(4L)
+  }
+
+  2L
+}
+
+score_coverage_share <- function(coverage_share) {
+  coverage_share <- suppressWarnings(as.numeric(coverage_share)[1])
+  if (!is.finite(coverage_share)) {
+    return(0L)
+  }
+
+  as.integer(round(10 * clamp_range(coverage_share / 0.40, 0, 1)))
+}
+
+score_ascertainment_lift <- function(player_detected_fraction, baseline_detected_fraction) {
+  player_detected_fraction <- suppressWarnings(as.numeric(player_detected_fraction)[1])
+  baseline_detected_fraction <- suppressWarnings(as.numeric(baseline_detected_fraction)[1])
+
+  if (!is.finite(player_detected_fraction) || player_detected_fraction <= 0) {
+    return(0L)
+  }
+
+  if (!is.finite(baseline_detected_fraction) || baseline_detected_fraction < 0) {
+    baseline_detected_fraction <- 0
+  }
+
+  ascertainment_lift <- player_detected_fraction / max(0.0001, baseline_detected_fraction)
+
+  if (ascertainment_lift >= 4) {
+    return(10L)
+  }
+  if (ascertainment_lift >= 3) {
+    return(8L)
+  }
+  if (ascertainment_lift >= 2) {
+    return(6L)
+  }
+  if (ascertainment_lift >= 1.5) {
+    return(4L)
+  }
+  if (ascertainment_lift > 1) {
+    return(2L)
+  }
+
+  0L
+}
+
+score_strategy_balance <- function(outbreak_control_score, surveillance_quality_score, intervention_share) {
+  outbreak_control_score <- suppressWarnings(as.numeric(outbreak_control_score)[1])
+  surveillance_quality_score <- suppressWarnings(as.numeric(surveillance_quality_score)[1])
+  intervention_share <- suppressWarnings(as.numeric(intervention_share)[1])
+
+  control_band <- if (is.finite(outbreak_control_score) && outbreak_control_score >= 35) {
+    "strong"
+  } else if (is.finite(outbreak_control_score) && outbreak_control_score >= 20) {
+    "moderate"
+  } else {
+    "weak"
+  }
+
+  surveillance_band <- if (is.finite(surveillance_quality_score) && surveillance_quality_score >= 20) {
+    "strong"
+  } else if (is.finite(surveillance_quality_score) && surveillance_quality_score >= 15) {
+    "moderate"
+  } else {
+    "weak"
+  }
+
+  base_score <- dplyr::case_when(
+    control_band == "strong" && surveillance_band == "strong" ~ 20,
+    control_band == "strong" && surveillance_band == "moderate" ~ 17,
+    control_band == "moderate" && surveillance_band == "strong" ~ 17,
+    control_band == "moderate" && surveillance_band == "moderate" ~ 15,
+    control_band == "strong" && surveillance_band == "weak" ~ 10,
+    control_band == "weak" && surveillance_band == "strong" ~ 10,
+    control_band == "moderate" && surveillance_band == "weak" ~ 8,
+    control_band == "weak" && surveillance_band == "moderate" ~ 8,
+    TRUE ~ 3
+  )
+
+  if (!is.finite(intervention_share)) {
+    intervention_share <- 0
+  }
+
+  if (intervention_share > 0.55 && surveillance_quality_score < 15) {
+    base_score <- base_score - 3
+  }
+  if (intervention_share < 0.10 && outbreak_control_score < 20) {
+    base_score <- base_score - 3
+  }
+
+  as.integer(round(clamp_range(base_score, 0, 20)))
+}
+
+build_response_score_metrics <- function(
+    player_report,
+    baseline_report,
+    comparison,
+    pop_tbl,
+    player_observed_history = tibble::tibble()) {
+  player_turns <- tibble::as_tibble(player_report$turn_summary)
+  baseline_turns <- tibble::as_tibble(baseline_report$turn_summary)
+
+  player_total_true_cases <- if ("truth_total" %in% names(player_turns)) {
+    sum(player_turns$truth_total, na.rm = TRUE)
+  } else {
+    0
+  }
+  baseline_total_true_cases <- if ("truth_total" %in% names(baseline_turns)) {
+    sum(baseline_turns$truth_total, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  player_total_observed_positives <- if ("observed_positives" %in% names(player_turns)) {
+    sum(player_turns$observed_positives, na.rm = TRUE)
+  } else {
+    0
+  }
+  baseline_total_observed_positives <- if ("observed_positives" %in% names(baseline_turns)) {
+    sum(baseline_turns$observed_positives, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  total_intervention_spend_player <- if ("intervention_cost" %in% names(player_turns)) {
+    sum(player_turns$intervention_cost, na.rm = TRUE)
+  } else {
+    0
+  }
+  total_testing_spend_player <- if ("allocation_spend" %in% names(player_turns)) {
+    sum(player_turns$allocation_spend, na.rm = TRUE)
+  } else {
+    0
+  }
+
+  player_detected_fraction <- player_total_observed_positives / max(1, player_total_true_cases)
+  baseline_detected_fraction <- baseline_total_observed_positives / max(1, baseline_total_true_cases)
+  ascertainment_lift <- if (player_detected_fraction > 0) {
+    player_detected_fraction / max(0.0001, baseline_detected_fraction)
+  } else {
+    0
+  }
+
+  player_observed_history <- tibble::as_tibble(player_observed_history)
+  total_boroughs <- nrow(tibble::as_tibble(pop_tbl))
+  first_signal_turn <- compute_first_signal_turn(player_observed_history)
+  player_confirmation_turn <- compute_player_confirmation_turn(player_observed_history, min_turn = 1L)
+  mean_coverage_share <- compute_mean_coverage_share(player_observed_history, total_boroughs, min_turn = 1L)
+
+  case_reduction_pct <- clamp_range(comparison$cases_averted / max(1, comparison$baseline_total_cases), 0, 1)
+  death_reduction_pct <- clamp_range(comparison$deaths_averted / max(1, comparison$baseline_total_deaths), 0, 1)
+
+  outbreak_control_score <- as.integer(round(
+    50 * ((0.4 * case_reduction_pct) + (0.6 * death_reduction_pct))
+  ))
+
+  player_confirmation_score <- score_player_confirmation(player_confirmation_turn)
+  coverage_score <- score_coverage_share(mean_coverage_share)
+  ascertainment_lift_score <- score_ascertainment_lift(player_detected_fraction, baseline_detected_fraction)
+
+  surveillance_quality_score <- as.integer(
+    player_confirmation_score +
+      coverage_score +
+      ascertainment_lift_score
+  )
+
+  intervention_share <- total_intervention_spend_player / max(1, player_report$metrics$total_spend)
+  strategy_balance_score <- score_strategy_balance(
+    outbreak_control_score = outbreak_control_score,
+    surveillance_quality_score = surveillance_quality_score,
+    intervention_share = intervention_share
+  )
+
+  response_score <- as.integer(
+    outbreak_control_score +
+      surveillance_quality_score +
+      strategy_balance_score
+  )
+
+  list(
+    response_score = response_score,
+    outbreak_control_score = outbreak_control_score,
+    surveillance_quality_score = surveillance_quality_score,
+    strategy_balance_score = strategy_balance_score,
+    first_signal_turn = first_signal_turn,
+    player_confirmation_turn = player_confirmation_turn,
+    mean_coverage_share = mean_coverage_share,
+    player_confirmation_score = player_confirmation_score,
+    coverage_score = coverage_score,
+    ascertainment_lift_score = ascertainment_lift_score,
+    total_intervention_spend_player = total_intervention_spend_player,
+    total_testing_spend_player = total_testing_spend_player,
+    player_total_observed_positives = player_total_observed_positives,
+    baseline_total_observed_positives = baseline_total_observed_positives,
+    player_detected_fraction = player_detected_fraction,
+    baseline_detected_fraction = baseline_detected_fraction,
+    ascertainment_lift = ascertainment_lift,
+    intervention_share = intervention_share
+  )
+}
+
 score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0) {
   if (length(truth_history) == 0) {
     stop("truth_history must contain at least one turn")
@@ -68,17 +384,7 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
   final_truth <- truth_mat[nrow(truth_mat), ]
   true_prev_rate <- sum(final_truth) / sum(pop_tbl$pop)
 
-  detection_turns <- observed_history |>
-    dplyr::filter(positives > 0) |>
-    dplyr::pull(turn_available)
-  time_to_detection <- if (length(detection_turns) == 0 || all(is.na(detection_turns))) {
-    NA_integer_
-  } else {
-    min(detection_turns, na.rm = TRUE)
-  }
-  if (is.infinite(time_to_detection)) {
-    time_to_detection <- NA_integer_
-  }
+  time_to_detection <- compute_first_signal_turn(observed_history)
 
   observed_turns <- observed_history |>
     dplyr::group_by(turn_available) |>
@@ -371,6 +677,33 @@ build_dual_branch_report <- function(player_branch, baseline_branch, pop_tbl) {
   )
 
   comparison <- compute_comparison_metrics(player_report, baseline_report)
+  response_metrics <- build_response_score_metrics(
+    player_report = player_report,
+    baseline_report = baseline_report,
+    comparison = comparison,
+    pop_tbl = pop_tbl,
+    player_observed_history = player_branch$observation_state$history
+  )
+
+  player_report$metrics <- c(player_report$metrics, response_metrics[c(
+    "response_score",
+    "outbreak_control_score",
+    "surveillance_quality_score",
+    "strategy_balance_score",
+    "first_signal_turn",
+    "player_confirmation_turn",
+    "mean_coverage_share"
+  )])
+
+  comparison <- c(comparison, response_metrics[c(
+    "total_intervention_spend_player",
+    "total_testing_spend_player",
+    "player_total_observed_positives",
+    "baseline_total_observed_positives",
+    "player_detected_fraction",
+    "baseline_detected_fraction",
+    "ascertainment_lift"
+  )])
 
   turn_comparison <- dplyr::full_join(
     player_report$turn_summary |>

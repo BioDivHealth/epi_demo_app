@@ -327,6 +327,185 @@ test_that("intervention timeline plot returns NULL when no turns are available",
   ))
 })
 
+test_that("turn comparison normalization returns stable columns and types", {
+  raw_comparison <- tibble::tibble(
+    turn = c("0", "1"),
+    player_truth_total = c("10", "12"),
+    baseline_truth_total = c(15, 18)
+  )
+
+  normalized <- replay_normalize_turn_comparison(raw_comparison)
+
+  expect_equal(
+    names(normalized),
+    c(
+      "turn",
+      "player_truth_total",
+      "baseline_truth_total",
+      "player_deaths_total",
+      "baseline_deaths_total",
+      "player_observed_positives",
+      "baseline_observed_positives",
+      "player_total_turn_spend",
+      "baseline_total_turn_spend"
+    )
+  )
+  expect_type(normalized$turn, "integer")
+  expect_type(normalized$player_truth_total, "double")
+  expect_true(all(is.na(normalized$player_deaths_total)))
+})
+
+test_that("intervention markers detect starts and mix changes from run log", {
+  defs <- tibble::tibble(
+    id = c("distancing", "rapid", "community"),
+    label = c("Social distancing", "Rapid labs", "Community case-finding")
+  )
+  run_log <- tibble::tibble(
+    turn = c(0L, 1L, 2L, 3L),
+    active_interventions = c(
+      "None",
+      "Social distancing",
+      "Social distancing, Rapid labs",
+      "Rapid labs"
+    )
+  )
+
+  markers <- replay_extract_intervention_markers(
+    run_log = run_log,
+    action_log = tibble::tibble(),
+    intervention_defs = defs
+  )
+
+  expect_equal(markers$turn, c(1L, 2L, 3L))
+  expect_equal(
+    markers$marker_label,
+    c("Intervention started", "Intervention started", "Intervention mix changed")
+  )
+  expect_match(markers$marker_detail[[1]], "Social distancing activated")
+  expect_match(markers$marker_detail[[2]], "Rapid labs activated")
+  expect_match(markers$marker_detail[[3]], "stopped Social distancing")
+})
+
+test_that("intervention markers fall back to action log labels when run log is missing", {
+  defs <- tibble::tibble(
+    id = c("distancing", "rapid"),
+    label = c("Social distancing", "Rapid labs")
+  )
+  action_log <- tibble::tibble(
+    turn = c(0L, 1L),
+    interventions_active = c("None", "Rapid labs")
+  )
+
+  markers <- replay_extract_intervention_markers(
+    run_log = tibble::tibble(),
+    action_log = action_log,
+    intervention_defs = defs
+  )
+
+  expect_equal(nrow(markers), 1)
+  expect_identical(markers$turn[[1]], 1L)
+  expect_identical(markers$marker_label[[1]], "Intervention started")
+  expect_match(markers$marker_detail[[1]], "Rapid labs activated")
+})
+
+test_that("divergence markers require sustained separation", {
+  turn_comparison <- tibble::tibble(
+    turn = 0:4,
+    player_truth_total = c(100, 97, 60, 55, 50),
+    baseline_truth_total = c(100, 100, 100, 100, 100),
+    player_deaths_total = c(0, 0, 0, 0, 0),
+    baseline_deaths_total = c(0, 0, 0, 0, 0)
+  )
+
+  markers <- replay_extract_divergence_markers(turn_comparison)
+
+  expect_equal(nrow(markers), 1)
+  expect_identical(markers$turn[[1]], 2L)
+  expect_identical(markers$marker_label[[1]], "Branches diverge")
+  expect_match(markers$marker_detail[[1]], "Player truth starts to fall below baseline")
+})
+
+test_that("decision markers deduplicate same-turn events and cap at six", {
+  defs <- tibble::tibble(
+    id = c("distancing", "rapid", "community", "ventilation", "isolation", "labs", "finding"),
+    label = c(
+      "Social distancing",
+      "Rapid labs",
+      "Community case-finding",
+      "Ventilation guidance",
+      "Case isolation",
+      "Extra labs",
+      "Targeted finding"
+    )
+  )
+  run_log <- tibble::tibble(
+    turn = 0:7,
+    active_interventions = c(
+      "None",
+      "Social distancing",
+      "Social distancing, Rapid labs",
+      "Social distancing, Rapid labs, Community case-finding",
+      "Social distancing, Rapid labs, Community case-finding, Ventilation guidance",
+      "Social distancing, Rapid labs, Community case-finding, Ventilation guidance, Case isolation",
+      "Social distancing, Rapid labs, Community case-finding, Ventilation guidance, Case isolation, Extra labs",
+      "Social distancing, Rapid labs, Community case-finding, Ventilation guidance, Case isolation, Extra labs, Targeted finding"
+    )
+  )
+  turn_comparison <- tibble::tibble(
+    turn = 0:7,
+    player_truth_total = c(100, 98, 96, 55, 50, 48, 45, 42),
+    baseline_truth_total = c(100, 100, 100, 100, 100, 100, 100, 100),
+    player_deaths_total = c(0, 0, 0, 0, 0, 0, 0, 0),
+    baseline_deaths_total = c(0, 0, 0, 0, 0, 0, 0, 0)
+  )
+
+  markers <- replay_build_decision_markers(
+    run_log = run_log,
+    action_log = tibble::tibble(),
+    turn_comparison = turn_comparison,
+    intervention_defs = defs
+  )
+
+  expect_lte(nrow(markers), 6)
+  expect_lte(sum(markers$turn == 3L), 1)
+})
+
+test_that("turn notes and formatted comparison rows use selected-turn deltas", {
+  turn_comparison <- tibble::tibble(
+    turn = c(2L, 3L),
+    player_truth_total = c(60, 55),
+    baseline_truth_total = c(100, 100),
+    player_deaths_total = c(0, 0),
+    baseline_deaths_total = c(1, 1),
+    player_observed_positives = c(4, 5),
+    baseline_observed_positives = c(1, 1),
+    player_total_turn_spend = c(200, 220),
+    baseline_total_turn_spend = c(20, 20)
+  )
+  markers <- tibble::tibble(
+    turn = 2L,
+    marker_type = "divergence",
+    marker_label = "Branches diverge",
+    marker_detail = "Player truth starts to fall below baseline",
+    priority = 30L,
+    chip_class = "decision-marker--divergence"
+  )
+
+  formatted <- replay_format_turn_comparison_row(turn_comparison, target_turn = 2L)
+  note_text <- replay_build_turn_note(
+    selected_turn = 2L,
+    decision_markers = markers,
+    comparison_row = formatted
+  )
+
+  expect_true(all(c("case_gap_vs_baseline", "death_gap_vs_baseline") %in% names(formatted)))
+  expect_identical(formatted$case_gap_vs_baseline[[1]], 40)
+  expect_identical(formatted$death_gap_vs_baseline[[1]], 1)
+  expect_match(note_text, "Decision moment")
+  expect_match(note_text, "Case gap vs baseline: 40")
+  expect_null(replay_build_turn_note(1L, markers, formatted))
+})
+
 test_that("prevalence plot no longer carries intervention fill scale", {
   defs <- tibble::tibble(
     id = c("distancing", "quarantine"),
@@ -403,49 +582,25 @@ test_that("prevalence plot remains prevalence-only with no secondary axis", {
     expect_true(inherits(y_scale$secondary.axis, "waiver"))
   }
 
-  layer_labels <- vapply(plot_obj$layers, function(layer) {
-    if (is.null(layer$mapping$colour)) return("")
-    paste(deparse(layer$mapping$colour), collapse = "")
-  }, character(1))
-  expect_true(any(grepl("Observed prevalence", layer_labels, fixed = TRUE)))
-  expect_true(any(grepl("Truth prevalence \\(active\\)", layer_labels)))
-  expect_true(any(grepl("Baseline truth prevalence \\(active\\)", layer_labels)))
-  expect_false(any(grepl("cumulative", layer_labels, ignore.case = TRUE)))
-
   layer_param <- function(layer, name, default = NULL) {
     value <- layer$aes_params[[name]]
     if (is.null(value)) default else value
   }
 
-  layer_styles <- lapply(plot_obj$layers, function(layer) {
-    list(
-      colour = if (is.null(layer$mapping$colour)) "" else paste(deparse(layer$mapping$colour), collapse = ""),
-      linewidth = layer_param(layer, "linewidth", NA_real_),
-      linetype = layer_param(layer, "linetype", NA_character_),
-      alpha = layer_param(layer, "alpha", NA_real_)
-    )
-  })
+  expect_equal(length(plot_obj$layers), 3)
+  player_style <- plot_obj$layers[[1]]
+  observed_style <- plot_obj$layers[[2]]
+  baseline_style <- plot_obj$layers[[3]]
 
-  observed_style <- layer_styles[[which(vapply(layer_styles, function(x) {
-    grepl("Observed prevalence", x$colour, fixed = TRUE)
-  }, logical(1)))[1]]]
-  player_style <- layer_styles[[which(vapply(layer_styles, function(x) {
-    grepl("Truth prevalence \\(active\\)", x$colour) &&
-      !grepl("Baseline", x$colour, fixed = TRUE)
-  }, logical(1)))[1]]]
-  baseline_style <- layer_styles[[which(vapply(layer_styles, function(x) {
-    grepl("Baseline truth prevalence \\(active\\)", x$colour)
-  }, logical(1)))[1]]]
-
-  expect_equal(player_style$linewidth, 1.4)
-  expect_equal(player_style$linetype, "solid")
-  expect_equal(player_style$alpha, 1)
-  expect_equal(observed_style$linewidth, 0.8)
-  expect_equal(observed_style$linetype, "dashed")
-  expect_equal(observed_style$alpha, 0.7)
-  expect_equal(baseline_style$linewidth, 0.9)
-  expect_equal(baseline_style$linetype, "longdash")
-  expect_equal(baseline_style$alpha, 0.85)
+  expect_equal(layer_param(player_style, "linewidth", NA_real_), 1.4)
+  expect_equal(layer_param(player_style, "linetype", NA_character_), "solid")
+  expect_equal(layer_param(player_style, "alpha", NA_real_), 1)
+  expect_equal(layer_param(observed_style, "linewidth", NA_real_), 0.8)
+  expect_equal(layer_param(observed_style, "linetype", NA_character_), "dashed")
+  expect_equal(layer_param(observed_style, "alpha", NA_real_), 0.7)
+  expect_equal(layer_param(baseline_style, "linewidth", NA_real_), 0.9)
+  expect_equal(layer_param(baseline_style, "linetype", NA_character_), "longdash")
+  expect_equal(layer_param(baseline_style, "alpha", NA_real_), 0.85)
 })
 
 test_that("cumulative plot uses ribbon, step, and direct labels on a linear scale", {

@@ -69,6 +69,7 @@ mod_replay_ui <- function(id) {
         value = TRUE
       )
     ),
+    shiny::uiOutput(ns("decision_markers")),
     shiny::fluidRow(
       shiny::column(
         width = 6,
@@ -83,6 +84,7 @@ mod_replay_ui <- function(id) {
     ),
     shiny::div(
       class = "mt-3",
+      shiny::uiOutput(ns("decision_note")),
       shiny::tags$strong("Selected turn branch comparison"),
       shiny::tableOutput(ns("turn_comparison_table"))
     ),
@@ -150,6 +152,17 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     })
     branch_logs <- shiny::reactive({
       replay_get_branch_logs(log_data(), branch = selected_branch())
+    })
+    turn_comparison_data <- shiny::reactive({
+      replay_normalize_turn_comparison(log_data()$turn_comparison)
+    })
+    decision_markers <- shiny::reactive({
+      replay_build_decision_markers(
+        run_log = branch_logs()$run_log,
+        action_log = branch_logs()$actions,
+        turn_comparison = turn_comparison_data(),
+        intervention_defs = intervention_defs
+      )
     })
     truth_log <- shiny::reactive({
       replay_resolve_truth_log(log_data(), borough_names, branch = selected_branch())
@@ -416,6 +429,20 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       shiny::updateActionButton(session, "play_toggle", label = if (next_state) "Pause" else "Play")
     }, ignoreInit = TRUE)
 
+    shiny::observeEvent(input$marker_jump, {
+      shiny::req(has_ended())
+      turns <- available_turns()
+      target_turn <- suppressWarnings(as.integer(input$marker_jump)[1])
+      if (!is.finite(target_turn) || is.na(target_turn) || !target_turn %in% turns) {
+        return()
+      }
+
+      play_state(FALSE)
+      shiny::updateActionButton(session, "play_toggle", label = "Play")
+      shiny::isolate(animation_turn(NULL))
+      shiny::updateSliderInput(session, "turn_slider", value = target_turn)
+    }, ignoreInit = TRUE)
+
     # Track current animation turn (separate from slider to avoid race conditions)
     animation_turn <- shiny::reactiveVal(NULL)
 
@@ -520,6 +547,69 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
         branch = selected_branch()
       )
     })
+    selected_turn_comparison <- shiny::reactive({
+      replay_format_turn_comparison_row(
+        turn_comparison = turn_comparison_data(),
+        target_turn = selected_turn()
+      )
+    })
+
+    output$decision_markers <- shiny::renderUI({
+      shiny::req(has_ended())
+      markers <- decision_markers()
+
+      if (nrow(markers) == 0) {
+        return(shiny::div(
+          class = "replay-decision-strip",
+          shiny::div(class = "replay-decision-strip-title", "Decision moments"),
+          shiny::div(
+            class = "replay-decision-empty",
+            "No major replay markers were identified for this run."
+          )
+        ))
+      }
+
+      marker_buttons <- lapply(seq_len(nrow(markers)), function(i) {
+        marker <- markers[i, , drop = FALSE]
+        marker_turn <- as.integer(marker$turn[[1]])
+        marker_label <- as.character(marker$marker_label[[1]])
+        shiny::tags$button(
+          type = "button",
+          class = paste("replay-decision-chip", as.character(marker$chip_class[[1]])),
+          onclick = sprintf(
+            "Shiny.setInputValue('%s', %d, {priority: 'event'})",
+            ns("marker_jump"),
+            marker_turn
+          ),
+          shiny::span(class = "replay-decision-chip-turn", paste("Turn", marker_turn)),
+          shiny::span(class = "replay-decision-chip-sep", ":"),
+          shiny::span(class = "replay-decision-chip-label", marker_label)
+        )
+      })
+
+      shiny::div(
+        class = "replay-decision-strip",
+        shiny::div(class = "replay-decision-strip-title", "Decision moments"),
+        shiny::div(class = "replay-decision-chip-list", marker_buttons)
+      )
+    })
+
+    output$decision_note <- shiny::renderUI({
+      shiny::req(has_ended())
+      note_text <- replay_build_turn_note(
+        selected_turn = selected_turn(),
+        decision_markers = decision_markers(),
+        comparison_row = selected_turn_comparison()
+      )
+      if (is.null(note_text) || !nzchar(note_text)) {
+        return(NULL)
+      }
+
+      shiny::div(
+        class = "replay-decision-note",
+        note_text
+      )
+    })
 
     shiny::observe({
       shiny::req(has_ended())
@@ -610,35 +700,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
 
     output$turn_comparison_table <- shiny::renderTable({
       shiny::req(has_ended())
-      comparison_df <- log_data()$turn_comparison
-      if (is.null(comparison_df) || !is.data.frame(comparison_df) || nrow(comparison_df) == 0) {
-        return(tibble::tibble(note = "Turn-level branch comparison is unavailable for this replay payload."))
-      }
-      comparison_df <- tibble::as_tibble(comparison_df)
-      if (!"turn" %in% names(comparison_df)) {
-        return(tibble::tibble(note = "Turn-level branch comparison is unavailable for this replay payload."))
-      }
-
-      selected <- comparison_df |>
-        dplyr::filter(turn == selected_turn()) |>
-        dplyr::select(
-          dplyr::any_of(c(
-            "turn",
-            "player_truth_total",
-            "baseline_truth_total",
-            "player_deaths_total",
-            "baseline_deaths_total",
-            "player_observed_positives",
-            "baseline_observed_positives",
-            "player_total_turn_spend",
-            "baseline_total_turn_spend"
-          ))
-        )
-
-      if (nrow(selected) == 0) {
-        return(tibble::tibble(note = "No branch comparison row is available for the selected turn."))
-      }
-      selected
+      selected_turn_comparison()
     }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 1, na = "")
 
   })

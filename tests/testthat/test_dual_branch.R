@@ -8,7 +8,8 @@ empty_results_dual <- function() {
     n = integer(),
     positives = integer(),
     turn_sampled = integer(),
-    turn_available = integer()
+    turn_available = integer(),
+    source = character()
   )
 }
 

@@ -43,9 +43,14 @@ test_that("floor pricing applies at small turn budgets", {
     state = init_intervention_state(local_catalog)
   )
 
+  by_id_raw <- stats::setNames(details$by_intervention$cost_raw, details$by_intervention$id)
   by_id <- stats::setNames(details$by_intervention$cost_final, details$by_intervention$id)
-  expect_equal(unname(by_id[["rapid_labs"]]), 25)
-  expect_equal(unname(by_id[["community_case_finding"]]), 20)
+  expect_true(details$cap_applied)
+  expect_equal(unname(by_id_raw[["rapid_labs"]]), 25)
+  expect_equal(unname(by_id_raw[["community_case_finding"]]), 20)
+  expect_equal(unname(by_id[["rapid_labs"]]), 17)
+  expect_equal(unname(by_id[["community_case_finding"]]), 13)
+  expect_equal(sum(details$by_intervention$cost_final), 30)
 })
 
 test_that("cap logic scales costs with deterministic rounding", {

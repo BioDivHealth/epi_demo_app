@@ -19,7 +19,8 @@ observed_history <- tibble::tibble(
   n = c(10L, 8L),
   positives = c(3L, 2L),
   turn_sampled = c(0L, 1L),
-  turn_available = c(1L, 2L)
+  turn_available = c(1L, 2L),
+  source = c("player_turn", "player_turn")
 )
 
 run_log <- tibble::tibble(
@@ -62,7 +63,7 @@ report <- build_run_report(
 
 test_that("run report carries metrics and summaries", {
   expect_equal(report$metrics$total_spend, 210)
-  expect_equal(length(report$metrics), 14)
+  expect_true(all(c("time_to_detection", "peak_true_incidence", "total_spend") %in% names(report$metrics)))
   expect_equal(nrow(report$turn_summary), length(truth_history))
   expect_equal(report$turn_summary$truth_total, c(5, 7, 6))
   expect_equal(report$turn_summary$imports_total, c(0, 1, 1))
@@ -133,7 +134,7 @@ make_branch_fixture <- function(name, history, deaths_by_turn, observed_history,
     ),
     truth_history = history,
     observation_state = list(
-      queue = logs$observations[0, ],
+      queue = init_observation_state()$queue,
       history = observed_history
     ),
     available_now = observed_history[0, ],
@@ -170,13 +171,25 @@ test_that("dual branch report returns comparison metrics and aligned turns", {
   baseline_deaths <- list(c(0L, 0L, 0L), c(1L, 0L, 0L), c(2L, 0L, 0L))
 
   observed_stub <- tibble::tibble(
+    borough_index = c(1L, 1L, 2L),
+    borough_name = c("A", "A", "B"),
+    type = c("ag", "pcr", "ag"),
+    n = c(10L, 10L, 12L),
+    positives = c(1L, 1L, 2L),
+    turn_sampled = c(0L, 1L, 1L),
+    turn_available = c(0L, 1L, 1L),
+    source = c("starter_intel", "player_turn", "player_turn")
+  )
+
+  baseline_observed_stub <- tibble::tibble(
     borough_index = c(1L, 1L),
     borough_name = c("A", "A"),
     type = c("ag", "pcr"),
-    n = c(10L, 10L),
-    positives = c(2L, 1L),
+    n = c(8L, 8L),
+    positives = c(0L, 1L),
     turn_sampled = c(0L, 1L),
-    turn_available = c(0L, 1L)
+    turn_available = c(0L, 1L),
+    source = c("baseline_turn", "baseline_turn")
   )
 
   player_branch <- make_branch_fixture(
@@ -192,7 +205,7 @@ test_that("dual branch report returns comparison metrics and aligned turns", {
     name = "baseline",
     history = baseline_history,
     deaths_by_turn = baseline_deaths,
-    observed_history = observed_stub,
+    observed_history = baseline_observed_stub,
     total_spend = 150,
     pop_tbl = pop_stub
   )
@@ -206,6 +219,24 @@ test_that("dual branch report returns comparison metrics and aligned turns", {
   expect_equal(dual$comparison$cost_per_case_averted, 18.75)
   expect_equal(dual$comparison$cost_per_death_averted, 75)
   expect_equal(nrow(dual$turn_comparison), length(player_history))
+  expect_equal(dual$player$metrics$first_signal_turn, 0)
+  expect_equal(dual$player$metrics$player_confirmation_turn, 1)
+  expect_true(dual$player$metrics$response_score >= 0)
+  expect_true(dual$player$metrics$response_score <= 100)
+  expect_true(dual$player$metrics$outbreak_control_score >= 0)
+  expect_true(dual$player$metrics$outbreak_control_score <= 50)
+  expect_true(dual$player$metrics$surveillance_quality_score >= 0)
+  expect_true(dual$player$metrics$surveillance_quality_score <= 30)
+  expect_true(dual$player$metrics$strategy_balance_score >= 0)
+  expect_true(dual$player$metrics$strategy_balance_score <= 20)
+  expect_equal(
+    dual$comparison$total_intervention_spend_player,
+    sum(dual$player$turn_summary$intervention_cost, na.rm = TRUE)
+  )
+  expect_equal(
+    dual$comparison$total_testing_spend_player,
+    sum(dual$player$turn_summary$allocation_spend, na.rm = TRUE)
+  )
 
   reversed <- compute_comparison_metrics(dual$baseline, dual$player)
   expect_true(is.na(reversed$cost_per_case_averted))

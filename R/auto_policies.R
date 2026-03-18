@@ -431,9 +431,15 @@ build_symptomatic_weights <- function(request) {
 
   total_tests <- sum(signal_tbl$weighted_tests, na.rm = TRUE)
   total_positives <- sum(signal_tbl$weighted_positives, na.rm = TRUE)
+  focus_ready <- isTRUE(total_tests >= 10 && total_positives > 0)
 
-  if (total_tests < 10 || total_positives <= 0) {
-    return(list(weights = base_weights, signal_strength = total_tests, total_positives = total_positives))
+  if (!focus_ready) {
+    return(list(
+      weights = base_weights,
+      signal_strength = total_tests,
+      total_positives = total_positives,
+      focus_ready = FALSE
+    ))
   }
 
   signal_scores <- rep(0, n_boros)
@@ -449,7 +455,50 @@ build_symptomatic_weights <- function(request) {
   weights_signal <- normalise_policy_weights(signal_scores)
   blended <- normalise_policy_weights((0.75 * weights_signal) + (0.25 * base_weights))
 
-  list(weights = blended, signal_strength = total_tests, total_positives = total_positives)
+  list(
+    weights = blended,
+    signal_strength = total_tests,
+    total_positives = total_positives,
+    focus_ready = TRUE
+  )
+}
+
+focus_weights_to_top_boroughs <- function(weights, pop_tbl, top_n = 12L) {
+  weights <- normalise_policy_weights(weights)
+
+  top_n <- suppressWarnings(as.integer(top_n))
+  if (is.na(top_n) || top_n < 1L) {
+    return(rep(0, length(weights)))
+  }
+
+  if (length(weights) <= top_n) {
+    return(weights)
+  }
+
+  borough_index <- if ("borough_index" %in% names(pop_tbl)) {
+    suppressWarnings(as.integer(pop_tbl$borough_index))
+  } else {
+    seq_len(nrow(pop_tbl))
+  }
+  borough_index[!is.finite(borough_index)] <- seq_len(length(weights))[!is.finite(borough_index)]
+
+  pop <- suppressWarnings(as.numeric(pop_tbl$pop))
+  pop[!is.finite(pop)] <- 0
+
+  rank_tbl <- tibble::tibble(
+    idx = seq_along(weights),
+    weight = weights,
+    pop = pop,
+    borough_index = borough_index
+  ) |>
+    dplyr::arrange(dplyr::desc(weight), dplyr::desc(pop), borough_index)
+
+  keep_n <- min(top_n, nrow(rank_tbl))
+  keep_idx <- rank_tbl$idx[seq_len(keep_n)]
+
+  focused <- rep(0, length(weights))
+  focused[keep_idx] <- weights[keep_idx]
+  normalise_policy_weights(focused)
 }
 
 policy_symptomatic_proxy <- function(request) {
@@ -462,6 +511,9 @@ policy_symptomatic_proxy <- function(request) {
 
   signal <- build_symptomatic_weights(request)
   weights <- signal$weights
+  if (isTRUE(signal$focus_ready)) {
+    weights <- focus_weights_to_top_boroughs(weights, request$pop_tbl, top_n = 12L)
+  }
 
   cost_ag <- budget_parts$cost_ag
   cost_pcr <- budget_parts$cost_pcr
@@ -555,6 +607,30 @@ build_baseline_allocations <- function(mode, request) {
 
   allocs <- normalise_policy_allocations(allocs, request$pop_tbl)
   cap_allocations_to_budget(allocs, request$budget, request$intervention_cost)
+}
+
+build_run_mode_allocations <- function(run_mode, policy_request) {
+  run_mode <- as.character(run_mode)
+  if (length(run_mode) != 1L || is.na(run_mode) || !run_mode %in% c("manual", "guided_auto")) {
+    run_mode <- "manual"
+  }
+
+  validate_policy_request(policy_request)
+
+  allocs <- if (identical(run_mode, "guided_auto")) {
+    build_policy_allocations(policy_request)
+  } else {
+    normalise_policy_allocations(
+      allocs = policy_request$allocs_manual,
+      pop_tbl = policy_request$pop_tbl
+    )
+  }
+
+  cap_allocations_to_budget(
+    allocs = allocs,
+    budget = policy_request$budget,
+    intervention_cost = policy_request$intervention_cost
+  )
 }
 
 build_policy_allocations <- function(request) {

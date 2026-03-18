@@ -67,6 +67,43 @@ test_that("p_star extremes behave as expected", {
   expect_true(pcr_row_fp$positives >= pcr_row$n)
 })
 
+test_that("observation source metadata propagates through results and queues", {
+  n_b <- nrow(inputs$pop_tbl)
+  alloc <- tibble(
+    borough_index = seq_len(n_b),
+    borough_name = inputs$pop_tbl$borough_name,
+    n_ag = integer(n_b),
+    n_pcr = integer(n_b)
+  )
+  alloc$n_pcr[1] <- 12L
+  alloc$n_ag[2] <- 10L
+
+  truth_incidence <- integer(n_b)
+  truth_incidence[1:2] <- c(50L, 40L)
+
+  params <- list(
+    sens = list(ag = 1, pcr = 1),
+    spec = list(ag = 1, pcr = 1),
+    delays = list(ag = 0L, pcr = 1L),
+    prev_floor = 1e-6
+  )
+
+  res <- observe_tests(
+    state = init_observation_state(),
+    turn = 0L,
+    allocations = alloc,
+    truth_incidence = truth_incidence,
+    pop_tbl = inputs$pop_tbl,
+    params = params,
+    source = "starter_intel"
+  )
+
+  expect_true("source" %in% names(res$new_results))
+  expect_true(all(res$new_results$source == "starter_intel"))
+  expect_true(all(res$available$source == "starter_intel"))
+  expect_true(all(res$queue$source == "starter_intel"))
+})
+
 test_that("result queues honour delays", {
   n_b <- nrow(inputs$pop_tbl)
   base_alloc <- tibble(
@@ -105,4 +142,5 @@ test_that("result queues honour delays", {
   res2 <- observe_tests(state, 2, zero_alloc, truth_incidence, inputs$pop_tbl, params)
   expect_gt(nrow(res2$available), 0)
   expect_true(all(res2$available$turn_available == 2))
+  expect_true(all(res2$available$source == "player_turn"))
 })

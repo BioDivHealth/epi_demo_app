@@ -12,6 +12,7 @@ test_that("turn logs initialise with expected structure", {
   expect_equal(nrow(logs$truth), 0)
   expect_equal(nrow(logs$observations), 0)
   expect_equal(nrow(logs$actions), 0)
+  expect_true("source" %in% names(logs$observations))
 })
 
 test_that("truth log appends one row per borough with metadata", {
@@ -58,7 +59,8 @@ test_that("observation log captures reported turn and positivity", {
     n = c(10L, 5L),
     positives = c(3L, 0L),
     turn_sampled = c(1L, 1L),
-    turn_available = c(2L, 2L)
+    turn_available = c(2L, 2L),
+    source = c("starter_intel", "starter_intel")
   )
 
   updated <- append_observation_log(
@@ -71,6 +73,7 @@ test_that("observation log captures reported turn and positivity", {
   expect_equal(nrow(updated), 2)
   expect_true(all(updated$turn_reported == 2L))
   expect_equal(updated$positivity, c(0.3, 0))
+  expect_true(all(updated$source == "starter_intel"))
 
   unchanged <- append_observation_log(
     observation_log = updated,
@@ -79,6 +82,43 @@ test_that("observation log captures reported turn and positivity", {
     pop_tbl = pop_tbl
   )
   expect_equal(nrow(unchanged), 2)
+})
+
+test_that("observation log infers player and baseline sources when absent", {
+  pop_tbl <- tibble::tibble(
+    gss_code = c("A1", "B2"),
+    borough_name = c("Alpha", "Beta"),
+    pop = c(1000, 1200)
+  )
+  logs <- init_turn_logs(pop_tbl)
+
+  available <- tibble::tibble(
+    borough_index = c(1L, 2L),
+    borough_name = c("Alpha", "Beta"),
+    type = c("ag", "pcr"),
+    n = c(10L, 5L),
+    positives = c(3L, 0L),
+    turn_sampled = c(1L, 1L),
+    turn_available = c(2L, 2L)
+  )
+
+  player_logged <- append_observation_log(
+    observation_log = logs$observations,
+    available_results = available,
+    turn_reported = 2L,
+    pop_tbl = pop_tbl,
+    branch = "player"
+  )
+  expect_true(all(player_logged$source == "player_turn"))
+
+  baseline_logged <- append_observation_log(
+    observation_log = logs$observations,
+    available_results = available,
+    turn_reported = 2L,
+    pop_tbl = pop_tbl,
+    branch = "baseline"
+  )
+  expect_true(all(baseline_logged$source == "baseline_turn"))
 })
 
 test_that("action log records allocations with spend metadata", {

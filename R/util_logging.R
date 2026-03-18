@@ -36,6 +36,7 @@ init_turn_logs <- function(pop_tbl) {
     turn_reported = integer(),
     turn_sampled = integer(),
     turn_available = integer(),
+    source = character(),
     borough_index = integer(),
     gss_code = character(),
     borough_name = character(),
@@ -139,7 +140,7 @@ append_truth_log <- function(truth_log, turn, incidence, cumulative, deaths, cum
 #' @param pop_tbl Population table for borough metadata.
 #' @return Updated observation log tibble.
 #' @export
-append_observation_log <- function(observation_log, available_results, turn_reported, pop_tbl, branch = "player") {
+append_observation_log <- function(observation_log, available_results, turn_reported, pop_tbl, branch = "player", source = NULL) {
   if (is.null(available_results) || nrow(available_results) == 0) {
     return(observation_log)
   }
@@ -153,6 +154,17 @@ append_observation_log <- function(observation_log, available_results, turn_repo
     stop("available_results missing required columns: ", paste(missing_cols, collapse = ", "))
   }
 
+  available_results <- tibble::as_tibble(available_results)
+  result_source <- if ("source" %in% names(available_results)) {
+    available_results$source
+  } else if (!is.null(source)) {
+    rep(as.character(source), nrow(available_results))
+  } else if (identical(branch, "baseline")) {
+    rep("baseline_turn", nrow(available_results))
+  } else {
+    rep("player_turn", nrow(available_results))
+  }
+
   pop_tbl <- tibble::as_tibble(pop_tbl)
   addition <- available_results |>
     dplyr::left_join(
@@ -164,6 +176,7 @@ append_observation_log <- function(observation_log, available_results, turn_repo
     dplyr::mutate(
       branch = as.character(branch),
       turn_reported = as.integer(turn_reported),
+      source = as.character(result_source),
       test_type = type,
       n_returned = as.integer(n),
       positives = as.integer(positives),
@@ -176,6 +189,7 @@ append_observation_log <- function(observation_log, available_results, turn_repo
       turn_reported,
       turn_sampled,
       turn_available,
+      source,
       borough_index,
       gss_code,
       borough_name,

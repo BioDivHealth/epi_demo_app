@@ -515,6 +515,397 @@ replay_action_table <- function(actions_df) {
     dplyr::arrange(desc(spend))
 }
 
+replay_normalize_turn_comparison <- function(turn_comparison) {
+  template <- tibble::tibble(
+    turn = integer(),
+    player_truth_total = numeric(),
+    baseline_truth_total = numeric(),
+    player_deaths_total = numeric(),
+    baseline_deaths_total = numeric(),
+    player_observed_positives = numeric(),
+    baseline_observed_positives = numeric(),
+    player_total_turn_spend = numeric(),
+    baseline_total_turn_spend = numeric()
+  )
+
+  if (is.null(turn_comparison) || !is.data.frame(turn_comparison) || nrow(turn_comparison) == 0) {
+    return(template)
+  }
+
+  comparison_df <- tibble::as_tibble(turn_comparison)
+  if (!"turn" %in% names(comparison_df)) {
+    return(template)
+  }
+
+  make_missing_column <- function(proto, n_rows) {
+    if (is.integer(proto)) {
+      return(rep(NA_integer_, n_rows))
+    }
+    if (is.double(proto)) {
+      return(rep(NA_real_, n_rows))
+    }
+    if (is.character(proto)) {
+      return(rep(NA_character_, n_rows))
+    }
+    if (is.logical(proto)) {
+      return(rep(NA, n_rows))
+    }
+    rep(NA, n_rows)
+  }
+
+  needed_cols <- names(template)
+  missing_cols <- setdiff(needed_cols, names(comparison_df))
+  for (col_name in missing_cols) {
+    comparison_df[[col_name]] <- make_missing_column(template[[col_name]], nrow(comparison_df))
+  }
+
+  comparison_df |>
+    dplyr::mutate(
+      turn = suppressWarnings(as.integer(turn)),
+      dplyr::across(
+        dplyr::all_of(setdiff(needed_cols, "turn")),
+        ~ suppressWarnings(as.numeric(.x))
+      )
+    ) |>
+    dplyr::filter(!is.na(turn)) |>
+    dplyr::arrange(turn) |>
+    dplyr::distinct(turn, .keep_all = TRUE) |>
+    dplyr::select(dplyr::all_of(needed_cols))
+}
+
+replay_extract_intervention_markers <- function(run_log, action_log, intervention_defs) {
+  empty_markers <- tibble::tibble(
+    turn = integer(),
+    marker_type = character(),
+    marker_label = character(),
+    marker_detail = character(),
+    priority = integer(),
+    chip_class = character()
+  )
+
+  if (is.null(intervention_defs) || !is.data.frame(intervention_defs) || nrow(intervention_defs) == 0) {
+    return(empty_markers)
+  }
+
+  turn_sources <- list()
+  if (!is.null(run_log) && is.data.frame(run_log) && "turn" %in% names(run_log) && nrow(run_log) > 0) {
+    turn_sources <- c(turn_sources, list(run_log$turn))
+  }
+  if (!is.null(action_log) && is.data.frame(action_log) && "turn" %in% names(action_log) && nrow(action_log) > 0) {
+    turn_sources <- c(turn_sources, list(action_log$turn))
+  }
+  if (length(turn_sources) == 0) {
+    return(empty_markers)
+  }
+
+  turns <- sort(unique(suppressWarnings(as.integer(unlist(turn_sources, use.names = FALSE)))))
+  turns <- turns[is.finite(turns)]
+  if (length(turns) == 0) {
+    return(empty_markers)
+  }
+
+  timeline <- replay_build_intervention_timeline(
+    run_log = run_log,
+    turns = turns,
+    intervention_defs = intervention_defs,
+    action_log = action_log
+  )
+  if (nrow(timeline) == 0) {
+    return(empty_markers)
+  }
+
+  defs_lookup <- tibble::as_tibble(intervention_defs) |>
+    dplyr::select(dplyr::any_of(c("id", "label"))) |>
+    dplyr::filter(!is.na(id), !is.na(label), id != "", label != "") |>
+    dplyr::distinct(id, label)
+  label_lookup <- stats::setNames(defs_lookup$label, defs_lookup$id)
+
+  collapse_labels <- function(labels) {
+    labels <- unique(as.character(labels))
+    labels <- labels[!is.na(labels) & nzchar(labels)]
+    if (length(labels) == 0) {
+      return("")
+    }
+    if (length(labels) == 1) {
+      return(labels[[1]])
+    }
+    if (length(labels) == 2) {
+      return(paste(labels, collapse = " and "))
+    }
+    paste0(
+      paste(labels[-length(labels)], collapse = ", "),
+      ", and ",
+      labels[[length(labels)]]
+    )
+  }
+
+  state_by_turn <- timeline |>
+    dplyr::group_by(turn) |>
+    dplyr::summarise(
+      active_ids = list(sort(as.character(intervention_id[active]))),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(turn)
+
+  marker_rows <- lapply(seq_len(nrow(state_by_turn)), function(i) {
+    turn_i <- state_by_turn$turn[[i]]
+    current_ids <- state_by_turn$active_ids[[i]]
+    current_ids <- current_ids[!is.na(current_ids) & nzchar(current_ids)]
+    previous_ids <- if (i == 1L) character() else state_by_turn$active_ids[[i - 1L]]
+    previous_ids <- previous_ids[!is.na(previous_ids) & nzchar(previous_ids)]
+
+    if (identical(current_ids, previous_ids)) {
+      return(NULL)
+    }
+
+    added_ids <- setdiff(current_ids, previous_ids)
+    removed_ids <- setdiff(previous_ids, current_ids)
+
+    if (length(added_ids) == 0 && length(removed_ids) == 0) {
+      return(NULL)
+    }
+
+    added_labels <- unname(label_lookup[added_ids])
+    removed_labels <- unname(label_lookup[removed_ids])
+
+    if (length(added_ids) > 0 && length(removed_ids) == 0) {
+      tibble::tibble(
+        turn = turn_i,
+        marker_type = "intervention",
+        marker_label = "Intervention started",
+        marker_detail = paste0(collapse_labels(added_labels), " activated"),
+        priority = 10L,
+        chip_class = "decision-marker--intervention"
+      )
+    } else {
+      detail_parts <- character()
+      if (length(added_ids) > 0) {
+        detail_parts <- c(detail_parts, paste0("started ", collapse_labels(added_labels)))
+      }
+      if (length(removed_ids) > 0) {
+        detail_parts <- c(detail_parts, paste0("stopped ", collapse_labels(removed_labels)))
+      }
+
+      tibble::tibble(
+        turn = turn_i,
+        marker_type = "intervention",
+        marker_label = "Intervention mix changed",
+        marker_detail = paste(detail_parts, collapse = "; "),
+        priority = 20L,
+        chip_class = "decision-marker--intervention"
+      )
+    }
+  })
+
+  dplyr::bind_rows(marker_rows)
+}
+
+replay_extract_divergence_markers <- function(turn_comparison) {
+  empty_markers <- tibble::tibble(
+    turn = integer(),
+    marker_type = character(),
+    marker_label = character(),
+    marker_detail = character(),
+    priority = integer(),
+    chip_class = character()
+  )
+
+  comparison_df <- replay_normalize_turn_comparison(turn_comparison)
+  if (nrow(comparison_df) == 0) {
+    return(empty_markers)
+  }
+
+  comparison_df <- comparison_df |>
+    dplyr::mutate(
+      case_gap = baseline_truth_total - player_truth_total,
+      death_gap = baseline_deaths_total - player_deaths_total,
+      case_threshold = pmax(25, 0.05 * pmax(1, baseline_truth_total)),
+      divergence_candidate = (is.finite(case_gap) & case_gap >= case_threshold) |
+        (is.finite(death_gap) & death_gap >= 1)
+    )
+
+  if (!any(comparison_df$divergence_candidate, na.rm = TRUE)) {
+    return(empty_markers)
+  }
+
+  streak <- 0L
+  run_start_index <- NA_integer_
+  for (i in seq_len(nrow(comparison_df))) {
+    is_candidate <- isTRUE(comparison_df$divergence_candidate[[i]])
+    if (!is_candidate) {
+      streak <- 0L
+      run_start_index <- NA_integer_
+      next
+    }
+
+    current_turn <- comparison_df$turn[[i]]
+    previous_turn <- if (i == 1L) NA_integer_ else comparison_df$turn[[i - 1L]]
+    previous_candidate <- if (i == 1L) FALSE else isTRUE(comparison_df$divergence_candidate[[i - 1L]])
+
+    if (streak == 0L || !previous_candidate || is.na(previous_turn) || current_turn != previous_turn + 1L) {
+      streak <- 1L
+      run_start_index <- i
+    } else {
+      streak <- streak + 1L
+    }
+
+    if (streak >= 2L && !is.na(run_start_index)) {
+      start_row <- comparison_df[run_start_index, , drop = FALSE]
+      confirm_row <- comparison_df[i, , drop = FALSE]
+      death_diverges <- (is.finite(start_row$death_gap[[1]]) && start_row$death_gap[[1]] >= 1) ||
+        (is.finite(confirm_row$death_gap[[1]]) && confirm_row$death_gap[[1]] >= 1)
+
+      detail_text <- if (death_diverges) {
+        "Deaths begin separating from baseline"
+      } else {
+        "Player truth starts to fall below baseline"
+      }
+
+      return(tibble::tibble(
+        turn = as.integer(start_row$turn[[1]]),
+        marker_type = "divergence",
+        marker_label = "Branches diverge",
+        marker_detail = detail_text,
+        priority = 30L,
+        chip_class = "decision-marker--divergence"
+      ))
+    }
+  }
+
+  empty_markers
+}
+
+replay_build_decision_markers <- function(run_log, action_log, turn_comparison, intervention_defs) {
+  empty_markers <- tibble::tibble(
+    turn = integer(),
+    marker_type = character(),
+    marker_label = character(),
+    marker_detail = character(),
+    priority = integer(),
+    chip_class = character()
+  )
+
+  combined <- dplyr::bind_rows(
+    replay_extract_intervention_markers(
+      run_log = run_log,
+      action_log = action_log,
+      intervention_defs = intervention_defs
+    ),
+    replay_extract_divergence_markers(turn_comparison = turn_comparison)
+  )
+
+  if (nrow(combined) == 0) {
+    return(empty_markers)
+  }
+
+  combined |>
+    dplyr::mutate(
+      turn = suppressWarnings(as.integer(turn)),
+      priority = suppressWarnings(as.integer(priority))
+    ) |>
+    dplyr::filter(!is.na(turn)) |>
+    dplyr::arrange(turn, priority, marker_type) |>
+    dplyr::group_by(turn) |>
+    dplyr::slice(1L) |>
+    dplyr::ungroup() |>
+    dplyr::slice_head(n = 6L)
+}
+
+replay_build_turn_note <- function(selected_turn, decision_markers, comparison_row = NULL) {
+  target_turn <- suppressWarnings(as.integer(selected_turn)[1])
+  if (!is.finite(target_turn) || is.na(target_turn)) {
+    return(NULL)
+  }
+
+  markers_df <- tibble::as_tibble(decision_markers)
+  if (nrow(markers_df) == 0 || !"turn" %in% names(markers_df)) {
+    return(NULL)
+  }
+
+  marker_row <- markers_df |>
+    dplyr::filter(turn == target_turn) |>
+    dplyr::slice(1L)
+  if (nrow(marker_row) == 0) {
+    return(NULL)
+  }
+
+  detail_text <- as.character(marker_row$marker_detail[[1]])
+  if (is.na(detail_text) || !nzchar(detail_text)) {
+    detail_text <- as.character(marker_row$marker_label[[1]])
+  }
+  marker_label <- as.character(marker_row$marker_label[[1]])
+  if (identical(marker_label, "Intervention mix changed") && !grepl("^Intervention mix changed", detail_text)) {
+    detail_text <- paste0("Intervention mix changed: ", detail_text)
+  }
+  note_text <- paste0("Decision moment: ", detail_text, ".")
+
+  comparison_df <- tibble::as_tibble(comparison_row)
+  if (nrow(comparison_df) > 0) {
+    case_gap <- if ("case_gap_vs_baseline" %in% names(comparison_df)) {
+      suppressWarnings(as.numeric(comparison_df$case_gap_vs_baseline[[1]]))
+    } else {
+      NA_real_
+    }
+    death_gap <- if ("death_gap_vs_baseline" %in% names(comparison_df)) {
+      suppressWarnings(as.numeric(comparison_df$death_gap_vs_baseline[[1]]))
+    } else {
+      NA_real_
+    }
+
+    extra_clause <- NULL
+    if (is.finite(case_gap) && case_gap > 0) {
+      extra_clause <- paste0("Case gap vs baseline: ", as.integer(round(case_gap)), ".")
+    } else if (is.finite(death_gap) && death_gap > 0) {
+      extra_clause <- paste0("Death gap vs baseline: ", as.integer(round(death_gap)), ".")
+    }
+
+    if (!is.null(extra_clause)) {
+      note_text <- paste(note_text, extra_clause)
+    }
+  }
+
+  note_text
+}
+
+replay_format_turn_comparison_row <- function(turn_comparison, target_turn) {
+  comparison_df <- replay_normalize_turn_comparison(turn_comparison)
+  if (nrow(comparison_df) == 0) {
+    return(tibble::tibble(note = "Turn-level branch comparison is unavailable for this replay payload."))
+  }
+
+  target_turn <- suppressWarnings(as.integer(target_turn)[1])
+  if (!is.finite(target_turn) || is.na(target_turn)) {
+    return(tibble::tibble(note = "No branch comparison row is available for the selected turn."))
+  }
+
+  selected <- comparison_df |>
+    dplyr::filter(turn == target_turn)
+  if (nrow(selected) == 0) {
+    return(tibble::tibble(note = "No branch comparison row is available for the selected turn."))
+  }
+
+  selected |>
+    dplyr::mutate(
+      case_gap_vs_baseline = baseline_truth_total - player_truth_total,
+      death_gap_vs_baseline = baseline_deaths_total - player_deaths_total
+    ) |>
+    dplyr::select(
+      dplyr::any_of(c(
+        "turn",
+        "player_truth_total",
+        "baseline_truth_total",
+        "case_gap_vs_baseline",
+        "player_deaths_total",
+        "baseline_deaths_total",
+        "death_gap_vs_baseline",
+        "player_observed_positives",
+        "baseline_observed_positives",
+        "player_total_turn_spend",
+        "baseline_total_turn_spend"
+      ))
+    )
+}
+
 replay_build_intervention_timeline <- function(run_log, turns, intervention_defs, action_log = NULL) {
   turns <- suppressWarnings(as.integer(turns))
   turns <- turns[is.finite(turns)]

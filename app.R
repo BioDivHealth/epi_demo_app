@@ -48,11 +48,14 @@ auth_credentials_path <- Sys.getenv(
 )
 
 credentials <- NULL
-if (!auth_disabled) {
+if (!auth_disabled && file.exists(auth_credentials_path)) {
   credentials <- load_credentials(auth_credentials_path)
+} else if (!auth_disabled) {
+  warning(sprintf(
+    "Admin credentials file not found at '%s'; starting in game-only mode.",
+    auth_credentials_path
+  ), call. = FALSE)
 }
-
-admin_users <- get_admin_users(credentials)
 
 shared_admin <- reactiveValues(
   Rt = 1.3,
@@ -64,6 +67,7 @@ shared_admin <- reactiveValues(
   kernel_key = "default",
   susceptible_frac = 1,
   scenario_id = "custom",
+  show_scenario = FALSE,
   death_ifr = 0.002,
   death_delay = 6L
 )
@@ -77,7 +81,8 @@ empty_results <- tibble(
   n = integer(),
   positives = integer(),
   turn_sampled = integer(),
-  turn_available = integer()
+  turn_available = integer(),
+  source = character()
 )
 
 allocations_template <- tibble(
@@ -88,13 +93,17 @@ allocations_template <- tibble(
 )
 
 intervention_defs <- intervention_catalog()
+style_asset_version <- as.integer(file.info(file.path("www", "style.css"))$mtime)
+if (!is.finite(style_asset_version) || is.na(style_asset_version)) {
+  style_asset_version <- as.integer(Sys.time())
+}
 
 app_ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
   title = "Outbreaks in London: simulation",
   useShinyjs(),
   tags$head(
-    tags$link(rel = "stylesheet", href = "style.css"),
+    tags$link(rel = "stylesheet", href = paste0("style.css?v=", style_asset_version)),
     tags$script(src = "help-auto.js"),
     tags$script(src = "auth-enter-fix.js")
   ),
@@ -103,13 +112,16 @@ app_ui <- page_fluid(
     div(
       class = "main-header-title",
       h3("Outbreaks in London: simulation"),
-      div(class = "scenario-label", textOutput("scenario_display"))
+      uiOutput("scenario_display")
     ),
     div(
       class = "header-actions",
       mod_controls_header_ui(
         "controls",
-        lifecycle_extra = actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button")
+        lifecycle_extra = tagList(
+          uiOutput("session_actions"),
+          actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button")
+        )
       )
     )
   ),
@@ -120,66 +132,39 @@ app_ui <- page_fluid(
   )
 )
 
-ui <- if (auth_disabled) {
-  app_ui
-} else {
-  secure_app(
-    app_ui,
-    enable_admin = FALSE,
-    head_auth = tagList(
-      tags$link(rel = "stylesheet", href = "auth.css"),
-      tags$script(src = "auth-enter-fix.js")
-    )
-  )
-}
+ui <- app_ui
 
 server <- function(input, output, session) {
   turn_progress_notification_id <- "turn-progress-toast"
+  admin_session <- reactiveValues(
+    active = FALSE,
+    user = NULL
+  )
+  admin_login_error <- reactiveVal(NULL)
 
-  auth <- NULL
-  if (auth_disabled) {
-    is_admin <- reactive(FALSE)
-  } else {
-    auth <- secure_server(check_credentials = check_credentials(credentials))
-    is_admin <- reactive({
-      user <- auth$user
-      if (is.function(user)) {
-        user <- user()
-      }
-      if (is.null(user) || is.na(user) || identical(user, "")) {
-        return(FALSE)
-      }
-      user %in% admin_users
-    })
-  }
+  is_admin <- reactive({
+    if (auth_disabled) {
+      return(FALSE)
+    }
+    isTRUE(admin_session$active)
+  })
 
   help_shown <- reactiveVal(FALSE)
   help_pending <- reactiveVal(FALSE)
 
-  get_auth_user <- function(auth) {
-    if (is.null(auth)) {
-      return(NULL)
-    }
-    user <- auth$user
-    if (is.function(user)) {
-      user <- user()
-    }
-    user
-  }
-
   auth_ready <- reactive({
-    if (auth_disabled) {
-      return(TRUE)
-    }
-    user <- get_auth_user(auth)
-    !(is.null(user) || is.na(user) || identical(user, ""))
+    TRUE
   })
 
   show_help_modal <- function() {
     scenario_id <- isolate(shared_admin$scenario_id)
+    show_scenario <- isTRUE(isolate(shared_admin$show_scenario))
     showModal(modalDialog(
       title = "Welcome and guidance",
-      help_modal_body(scenario_id = scenario_id),
+      help_modal_body(
+        scenario_id = scenario_id,
+        show_scenario = show_scenario
+      ),
       footer = modalButton("Close"),
       size = "l",
       easyClose = TRUE
@@ -194,6 +179,94 @@ server <- function(input, output, session) {
     help_shown(TRUE)
     help_pending(FALSE)
   }
+
+  show_admin_login_modal <- function() {
+    admin_login_error(NULL)
+    showModal(modalDialog(
+      title = "Admin sign in",
+      div(
+        class = "admin-login-note",
+        "Sign in here only to unlock admin controls."
+      ),
+      textInput("admin_login_user", "Username"),
+      passwordInput("admin_login_password", "Password"),
+      uiOutput("admin_login_feedback"),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("admin_login_submit", "Sign in", class = "btn btn-primary")
+      ),
+      easyClose = TRUE
+    ))
+  }
+
+  output$session_actions <- renderUI({
+    if (is_admin()) {
+      return(div(
+        class = "session-auth-controls",
+        span(class = "session-role-pill session-role-pill-admin", "Admin mode"),
+        span(class = "session-role-user text-muted small", admin_session$user),
+        actionButton(
+          "admin_logout",
+          "Leave admin mode",
+          class = "btn btn-outline-secondary btn-sm"
+        )
+      ))
+    }
+
+    if (auth_disabled || is.null(credentials)) {
+      return(div(
+        class = "session-auth-controls",
+        span(class = "session-role-pill", "Game mode")
+      ))
+    }
+
+    div(
+      class = "session-auth-controls",
+      span(class = "session-role-pill", "Game mode"),
+      actionButton(
+        "admin_login",
+        "Admin sign in",
+        class = "btn btn-outline-dark btn-sm"
+      )
+    )
+  })
+
+  output$admin_login_feedback <- renderUI({
+    message <- admin_login_error()
+    if (is.null(message) || identical(message, "")) {
+      return(NULL)
+    }
+    div(class = "text-danger small", message)
+  })
+
+  observeEvent(input$admin_login, {
+    show_admin_login_modal()
+  })
+
+  observeEvent(input$admin_login_submit, {
+    result <- check_admin_credentials(
+      user = input$admin_login_user,
+      password = input$admin_login_password,
+      creds = credentials
+    )
+
+    if (isTRUE(result$ok)) {
+      admin_session$active <- TRUE
+      admin_session$user <- result$user
+      admin_login_error(NULL)
+      removeModal()
+      showNotification("Admin controls unlocked for this session.", type = "message")
+      return()
+    }
+
+    admin_login_error(admin_auth_failure_message(result$reason))
+  })
+
+  observeEvent(input$admin_logout, {
+    admin_session$active <- FALSE
+    admin_session$user <- NULL
+    showNotification("Returned to game mode.", type = "message")
+  })
 
   observeEvent(list(input$help_auto, auth_ready()), {
     if (is.null(input$help_auto)) {
@@ -290,17 +363,15 @@ server <- function(input, output, session) {
     paste("Turn", turn())
   })
 
-  output$scenario_display <- renderText({
-    scenario_id <- shared_admin$scenario_id
-    if (is.null(scenario_id) || is.na(scenario_id) || scenario_id == "custom") {
-      return("")
+  output$scenario_display <- renderUI({
+    scenario_display <- student_scenario_display(
+      scenario_id = shared_admin$scenario_id,
+      show_scenario = shared_admin$show_scenario
+    )
+    if (!isTRUE(scenario_display$visible)) {
+      return(NULL)
     }
-    scenario <- scenario_lookup(scenario_id)
-    label <- scenario$label[[1]]
-    if (is.null(label) || identical(label, "")) {
-      return("")
-    }
-    paste("Scenario:", label)
+    div(class = "scenario-label", scenario_display$header_text)
   })
 
   run_log <- reactiveVal(tibble())
@@ -364,6 +435,9 @@ server <- function(input, output, session) {
         vals[[1]]
       }
     }),
+    current_turn = turn,
+    total_boroughs = nrow(inputs$pop_tbl),
+    planned_turn_mix = reactive(allocations_module$planned_turn_mix()),
     comparison_report = reactive(dual_report()),
     run_status = reactive({
       mode <- controls$run_mode()
@@ -566,7 +640,8 @@ server <- function(input, output, session) {
         allocations = starter_alloc,
         truth_incidence = init$incidence,
         pop_tbl = effective_pop_tbl(),
-        params = testing_params
+        params = testing_params,
+        source = "starter_intel"
       )
       base_observation <- list(queue = starter_obs$queue, history = starter_obs$history)
       current_available <- starter_obs$available
@@ -870,6 +945,27 @@ server <- function(input, output, session) {
     )
   }
 
+  resolve_player_turn_allocations <- function(current_turn, active_ids) {
+    manual_allocs <- allocations_module$allocations()
+    policy_request <- build_policy_request(
+      policy_id = controls$autorun()$policy_id,
+      allocs_manual = manual_allocs,
+      active_ids = active_ids,
+      current_turn = current_turn
+    )
+
+    allocs <- build_run_mode_allocations(
+      run_mode = controls$run_mode(),
+      policy_request = policy_request
+    )
+
+    if (identical(controls$run_mode(), "guided_auto")) {
+      allocations_module$set_allocations(allocs)
+    }
+
+    allocs
+  }
+
   initialise_or_resume_autorun <- function() {
     config_turns <- suppressWarnings(as.integer(controls$autorun()$turns))
     if (is.na(config_turns) || config_turns < 1L) {
@@ -894,17 +990,10 @@ server <- function(input, output, session) {
   run_auto_iteration <- function() {
     current_turn <- turn()
     active_ids <- allocations_module$interventions()
-    manual_allocs <- allocations_module$allocations()
-    policy_id <- controls$autorun()$policy_id
-
-    policy_request <- build_policy_request(
-      policy_id = policy_id,
-      allocs_manual = manual_allocs,
-      active_ids = active_ids,
-      current_turn = current_turn
+    allocs_policy <- resolve_player_turn_allocations(
+      current_turn = current_turn,
+      active_ids = active_ids
     )
-    allocs_policy <- build_policy_allocations(policy_request)
-    allocations_module$set_allocations(allocs_policy)
 
     step_ok <- step_dual_once(
       allocs = allocs_policy,
@@ -967,10 +1056,17 @@ server <- function(input, output, session) {
     req(truth_state())
     req(!isTRUE(auto_running()))
 
+    active_ids <- allocations_module$interventions()
+    allocs <- resolve_player_turn_allocations(
+      current_turn = turn(),
+      active_ids = active_ids
+    )
+    step_source <- if (identical(controls$run_mode(), "guided_auto")) "auto" else "manual"
+
     step_dual_once(
-      allocs = allocations_module$allocations(),
-      active_ids = allocations_module$interventions(),
-      source = "manual"
+      allocs = allocs,
+      active_ids = active_ids,
+      source = step_source
     )
   })
 

@@ -287,7 +287,8 @@ run_single_turn <- function(request) {
     allocations = allocs,
     truth_incidence = request$truth_state$incidence,
     pop_tbl = request$effective_pop_tbl,
-    params = testing_params
+    params = testing_params,
+    source = if (identical(branch, "baseline")) "baseline_turn" else "player_turn"
   )
   next_observation_state <- list(queue = obs$queue, history = obs$history)
 

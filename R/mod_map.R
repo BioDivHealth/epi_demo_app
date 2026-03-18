@@ -52,6 +52,67 @@ build_intervention_choice_ui <- function(catalog, turn_budget = NULL) {
   )
 }
 
+compute_planned_turn_mix <- function(
+    allocations,
+    selected_interventions,
+    budget,
+    intervention_defs,
+    intervention_state,
+    observed_this_turn) {
+  budget_total <- suppressWarnings(as.numeric(budget$budget)[1])
+  if (!is.finite(budget_total) || is.na(budget_total) || budget_total < 0) {
+    budget_total <- 0
+  }
+
+  spend_stats <- summarise_budget(
+    allocations = allocations,
+    costs = budget$costs,
+    budget = budget_total
+  )
+
+  intervention_preview <- compute_intervention_effects(
+    selected = selected_interventions,
+    catalog = intervention_defs,
+    state = intervention_state,
+    observation_history = observed_this_turn,
+    current_turn = 0L,
+    turn_budget = budget_total
+  )
+
+  testing_spend <- spend_stats$spend
+  intervention_spend <- intervention_preview$cost
+  total_spend <- testing_spend + intervention_spend
+  leftover <- max(budget_total - total_spend, 0)
+  share_denom <- if (budget_total > 0) budget_total else 1
+
+  if (total_spend <= 0) {
+    label <- "No turn plan yet"
+    label_class <- "mix-none"
+  } else if ((intervention_spend / share_denom) > 0.45) {
+    label <- "Control-heavy this turn"
+    label_class <- "mix-control"
+  } else if ((intervention_spend / share_denom) < 0.15) {
+    label <- "Surveillance-heavy this turn"
+    label_class <- "mix-surveillance"
+  } else {
+    label <- "Balanced mix"
+    label_class <- "mix-balanced"
+  }
+
+  list(
+    testing_spend = testing_spend,
+    intervention_spend = intervention_spend,
+    total_spend = total_spend,
+    leftover = leftover,
+    testing_share = testing_spend / share_denom,
+    intervention_share = intervention_spend / share_denom,
+    leftover_share = leftover / share_denom,
+    within_budget = total_spend <= budget_total + 1e-6,
+    label = label,
+    label_class = label_class
+  )
+}
+
 mod_map_ui <- function(
     id,
     intervention_defs = intervention_catalog(),
@@ -65,19 +126,18 @@ mod_map_ui <- function(
     full_screen = TRUE,
     bslib::card_header(
       class = "d-flex justify-content-between align-items-center",
-      shiny::span("Click boroughs to allocate tests"),
+      shiny::div(
+        id = ns("run_mode_box"),
+        class = "map-card-header-main",
+        shiny::span(class = "map-card-header-label", "Run mode"),
+        run_mode_ui
+      ),
       shiny::uiOutput(ns("budget_badge"))
     ),
     # Responsive controls strip
     shiny::div(
       id = ns("controls_strip"),
       class = "map-controls-strip mb-2",
-      shiny::div(
-        id = ns("run_mode_box"),
-        class = "map-section map-section-mode",
-        shiny::tags$div(class = "map-section-label", "Run mode"),
-        run_mode_ui
-      ),
       shiny::div(
         class = "map-controls-main-row",
         shiny::div(
@@ -170,9 +230,15 @@ mod_map_ui <- function(
     leaflet::leafletOutput(ns("map"), height = "400px"),
     shiny::div(
       class = "map-status-strip",
-      shiny::uiOutput(ns("turn_positivity_badge")),
-      shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm map-status-clear"),
-      shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary map-status-advance")
+      shiny::div(
+        class = "map-status-summary",
+        shiny::uiOutput(ns("turn_positivity_badge"))
+      ),
+      shiny::div(
+        class = "map-status-actions",
+        shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm map-status-clear"),
+        shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary map-status-advance")
+      )
     ),
     shiny::div(
       id = ns("run_rail"),
@@ -228,6 +294,16 @@ mod_map_server <- function(
     })
     intervention_cost <- shiny::reactive({
       intervention_effects()$cost
+    })
+    planned_turn_mix <- shiny::reactive({
+      compute_planned_turn_mix(
+        allocations = allocations(),
+        selected_interventions = selected_interventions(),
+        budget = budget_info(),
+        intervention_defs = intervention_defs,
+        intervention_state = intervention_state_info(),
+        observed_this_turn = observed_this_turn()
+      )
     })
     map_locked <- shiny::reactive({
       identical(run_mode(), "guided_auto") && isTRUE(auto_running())
@@ -398,12 +474,9 @@ mod_map_server <- function(
 
     output$budget_badge <- shiny::renderUI({
       req(ready())
-      allocs <- allocations()
+      mix <- planned_turn_mix()
       budget <- budget_info()
-      spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-      intervention_spend <- intervention_cost()
-      total_spend <- spend_stats$spend + intervention_spend
-      remaining <- budget$budget - total_spend
+      remaining <- budget$budget - mix$total_spend
       total_budget <- budget$budget
       frac <- if (total_budget > 0) remaining / total_budget else 1
       badge_class <- if (frac > 0.4) {
@@ -415,14 +488,15 @@ mod_map_server <- function(
       }
       txt <- paste0(
         "Left £", round(remaining, 0),
-        " | Tests £", round(spend_stats$spend, 0),
-        " | Interventions £", round(intervention_spend, 0)
+        " | Tests £", round(mix$testing_spend, 0),
+        " | Interventions £", round(mix$intervention_spend, 0)
       )
       shiny::span(class = badge_class, txt)
     })
 
     observe({
       req(ready())
+      input$map_bounds
       budget <- budget_info()
       cost_ag <- budget$costs[["ag"]]
       cost_pcr <- budget$costs[["pcr"]]
@@ -443,6 +517,7 @@ mod_map_server <- function(
 
     observe({
       req(ready())
+      input$map_bounds
       budget <- budget_info()
       selected <- selected_interventions()
       intervention_choices <- build_intervention_choice_ui(
@@ -479,14 +554,22 @@ mod_map_server <- function(
       positives <- sum(latest$positives, na.rm = TRUE)
       output$turn_positivity_badge <- shiny::renderUI({
         if (total_tests == 0) {
-          shiny::div(class = "map-positivity-badge map-positivity-none", "No results yet")
+          shiny::div(
+            class = "map-positivity-badge map-positivity-none",
+            shiny::div(class = "map-positivity-label", "Last turn"),
+            shiny::div(class = "map-positivity-value", "No results yet")
+          )
         } else {
           pct <- round(100 * positives / total_tests, 1)
           dot_class <- if (pct <= 5) "dot-green" else if (pct <= 20) "dot-amber" else "dot-red"
           shiny::div(
             class = "map-positivity-badge",
-            shiny::span(class = paste("positivity-dot", dot_class)),
-            paste0("Last turn: ", pct, "% positive")
+            shiny::div(
+              class = "map-positivity-heading",
+              shiny::span(class = paste("positivity-dot", dot_class)),
+              shiny::span(class = "map-positivity-label", "Last turn")
+            ),
+            shiny::div(class = "map-positivity-value", paste0(pct, "% positive"))
           )
         }
       })
@@ -617,6 +700,7 @@ mod_map_server <- function(
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
       },
       interventions = selected_interventions,
+      planned_turn_mix = planned_turn_mix,
       advance = shiny::eventReactive(input$advance, {
         if (isTRUE(map_locked())) {
           return(NULL)
