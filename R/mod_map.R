@@ -4,11 +4,11 @@ intervention_tooltip_lookup <- function(catalog) {
   validate_intervention_catalog(catalog)
 
   defaults <- c(
-    distancing = "Strong short-burst Rt reduction. Peak effect for the first 3 active turns, then settles to a weaker sustained effect.",
-    case_isolation_tracing = "Observation-linked control. Works best when recent reported positives are high; 1-turn warm-up.",
-    rapid_labs = "Laboratory infrastructure. 1-turn warm-up, then PCR results return 1 turn sooner while active.",
-    ventilation_guidance = "Slow-build structural Rt reduction. 2-turn warm-up, then steady sustained effect while active.",
-    community_case_finding = "Makes the same tests more informative. Stronger early effect, then a milder sustained boost."
+    distancing = "Emergency brake. Strong short-burst Rt reduction for the first 3 active turns, then a costlier sustained effect.",
+    case_isolation_tracing = "Signal-dependent control. After a 1-turn warm-up, it only pays off when recent reported positives are present.",
+    rapid_labs = "Surveillance speed tool. After a 1-turn warm-up, PCR results return 1 turn sooner while active.",
+    ventilation_guidance = "Slower structural control. After a 1-turn warm-up, it gives a steady medium-strength Rt reduction.",
+    community_case_finding = "Surveillance yield boost. Makes the same tests more informative without changing hidden transmission."
   )
 
   ids <- as.character(catalog$id)
@@ -81,11 +81,23 @@ compute_planned_turn_mix <- function(
 
   testing_spend <- spend_stats$spend
   intervention_spend <- intervention_preview$cost
+  cap_limit <- intervention_preview$cost_details$cap_limit
+  if (is.null(cap_limit) || !is.finite(cap_limit)) {
+    cap_limit <- 0
+  }
+  over_cap_by <- intervention_preview$cost_details$over_cap_by
+  if (is.null(over_cap_by) || !is.finite(over_cap_by)) {
+    over_cap_by <- 0
+  }
+  over_cap <- isTRUE(intervention_preview$cost_details$over_cap)
   total_spend <- testing_spend + intervention_spend
   leftover <- max(budget_total - total_spend, 0)
   share_denom <- if (budget_total > 0) budget_total else 1
 
-  if (total_spend <= 0) {
+  if (over_cap) {
+    label <- "Intervention package exceeds cap"
+    label_class <- "mix-invalid"
+  } else if (total_spend <= 0) {
     label <- "No turn plan yet"
     label_class <- "mix-none"
   } else if ((intervention_spend / share_denom) > 0.45) {
@@ -107,6 +119,9 @@ compute_planned_turn_mix <- function(
     testing_share = testing_spend / share_denom,
     intervention_share = intervention_spend / share_denom,
     leftover_share = leftover / share_denom,
+    over_cap = over_cap,
+    cap_limit = cap_limit,
+    over_cap_by = over_cap_by,
     within_budget = total_spend <= budget_total + 1e-6,
     label = label,
     label_class = label_class
@@ -125,7 +140,7 @@ mod_map_ui <- function(
   bslib::card(
     full_screen = TRUE,
     bslib::card_header(
-      class = "d-flex justify-content-between align-items-center",
+      class = "map-card-header d-flex justify-content-between align-items-center",
       shiny::div(
         id = ns("run_mode_box"),
         class = "map-card-header-main",
@@ -223,7 +238,8 @@ mod_map_ui <- function(
             choiceValues = intervention_choices$choice_values,
             selected = character(),
             inline = TRUE
-          )
+          ),
+          shiny::uiOutput(ns("intervention_cap_notice"))
         )
       )
     ),
@@ -479,19 +495,46 @@ mod_map_server <- function(
       remaining <- budget$budget - mix$total_spend
       total_budget <- budget$budget
       frac <- if (total_budget > 0) remaining / total_budget else 1
-      badge_class <- if (frac > 0.4) {
+      badge_class <- if (isTRUE(mix$over_cap)) {
+        "badge bg-danger"
+      } else if (frac > 0.4) {
         "badge bg-success"
       } else if (frac > 0.15) {
         "badge bg-warning text-dark"
       } else {
         "badge bg-danger"
       }
-      txt <- paste0(
-        "Left £", round(remaining, 0),
-        " | Tests £", round(mix$testing_spend, 0),
-        " | Interventions £", round(mix$intervention_spend, 0)
+      txt <- if (isTRUE(mix$over_cap)) {
+        paste0(
+          "Over cap by £", round(mix$over_cap_by, 0),
+          " | Tests £", round(mix$testing_spend, 0),
+          " | Interventions £", round(mix$intervention_spend, 0)
+        )
+      } else {
+        paste0(
+          "Left £", round(remaining, 0),
+          " | Tests £", round(mix$testing_spend, 0),
+          " | Interventions £", round(mix$intervention_spend, 0)
+        )
+      }
+      shiny::span(class = paste("budget-badge", badge_class), txt)
+    })
+
+    output$intervention_cap_notice <- shiny::renderUI({
+      req(ready())
+      mix <- planned_turn_mix()
+      if (!isTRUE(mix$over_cap)) {
+        return(NULL)
+      }
+
+      shiny::div(
+        class = "small text-danger mt-2",
+        paste0(
+          "Selected interventions are £", round(mix$over_cap_by, 0),
+          " over the £", round(mix$cap_limit, 0),
+          " cap. Reduce interventions to at most 50% of turn budget."
+        )
       )
-      shiny::span(class = badge_class, txt)
     })
 
     observe({
@@ -519,11 +562,15 @@ mod_map_server <- function(
       req(ready())
       input$map_bounds
       budget <- budget_info()
-      selected <- selected_interventions()
+      selected <- isolate(input$interventions)
+      if (is.null(selected)) {
+        selected <- character()
+      }
       intervention_choices <- build_intervention_choice_ui(
         intervention_defs,
         turn_budget = budget$budget
       )
+      shiny::freezeReactiveValue(input, "interventions")
       shiny::updateCheckboxGroupInput(
         session,
         "interventions",
@@ -545,46 +592,38 @@ mod_map_server <- function(
       }
     })
 
-    observe({
-      if (!ready()) {
-        return()
-      }
+    output$turn_positivity_badge <- shiny::renderUI({
+      req(ready())
       latest <- observed_this_turn()
       total_tests <- sum(latest$n, na.rm = TRUE)
       positives <- sum(latest$positives, na.rm = TRUE)
-      output$turn_positivity_badge <- shiny::renderUI({
-        if (total_tests == 0) {
+      if (total_tests == 0) {
+        shiny::div(
+          class = "map-positivity-badge map-positivity-none",
+          shiny::div(class = "map-positivity-label", "Last turn"),
+          shiny::div(class = "map-positivity-value", "No results yet")
+        )
+      } else {
+        pct <- round(100 * positives / total_tests, 1)
+        dot_class <- if (pct <= 5) "dot-green" else if (pct <= 20) "dot-amber" else "dot-red"
+        shiny::div(
+          class = "map-positivity-badge",
           shiny::div(
-            class = "map-positivity-badge map-positivity-none",
-            shiny::div(class = "map-positivity-label", "Last turn"),
-            shiny::div(class = "map-positivity-value", "No results yet")
-          )
-        } else {
-          pct <- round(100 * positives / total_tests, 1)
-          dot_class <- if (pct <= 5) "dot-green" else if (pct <= 20) "dot-amber" else "dot-red"
-          shiny::div(
-            class = "map-positivity-badge",
-            shiny::div(
-              class = "map-positivity-heading",
-              shiny::span(class = paste("positivity-dot", dot_class)),
-              shiny::span(class = "map-positivity-label", "Last turn")
-            ),
-            shiny::div(class = "map-positivity-value", paste0(pct, "% positive"))
-          )
-        }
-      })
+            class = "map-positivity-heading",
+            shiny::span(class = paste("positivity-dot", dot_class)),
+            shiny::span(class = "map-positivity-label", "Last turn")
+          ),
+          shiny::div(class = "map-positivity-value", paste0(pct, "% positive"))
+        )
+      }
     })
 
     # Update map with results and allocation markers
-    observe({
-      if (!ready()) {
-        shiny::invalidateLater(100, session)
-        return()
-      }
-      if (!map_ready()) {
-        shiny::invalidateLater(100, session)
-        return()
-      }
+    observeEvent(
+      list(ready(), map_ready(), observed_this_turn(), allocations()),
+      {
+      shiny::req(ready())
+      shiny::req(isTRUE(map_ready()))
       res <- observed_this_turn()
       allocs <- allocations()
 
@@ -682,7 +721,9 @@ mod_map_server <- function(
             group = "alloc_markers"
           )
       }
-    })
+      },
+      ignoreInit = FALSE
+    )
 
     list(
       allocations = allocations,

@@ -23,12 +23,12 @@ intervention_catalog <- function() {
       "infrastructure_rt",
       "case_finding"
     ),
-    activation_pct_turn = c(0.20, 0.15, 0.12, 0.18, 0.10),
+    activation_pct_turn = c(0.20, 0.15, 0.12, 0.16, 0.10),
     activation_floor = c(40, 30, 25, 35, 20),
-    upkeep_pct_turn = c(0.12, 0.10, 0.05, 0.05, 0.06),
+    upkeep_pct_turn = c(0.14, 0.09, 0.05, 0.06, 0.06),
     upkeep_floor = c(24, 20, 10, 10, 12),
-    warmup_turns = c(0L, 1L, 1L, 2L, 0L),
-    peak_end_turn = c(3L, 1L, 1L, 2L, 4L),
+    warmup_turns = c(0L, 1L, 1L, 1L, 0L),
+    peak_end_turn = c(3L, 1L, 1L, 1L, 4L),
     reset_after_off_turns = c(3L, 2L, 3L, 4L, 2L)
   )
 }
@@ -222,11 +222,26 @@ preview_intervention_state <- function(state, selected, catalog = intervention_c
     )
 }
 
-empty_intervention_cost_details <- function() {
+empty_intervention_cost_details <- function(turn_budget = 0, max_share = 0.50) {
+  turn_budget <- suppressWarnings(as.numeric(turn_budget)[1])
+  if (!is.finite(turn_budget) || is.na(turn_budget) || turn_budget < 0) {
+    turn_budget <- 0
+  }
+
+  max_share <- suppressWarnings(as.numeric(max_share)[1])
+  if (!is.finite(max_share) || is.na(max_share) || max_share < 0 || max_share > 1) {
+    max_share <- 0.50
+  }
+
+  cap_limit <- max(0, round(max_share * turn_budget))
+
   list(
     total_cost = 0,
     total_cost_uncapped = 0,
     cost_share = 0,
+    cap_limit = cap_limit,
+    over_cap = FALSE,
+    over_cap_by = 0,
     cap_applied = FALSE,
     by_intervention = tibble::tibble(
       id = character(),
@@ -246,7 +261,7 @@ compute_intervention_costs <- function(
     turn_budget,
     catalog,
     state = NULL,
-    max_share = 0.60) {
+    max_share = 0.50) {
   validate_intervention_catalog(catalog)
 
   turn_budget <- suppressWarnings(as.numeric(turn_budget)[1])
@@ -261,7 +276,7 @@ compute_intervention_costs <- function(
 
   preview <- preview_intervention_state(state = state, selected = selected, catalog = catalog)
   if (!any(preview$selected)) {
-    return(empty_intervention_cost_details())
+    return(empty_intervention_cost_details(turn_budget = turn_budget, max_share = max_share))
   }
 
   defs <- tibble::as_tibble(catalog) |>
@@ -277,33 +292,19 @@ compute_intervention_costs <- function(
 
   total_uncapped <- sum(raw_cost)
   cap_abs <- max(0, round(max_share * turn_budget))
-
-  final_cost <- raw_cost
-  cap_applied <- isTRUE(total_uncapped > cap_abs)
-  if (isTRUE(cap_applied)) {
-    if (cap_abs <= 0 || total_uncapped <= 0) {
-      final_cost <- rep(0, length(raw_cost))
-    } else {
-      scaled <- raw_cost * (cap_abs / total_uncapped)
-      base <- floor(scaled)
-      remainder <- as.integer(round(cap_abs - sum(base)))
-      if (remainder > 0L) {
-        fractional <- scaled - base
-        idx <- order(-fractional, seq_along(fractional))[seq_len(remainder)]
-        base[idx] <- base[idx] + 1
-      }
-      final_cost <- as.numeric(base)
-    }
-  }
-
-  total_final <- sum(final_cost)
+  over_cap <- isTRUE(total_uncapped > cap_abs)
+  over_cap_by <- max(total_uncapped - cap_abs, 0)
+  total_final <- sum(raw_cost)
   cost_share <- if (turn_budget > 0) total_final / turn_budget else 0
 
   list(
     total_cost = as.numeric(total_final),
     total_cost_uncapped = as.numeric(total_uncapped),
     cost_share = as.numeric(cost_share),
-    cap_applied = cap_applied,
+    cap_limit = as.numeric(cap_abs),
+    over_cap = over_cap,
+    over_cap_by = as.numeric(over_cap_by),
+    cap_applied = over_cap,
     by_intervention = tibble::tibble(
       id = defs$id,
       label = defs$label,
@@ -312,7 +313,7 @@ compute_intervention_costs <- function(
       cost_pct_turn = as.numeric(pct),
       cost_floor = as.numeric(floor_vals),
       cost_raw = as.numeric(raw_cost),
-      cost_final = as.numeric(final_cost)
+      cost_final = as.numeric(raw_cost)
     )
   )
 }
@@ -399,9 +400,9 @@ intervention_effect_row <- function(def_row, status_row, observation_history, cu
   if (identical(family, "surveillance_rt")) {
     recent_pos <- recent_observed_positives(observation_history, current_turn, window_turns = 2L)
     neutral$Rt_multiplier <- dplyr::case_when(
-      recent_pos >= 20 ~ 0.85,
-      recent_pos >= 5 ~ 0.92,
-      TRUE ~ 0.98
+      recent_pos >= 20 ~ 0.84,
+      recent_pos >= 5 ~ 0.90,
+      TRUE ~ 1.00
     )
     return(neutral)
   }
@@ -412,7 +413,7 @@ intervention_effect_row <- function(def_row, status_row, observation_history, cu
   }
 
   if (identical(family, "infrastructure_rt")) {
-    neutral$Rt_multiplier <- 0.90
+    neutral$Rt_multiplier <- 0.88
     return(neutral)
   }
 
@@ -448,7 +449,7 @@ compute_intervention_effects <- function(
     observation_history = NULL,
     current_turn = 0L,
     turn_budget = NULL,
-    max_share = 0.60) {
+    max_share = 0.50) {
   validate_intervention_catalog(catalog)
 
   preview <- preview_intervention_state(state = state, selected = selected, catalog = catalog)
@@ -466,7 +467,10 @@ compute_intervention_effects <- function(
       status_by_intervention = preview,
       next_state = preview |>
         dplyr::select(id, label, active_streak, inactive_streak, status),
-      cost_details = empty_intervention_cost_details()
+      cost_details = empty_intervention_cost_details(
+        turn_budget = if (is.null(turn_budget)) 0 else turn_budget,
+        max_share = max_share
+      )
     ))
   }
 

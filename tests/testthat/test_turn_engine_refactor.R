@@ -279,6 +279,7 @@ test_that("run_single_turn matches legacy deterministic behavior", {
 
 test_that("budget failure returns expected status and message", {
   request <- make_turn_request_fixture()
+  request$active_ids <- character()
   request$budget$budget <- 10
   request$allocs$n_ag <- c(30L, 30L, 30L)
   request$allocs$n_pcr <- c(20L, 20L, 20L)
@@ -301,6 +302,24 @@ test_that("budget failure returns expected status and message", {
   }
   expect_equal(total_spend_after, request$total_spend)
   expect_equal(turn_after, request$current_turn)
+})
+
+test_that("over-cap intervention packages return a dedicated failure status", {
+  request <- make_turn_request_fixture()
+  request$active_ids <- request$intervention_defs$id
+
+  result <- run_single_turn(request)
+
+  expect_equal(result$status, "intervention_cap_exceeded")
+  expect_equal(
+    result$error_message,
+    "Selected interventions exceed the 50% intervention cap. Deselect one or more interventions."
+  )
+  expect_equal(result$total_spend, request$total_spend)
+  expect_equal(result$next_turn, request$current_turn)
+  expect_null(result$truth_state)
+  expect_null(result$observation_state)
+  expect_null(result$run_log)
 })
 
 test_that("notification payload matches warning and no-result paths", {

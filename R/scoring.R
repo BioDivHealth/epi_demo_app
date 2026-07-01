@@ -254,7 +254,7 @@ score_strategy_balance <- function(outbreak_control_score, surveillance_quality_
     intervention_share <- 0
   }
 
-  if (intervention_share > 0.55 && surveillance_quality_score < 15) {
+  if (intervention_share > 0.45 && surveillance_quality_score < 15) {
     base_score <- base_score - 3
   }
   if (intervention_share < 0.10 && outbreak_control_score < 20) {

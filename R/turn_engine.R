@@ -231,6 +231,23 @@ run_single_turn <- function(request) {
   intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
   intervention_phases <- intervention_status_summary(effects$status_by_intervention)
 
+  if (identical(branch, "player") && isTRUE(effects$cost_details$over_cap)) {
+    return(list(
+      status = "intervention_cap_exceeded",
+      error_message = "Selected interventions exceed the 50% intervention cap. Deselect one or more interventions.",
+      total_spend = request$total_spend,
+      spend_current = NULL,
+      truth_state = NULL,
+      truth_history = NULL,
+      observation_state = NULL,
+      available_now = NULL,
+      next_turn = current_turn,
+      turn_logs = NULL,
+      run_log = NULL,
+      notification = NULL
+    ))
+  }
+
   adjusted <- apply_interventions_to_params(params_epi, testing_params, effects)
   params_epi <- adjusted$params_epi
   testing_params <- adjusted$testing_params

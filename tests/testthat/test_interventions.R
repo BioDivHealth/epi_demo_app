@@ -39,6 +39,7 @@ test_that("empty intervention set yields neutral effects", {
   expect_equal(eff$sampling_yield_multiplier, 1)
   expect_length(eff$labels, 0)
   expect_equal(eff$cost_details$total_cost, 0)
+  expect_false(eff$cost_details$over_cap)
   expect_false(eff$cost_details$cap_applied)
 })
 
@@ -54,10 +55,11 @@ test_that("initial selection charges activation costs and only applies non-warmu
   expect_equal(eff$cost, 640)
   expect_equal(eff$Rt_multiplier, 0.75)
   expect_equal(eff$delay_adjust$pcr, 0)
+  expect_false(eff$cost_details$over_cap)
   expect_equal(sort(eff$labels), sort(c("Social distancing", "Rapid labs")))
 })
 
-test_that("tracing becomes effective after warm-up and recent positives drive its strength", {
+test_that("tracing becomes effective after warm-up with low, medium, and high signal tiers", {
   tracing_state <- tibble::tibble(
     id = "case_isolation_tracing",
     label = "Case isolation and tracing",
@@ -65,22 +67,56 @@ test_that("tracing becomes effective after warm-up and recent positives drive it
     inactive_streak = 0L,
     status = "warming_up"
   )
-  obs_history <- tibble::tibble(
-    turn_available = c(0L, 1L, 1L),
-    positives = c(4L, 3L, 5L)
+
+  cases <- list(
+    list(
+      history = tibble::tibble(turn_available = c(0L, 1L), positives = c(2L, 2L)),
+      expected_rt = 1.00
+    ),
+    list(
+      history = tibble::tibble(turn_available = c(0L, 1L, 1L), positives = c(4L, 3L, 5L)),
+      expected_rt = 0.90
+    ),
+    list(
+      history = tibble::tibble(turn_available = c(0L, 1L, 1L), positives = c(9L, 6L, 7L)),
+      expected_rt = 0.84
+    )
+  )
+
+  for (case in cases) {
+    eff <- compute_intervention_effects(
+      selected = "case_isolation_tracing",
+      catalog = local_catalog,
+      state = tracing_state,
+      observation_history = case$history,
+      current_turn = 1L,
+      turn_budget = 2000
+    )
+
+    expect_equal(eff$Rt_multiplier, case$expected_rt)
+    expect_equal(eff$cost, 180)
+  }
+})
+
+test_that("ventilation becomes active after one warm-up turn with stronger sustained control", {
+  ventilation_state <- tibble::tibble(
+    id = "ventilation_guidance",
+    label = "Ventilation and venue guidance",
+    active_streak = 1L,
+    inactive_streak = 0L,
+    status = "warming_up"
   )
 
   eff <- compute_intervention_effects(
-    selected = "case_isolation_tracing",
+    selected = "ventilation_guidance",
     catalog = local_catalog,
-    state = tracing_state,
-    observation_history = obs_history,
-    current_turn = 1L,
+    state = ventilation_state,
+    current_turn = 2L,
     turn_budget = 2000
   )
 
-  expect_equal(eff$Rt_multiplier, 0.92)
-  expect_equal(eff$cost, 200)
+  expect_equal(eff$Rt_multiplier, 0.88)
+  expect_equal(eff$cost, 120)
 })
 
 test_that("case-finding plateaus at sustained observation yield", {

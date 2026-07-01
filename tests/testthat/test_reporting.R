@@ -242,3 +242,23 @@ test_that("dual branch report returns comparison metrics and aligned turns", {
   expect_true(is.na(reversed$cost_per_case_averted))
   expect_true(is.na(reversed$cost_per_death_averted))
 })
+
+test_that("strategy balance penalizes intervention-heavy play above the tighter threshold", {
+  expect_equal(
+    score_strategy_balance(
+      outbreak_control_score = 40,
+      surveillance_quality_score = 10,
+      intervention_share = 0.45
+    ),
+    10
+  )
+
+  expect_equal(
+    score_strategy_balance(
+      outbreak_control_score = 40,
+      surveillance_quality_score = 10,
+      intervention_share = 0.46
+    ),
+    7
+  )
+})

@@ -25,17 +25,19 @@ test_that("activation and upkeep pricing differ at standard turn budget", {
   )
 
   expect_equal(activation_details$total_cost, 640)
-  expect_equal(upkeep_details$total_cost, 340)
+  expect_equal(upkeep_details$total_cost, 380)
+  expect_false(activation_details$over_cap)
+  expect_false(upkeep_details$over_cap)
 
   by_id_activation <- stats::setNames(activation_details$by_intervention$cost_final, activation_details$by_intervention$id)
   by_id_upkeep <- stats::setNames(upkeep_details$by_intervention$cost_final, upkeep_details$by_intervention$id)
   expect_equal(unname(by_id_activation[["distancing"]]), 400)
   expect_equal(unname(by_id_activation[["rapid_labs"]]), 240)
-  expect_equal(unname(by_id_upkeep[["distancing"]]), 240)
+  expect_equal(unname(by_id_upkeep[["distancing"]]), 280)
   expect_equal(unname(by_id_upkeep[["rapid_labs"]]), 100)
 })
 
-test_that("floor pricing applies at small turn budgets", {
+test_that("floor pricing keeps raw totals and flags over-cap packages at small turn budgets", {
   details <- compute_intervention_costs(
     selected = c("rapid_labs", "community_case_finding"),
     turn_budget = 50,
@@ -45,15 +47,17 @@ test_that("floor pricing applies at small turn budgets", {
 
   by_id_raw <- stats::setNames(details$by_intervention$cost_raw, details$by_intervention$id)
   by_id <- stats::setNames(details$by_intervention$cost_final, details$by_intervention$id)
-  expect_true(details$cap_applied)
+  expect_true(details$over_cap)
+  expect_equal(details$cap_limit, 25)
+  expect_equal(details$over_cap_by, 20)
   expect_equal(unname(by_id_raw[["rapid_labs"]]), 25)
   expect_equal(unname(by_id_raw[["community_case_finding"]]), 20)
-  expect_equal(unname(by_id[["rapid_labs"]]), 17)
-  expect_equal(unname(by_id[["community_case_finding"]]), 13)
-  expect_equal(sum(details$by_intervention$cost_final), 30)
+  expect_equal(unname(by_id[["rapid_labs"]]), 25)
+  expect_equal(unname(by_id[["community_case_finding"]]), 20)
+  expect_equal(sum(details$by_intervention$cost_final), 45)
 })
 
-test_that("cap logic scales costs with deterministic rounding", {
+test_that("over-cap packages keep raw totals and expose cap metadata", {
   synthetic_catalog <- tibble::tibble(
     id = c("a", "b", "c"),
     label = c("A", "B", "C"),
@@ -67,14 +71,7 @@ test_that("cap logic scales costs with deterministic rounding", {
     reset_after_off_turns = c(1L, 1L, 1L)
   )
 
-  details_a <- compute_intervention_costs(
-    selected = c("a", "b", "c"),
-    turn_budget = 100,
-    catalog = synthetic_catalog,
-    state = init_intervention_state(synthetic_catalog),
-    max_share = 0.59
-  )
-  details_b <- compute_intervention_costs(
+  details <- compute_intervention_costs(
     selected = c("a", "b", "c"),
     turn_budget = 100,
     catalog = synthetic_catalog,
@@ -82,12 +79,14 @@ test_that("cap logic scales costs with deterministic rounding", {
     max_share = 0.59
   )
 
-  expect_equal(details_a$total_cost_uncapped, 100)
-  expect_equal(details_a$total_cost, 59)
-  expect_true(details_a$cap_applied)
-  expect_equal(details_a$cost_share, 0.59)
-  expect_equal(details_a$by_intervention$cost_final, c(20, 20, 19))
-  expect_equal(details_a$by_intervention$cost_final, details_b$by_intervention$cost_final)
+  expect_equal(details$total_cost_uncapped, 100)
+  expect_equal(details$total_cost, 100)
+  expect_true(details$cap_applied)
+  expect_true(details$over_cap)
+  expect_equal(details$cap_limit, 59)
+  expect_equal(details$over_cap_by, 41)
+  expect_equal(details$cost_share, 1)
+  expect_equal(details$by_intervention$cost_final, c(34, 33, 33))
 })
 
 test_that("unknown selections are ignored", {
@@ -120,5 +119,5 @@ test_that("intervention labels include start and keep amounts", {
   expect_length(distancing_static, 1)
   expect_length(distancing_dynamic, 1)
   expect_match(distancing_static, "Social distancing (start £40; keep £24)", fixed = TRUE)
-  expect_match(distancing_dynamic, "Social distancing (start £400; keep £240)", fixed = TRUE)
+  expect_match(distancing_dynamic, "Social distancing (start £400; keep £280)", fixed = TRUE)
 })

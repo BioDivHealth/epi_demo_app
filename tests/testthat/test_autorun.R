@@ -144,9 +144,10 @@ run_auto_iteration_fixture <- function(state) {
   )
 
   result <- run_single_turn(request)
-  if (identical(result$status, "budget_exceeded")) {
+  failure_statuses <- c("budget_exceeded", "intervention_cap_exceeded")
+  if (isTRUE(result$status %in% failure_statuses)) {
     state$auto_running <- FALSE
-    state$auto_stop_reason <- "budget_exceeded"
+    state$auto_stop_reason <- result$status
     return(state)
   }
 
@@ -223,7 +224,7 @@ test_that("pause and resume preserve counters and continue correctly", {
   expect_equal(state$auto_stop_reason, "completed")
 })
 
-test_that("low-budget run with interventions does not false-stop under capped pricing", {
+test_that("over-cap intervention packages stop guided auto before a turn advances", {
   low_budget <- list(budget = 20, costs = list(ag = 2, pcr = 10))
   state <- make_autorun_fixture(
     config_turns = 3L,
@@ -237,11 +238,10 @@ test_that("low-budget run with interventions does not false-stop under capped pr
   state <- start_autorun_fixture(state)
   state <- tick_autorun_fixture(state)
 
-  expect_true(state$auto_running)
-  expect_null(state$auto_stop_reason)
-  expect_equal(state$auto_turns_completed, 1L)
-  expect_equal(state$turn, 1L)
-  expect_lte(state$run_log$intervention_cost[[1]], round(0.60 * low_budget$budget))
+  expect_false(state$auto_running)
+  expect_equal(state$auto_stop_reason, "intervention_cap_exceeded")
+  expect_equal(state$auto_turns_completed, 0L)
+  expect_equal(state$turn, 0L)
 })
 
 test_that("manual mode does not auto-advance", {

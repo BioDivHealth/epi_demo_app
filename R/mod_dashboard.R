@@ -36,6 +36,7 @@ compute_signal_quality_state <- function(
       headline = "Starter alert only",
       headline_class = "signal-starter",
       helper_text = "Wait for your own returned results before trusting the trend.",
+      summary_text = NULL,
       rows = NULL,
       metrics = list(
         signal_quality_points = 0L,
@@ -64,9 +65,7 @@ compute_signal_quality_state <- function(
     switch(
       key,
       coverage = "Broaden testing to reduce blind spots.",
-      freshness = "Backlog is starting to outpace returned results.",
-      confidence = "Recent returns are too sparse for a stable trend.",
-      continuity = "Results are arriving too irregularly to read momentum.",
+      timeliness = "Backlog is starting to outpace returned results.",
       NULL
     )
   }
@@ -120,7 +119,7 @@ compute_signal_quality_state <- function(
       freshness_pts <- 1L
     }
   }
-  freshness_text <- paste0(pending_tests, " tests still pending")
+  timeliness_text <- paste0(pending_tests, " tests still pending")
 
   confidence_n <- returned_tests_last_window
   if (confidence_n >= 300L) {
@@ -136,8 +135,6 @@ compute_signal_quality_state <- function(
     confidence_status <- "None"
     confidence_pts <- 0L
   }
-  confidence_text <- paste0(confidence_n, " results returned over last 3 completed turns")
-
   turns_with_results <- if (nrow(recent_history) == 0) 0L else recent_history |>
     dplyr::distinct(turn_available) |>
     nrow()
@@ -154,8 +151,6 @@ compute_signal_quality_state <- function(
     continuity_status <- "None"
     continuity_pts <- 0L
   }
-  continuity_text <- paste0("Results returned in ", turns_with_results, " of last 3 completed turns")
-
   signal_quality_points <- coverage_pts + freshness_pts + confidence_pts + continuity_pts
 
   if (signal_quality_points >= 10L) {
@@ -178,15 +173,19 @@ compute_signal_quality_state <- function(
     } else {
       "No recent returned results in the current signal window."
     }
+    summary_text <- NULL
     rows <- NULL
     state <- "none"
   } else {
     helper_text <- NULL
+    summary_text <- paste0(
+      "Based on ", format(confidence_n, big.mark = ",", scientific = FALSE, trim = TRUE),
+      " returned results across ", turns_with_results, " of the last ",
+      window, " completed turns."
+    )
     rows <- list(
       row_item("coverage", "Coverage", coverage_status, coverage_text),
-      row_item("freshness", "Freshness", freshness_status, freshness_text),
-      row_item("confidence", "Confidence", confidence_status, confidence_text),
-      row_item("continuity", "Continuity", continuity_status, continuity_text)
+      row_item("timeliness", "Timeliness", freshness_status, timeliness_text)
     )
     state <- "normal"
   }
@@ -196,6 +195,7 @@ compute_signal_quality_state <- function(
     headline = headline,
     headline_class = headline_class,
     helper_text = helper_text,
+    summary_text = summary_text,
     rows = rows,
     metrics = list(
       signal_quality_points = signal_quality_points,
@@ -305,8 +305,7 @@ compute_batch_signal_summary <- function(
     summary_text = paste0(
       turns_used, "/", turns_requested, " turns | ",
       coverage_n, "/", total_boroughs, " boroughs covered | ",
-      fmt_int(returned_tests), " returns | ",
-      fmt_int(pending_tests), " pending"
+      fmt_int(returned_tests), " returns"
     ),
     metrics = list(
       signal_turn = signal_turn,
@@ -343,7 +342,7 @@ mod_dashboard_ui <- function(id, turn_ui = NULL) {
         class = "col-4",
           shiny::div(
             class = "dashboard-stat-card dashboard-stat-card--positives",
-            shiny::tags$div(class = "dashboard-stat-label", "Total Positives"),
+            shiny::tags$div(class = "dashboard-stat-label", "Total Positive Tests"),
             shiny::div(class = "dashboard-stat-value dashboard-stat-value--positives", shiny::textOutput(ns("total_positives"), inline = TRUE))
           )
         ),
@@ -449,6 +448,9 @@ mod_dashboard_server <- function(
           testing_share = 0,
           intervention_share = 0,
           leftover_share = 1,
+          over_cap = FALSE,
+          cap_limit = 0,
+          over_cap_by = 0,
           within_budget = TRUE,
           label = "No turn plan yet",
           label_class = "mix-none"
@@ -494,6 +496,9 @@ mod_dashboard_server <- function(
         },
         if (!is.null(row_ui)) {
           shiny::div(class = "signal-quality-rows", row_ui)
+        },
+        if (!is.null(state$summary_text) && nzchar(state$summary_text)) {
+          shiny::div(class = "signal-quality-summary", state$summary_text)
         },
         if (isTRUE(batch$visible)) {
           shiny::div(
@@ -553,33 +558,12 @@ mod_dashboard_server <- function(
         }
       }
 
-      legend_items <- list()
-      if (mix$total_spend <= 0 || mix$intervention_share > 0) {
-        legend_items <- c(legend_items, list(
-          shiny::div(
-            class = "budget-mix-legend-item",
-            shiny::span(class = "budget-mix-swatch budget-mix-swatch--intervention"),
-            shiny::span(paste0("Interventions ", round(100 * max(mix$intervention_share, 0)), "%"))
-          )
-        ))
-      }
-      if (mix$total_spend <= 0 || mix$testing_share > 0) {
-        legend_items <- c(legend_items, list(
-          shiny::div(
-            class = "budget-mix-legend-item",
-            shiny::span(class = "budget-mix-swatch budget-mix-swatch--testing"),
-            shiny::span(paste0("Testing ", round(100 * max(mix$testing_share, 0)), "%"))
-          )
-        ))
-      }
-      if (mix$total_spend <= 0 || mix$leftover_share > 0) {
-        legend_items <- c(legend_items, list(
-          shiny::div(
-            class = "budget-mix-legend-item",
-            shiny::span(class = "budget-mix-swatch budget-mix-swatch--leftover"),
-            shiny::span(paste0("Leftover ", round(100 * max(mix$leftover_share, 0)), "%"))
-          )
-        ))
+      helper_text <- if (isTRUE(mix$over_cap)) {
+        "Reduce interventions to at most 50% of turn budget."
+      } else if (mix$total_spend <= 0) {
+        "Add tests or interventions to preview the current turn mix."
+      } else {
+        NULL
       }
 
       shiny::div(
@@ -587,7 +571,9 @@ mod_dashboard_server <- function(
         shiny::div(
           class = "budget-mix-header",
           shiny::tags$strong("This turn's budget mix"),
-          shiny::span(class = paste("budget-mix-label", mix$label_class), mix$label)
+          if (!identical(mix$label, "Balanced mix")) {
+            shiny::span(class = paste("budget-mix-label", mix$label_class), mix$label)
+          }
         ),
         shiny::div(class = "budget-mix-bar", segment_ui),
         shiny::div(
@@ -595,11 +581,10 @@ mod_dashboard_server <- function(
           shiny::div(class = "budget-mix-split-primary", paste0(round(100 * max(mix$testing_share, 0)), "% testing")),
           shiny::div(class = "budget-mix-split-secondary", paste0(round(100 * max(mix$intervention_share, 0)), "% interventions"))
         ),
-        shiny::div(class = "budget-mix-legend", legend_items),
-        if (mix$total_spend <= 0) {
+        if (!is.null(helper_text)) {
           shiny::div(
             class = "budget-mix-helper",
-            "Add tests or interventions to preview the current turn mix."
+            helper_text
           )
         }
       )

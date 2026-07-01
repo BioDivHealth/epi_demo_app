@@ -19,10 +19,11 @@ test_that("starter-intel-only history yields starter-only signal state", {
   expect_identical(state$state, "starter_only")
   expect_identical(state$headline, "Starter alert only")
   expect_match(state$helper_text, "Wait for your own returned results")
+  expect_null(state$summary_text)
   expect_null(state$rows)
 })
 
-test_that("rolling-window signal quality returns fair status and row hints", {
+test_that("rolling-window signal quality returns fair status with two rendered drivers", {
   history <- tibble(
     borough_index = c(1L, 2L, 3L, 4L, 5L, 6L),
     n = c(25L, 25L, 25L, 25L, 25L, 25L),
@@ -44,15 +45,20 @@ test_that("rolling-window signal quality returns fair status and row hints", {
   row_keys <- vapply(state$rows, function(x) x$key, character(1))
   rows <- stats::setNames(state$rows, row_keys)
 
+  expect_length(state$rows, 2L)
   expect_identical(rows$coverage$status, "Fair")
   expect_identical(rows$coverage$value_text, "6/33 boroughs observed over last 3 completed turns")
   expect_true(nzchar(rows$coverage$hint))
-  expect_identical(rows$freshness$status, "Fair")
-  expect_identical(rows$confidence$status, "Fair")
-  expect_identical(rows$continuity$status, "Fair")
+  expect_identical(rows$timeliness$label, "Timeliness")
+  expect_identical(rows$timeliness$status, "Fair")
+  expect_true(nzchar(rows$timeliness$hint))
+  expect_identical(
+    state$summary_text,
+    "Based on 150 returned results across 2 of the last 3 completed turns."
+  )
 })
 
-test_that("continuity is anchored to the last completed turn, not the empty current turn", {
+test_that("summary text is anchored to the last completed turn, not the empty current turn", {
   history <- tibble(
     borough_index = c(1L, 2L, 3L, 4L, 5L, 6L),
     n = c(30L, 30L, 30L, 30L, 30L, 30L),
@@ -71,8 +77,11 @@ test_that("continuity is anchored to the last completed turn, not the empty curr
   rows <- stats::setNames(state$rows, row_keys)
 
   expect_identical(state$metrics$signal_turn, 14L)
-  expect_identical(rows$continuity$status, "Strong")
-  expect_match(rows$continuity$value_text, "3 of last 3 completed turns")
+  expect_identical(rows$timeliness$status, "Strong")
+  expect_identical(
+    state$summary_text,
+    "Based on 180 returned results across 3 of the last 3 completed turns."
+  )
 })
 
 test_that("missing source is treated as player data and stale windows fall to no signal", {
@@ -92,6 +101,7 @@ test_that("missing source is treated as player data and stale windows fall to no
   expect_identical(state$state, "none")
   expect_identical(state$headline, "No signal yet")
   expect_match(state$helper_text, "No recent returned results")
+  expect_null(state$summary_text)
 })
 
 test_that("batch signal summary is hidden outside guided auto", {
@@ -153,7 +163,7 @@ test_that("guided auto batch summary uses only completed turns in the current bl
   expect_identical(summary$metrics$pending_tests, 30L)
   expect_identical(
     summary$summary_text,
-    "3/5 turns | 3/33 boroughs covered | 60 returns | 30 pending"
+    "3/5 turns | 3/33 boroughs covered | 60 returns"
   )
 })
 
@@ -179,7 +189,7 @@ test_that("guided auto batch summary can use the full configured block", {
   expect_identical(summary$metrics$returned_tests, 150L)
 })
 
-test_that("planned turn mix labels cover no-plan, surveillance, balanced, and control-heavy states", {
+test_that("planned turn mix labels cover no-plan, surveillance, balanced, control-heavy, and over-cap states", {
   catalog <- intervention_catalog()
   state <- init_intervention_state(catalog)
   budget <- list(budget = 2000, costs = list(ag = 2, pcr = 6))
@@ -226,12 +236,27 @@ test_that("planned turn mix labels cover no-plan, surveillance, balanced, and co
 
   mix_control <- compute_planned_turn_mix(
     allocations = allocations,
-    selected_interventions = catalog$id,
+    selected_interventions = c("distancing", "case_isolation_tracing", "rapid_labs"),
     budget = small_budget,
     intervention_defs = catalog,
     intervention_state = state,
     observed_this_turn = tibble()
   )
   expect_identical(mix_control$label, "Control-heavy this turn")
+  expect_false(mix_control$over_cap)
   expect_gt(mix_control$intervention_share, 0.45)
+
+  mix_invalid <- compute_planned_turn_mix(
+    allocations = allocations,
+    selected_interventions = catalog$id,
+    budget = small_budget,
+    intervention_defs = catalog,
+    intervention_state = state,
+    observed_this_turn = tibble()
+  )
+  expect_identical(mix_invalid$label, "Intervention package exceeds cap")
+  expect_identical(mix_invalid$label_class, "mix-invalid")
+  expect_true(mix_invalid$over_cap)
+  expect_equal(mix_invalid$cap_limit, 500)
+  expect_equal(mix_invalid$over_cap_by, 230)
 })
