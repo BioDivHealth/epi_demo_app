@@ -48,24 +48,21 @@ help_modal_body <- function(scenario_id = NULL, show_scenario = FALSE, scenario_
 
   shiny::tagList(
     shiny::tags$p(
-      "Your goal is to allocate testing under budget and delay constraints",
-      "to infer how the outbreak is evolving, then compare those inferences",
-      "with the truth reveal. You can delegate specific tests to chosen",
-      "boroughs manually, or use mass testing so the remaining budget is",
-      "spread evenly across boroughs."
+      "Your goal is to use testing under budget and delay constraints to",
+      "infer how the outbreak is evolving, then compare your interpretation",
+      "with the reveal at the end."
     ),
     shiny::tags$p(
-      "Choose between PCR and antigen tests, and use the Tests per click",
-      "slider to set how many tests each manual allocation applies. You can",
-      "also activate interventions. Some work quickly but fade into a weaker",
-      "steady effect (for example Social distancing), some need a warm-up but",
-      "stay useful over many turns (for example Rapid labs and Ventilation),",
-      "and some work best only when you are actually finding cases (Case",
-      "isolation and tracing). Selected interventions consume a share of the",
-      "turn budget while active, so spending more on interventions leaves less",
-      "budget for testing coverage.",
-      "Use the questions below as a guide for interpreting what you see and",
-      "comparing it with the replay."
+      "Auto mode is the default. Start by choosing a testing pool, a borough",
+      "policy, and any interventions, then set the number of auto turns and",
+      "press Start or Run Batch. In manual mode, you can switch test type,",
+      "set Tests per click, and allocate tests directly by clicking boroughs",
+      "before advancing the turn."
+    ),
+    shiny::tags$p(
+      "Interventions use part of the turn budget while active, so stronger",
+      "control usually means less testing coverage. Returned results, not the",
+      "hidden outbreak, drive the map and dashboard."
     ),
     if (isTRUE(scenario_display$visible)) {
       shiny::tagList(
@@ -80,19 +77,17 @@ help_modal_body <- function(scenario_id = NULL, show_scenario = FALSE, scenario_
         shiny::tags$hr()
       )
     },
-    shiny::tags$h5("What you might think of during play"),
+    shiny::tags$h5("How to read the game"),
     shiny::tags$ul(
-      shiny::tags$li("How is your testing strategy evolving (targeted vs broad, PCR vs antigen), and why?"),
-      shiny::tags$li("What do observed positivity and the estimated Rt suggest about the trajectory, given delays?"),
-      shiny::tags$li("Where do results appear on the map, and what might be missing or delayed?")
+      shiny::tags$li("Observed positivity and estimated Rt come from returned results only, so delays and sparse coverage can mislead you."),
+      shiny::tags$li("Broad auto policies help you build coverage quickly; manual targeting is more useful when you want to investigate or concentrate resources."),
+      shiny::tags$li("Grey or quiet areas may mean unsampled or not-yet-returned results, not necessarily low transmission.")
     ),
-    shiny::tags$h5("Reflective questions after reveal"),
+    shiny::tags$h5("Questions for the reveal"),
     shiny::tags$ul(
-      shiny::tags$li("How does observed positivity compare with true prevalence in the replay?"),
-      shiny::tags$li("When did sampling bias or delays distort your inference?"),
-      shiny::tags$li("When did intervention choices improve trajectory but reduce detection coverage?"),
-      shiny::tags$li("How did your intervention spend compare with your baseline comparator?"),
-      shiny::tags$li("What general testing strategy would you adjust next time?")
+      shiny::tags$li("When did your observed signal match the underlying outbreak, and when did delays or coverage gaps distort it?"),
+      shiny::tags$li("How did your balance between testing coverage and interventions shape what you noticed and what you missed?"),
+      shiny::tags$li("What would you change next time: the testing pool, borough policy, intervention mix, or a switch into manual targeting?")
     )
   )
 }

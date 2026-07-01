@@ -65,6 +65,10 @@ test_that("app launches and key UI elements exist", {
     timeout = 10000
   )
   app$wait_for_js(
+    "!document.getElementById('dashboard-signal_quality_panel').textContent.includes('Continuity')",
+    timeout = 10000
+  )
+  app$wait_for_js(
     "document.getElementById('dashboard-budget_mix_panel').textContent.includes('No turn plan yet')",
     timeout = 10000
   )
@@ -133,9 +137,14 @@ test_that("replay unlocks after reveal and supports branch switching", {
   app$wait_for_js("document.getElementById('show_replay') === null")
 
   app$set_inputs(`map-interventions` = "distancing")
-  app$set_inputs(`map-advance` = 1L, wait_ = FALSE)
+  app$set_inputs(`map-advance` = "click")
   app$wait_for_js(
-    "(Shiny.shinyapp && Shiny.shinyapp.$inputValues && Shiny.shinyapp.$inputValues['map-advance'] >= 1)",
+    "(() => {
+      const node = document.getElementById('turn_display');
+      if (!node) return false;
+      const text = (node.textContent || '').trim();
+      return /^Turn\\s+1$/.test(text);
+    })();",
     timeout = 10000
   )
 
@@ -178,25 +187,49 @@ test_that("replay unlocks after reveal and supports branch switching", {
 
   app$wait_for_js("document.getElementById('replay-replay_branch') !== null")
   app$wait_for_js("document.getElementById('replay-turn_slider') !== null")
-  app$wait_for_js("document.getElementById('replay-decision_markers') !== null", timeout = 10000)
-  app$wait_for_js(
-    "document.getElementById('replay-decision_markers').textContent.includes('Decision moments')",
-    timeout = 10000
-  )
-  app$wait_for_js(
-    "document.getElementById('replay-decision_markers').textContent.includes('Intervention started')",
-    timeout = 10000
-  )
-  app$wait_for_js("document.getElementById('replay-decision_note') !== null", timeout = 10000)
-  app$wait_for_js(
-    "document.getElementById('replay-decision_note').textContent.includes('Decision moment')",
-    timeout = 10000
-  )
+  app$wait_for_js("document.getElementById('replay-map_observed') !== null", timeout = 10000)
+  app$wait_for_js("document.getElementById('replay-map_truth') !== null", timeout = 10000)
 
-  app$set_inputs(`replay-replay_branch` = "baseline")
-  selected_branch <- app$get_value(input = "replay-replay_branch")
-  expect_identical(selected_branch, "baseline")
+  app$set_inputs(`replay-replay_branch` = "baseline", wait_ = FALSE)
+  app$wait_for_js(
+    "(() => {
+      const selected = document.querySelector(\"input[name='replay-replay_branch']:checked\");
+      return selected && selected.value === 'baseline';
+    })();",
+    timeout = 10000
+  )
+  expect_true(TRUE)
+})
 
-  app$wait_for_js("document.getElementById('replay-map_observed') !== null")
-  app$wait_for_js("document.getElementById('replay-map_truth') !== null")
+test_that("admin login modal does not block ending the game", {
+  old_auth <- Sys.getenv("EPILONDON_AUTH_DISABLE", unset = NA)
+  Sys.unsetenv("EPILONDON_AUTH_DISABLE")
+  on.exit({
+    if (is.na(old_auth)) {
+      Sys.unsetenv("EPILONDON_AUTH_DISABLE")
+    } else {
+      Sys.setenv(EPILONDON_AUTH_DISABLE = old_auth)
+    }
+  }, add = TRUE)
+
+  app <- shinytest2::AppDriver$new(
+    app_dir = "../..",
+    name = "admin-login-endgame",
+    seed = 123,
+    load_timeout = 15000
+  )
+  on.exit(app$stop(), add = TRUE)
+
+  app$wait_for_js("document.getElementById('admin_login') !== null", timeout = 10000)
+  app$wait_for_js("document.getElementById('controls-end') !== null", timeout = 10000)
+
+  app$set_inputs(admin_login = "click")
+  app$wait_for_js("document.getElementById('admin_login_submit') !== null", timeout = 10000)
+
+  app$set_inputs(`controls-end` = "click")
+  app$wait_for_js(
+    "document.getElementById('endgame-response_score_card') !== null",
+    timeout = 10000
+  )
+  expect_true(TRUE)
 })

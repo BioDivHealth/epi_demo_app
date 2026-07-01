@@ -133,7 +133,11 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     )
 
     sync_guard <- shiny::reactiveVal(NULL)
-    maps_ready <- shiny::reactiveVal(FALSE)
+    observed_map_ready <- shiny::reactiveVal(FALSE)
+    truth_map_ready <- shiny::reactiveVal(FALSE)
+    maps_ready <- shiny::reactive({
+      isTRUE(observed_map_ready()) && isTRUE(truth_map_ready())
+    })
     log_data <- shiny::reactive({
       logs()
     })
@@ -253,7 +257,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       if (is.null(bounds)) {
         return()
       }
-      maps_ready(TRUE)
+      observed_map_ready(TRUE)
       if (identical(sync_guard(), "observed")) {
         sync_guard(NULL)
         return()
@@ -273,7 +277,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       if (is.null(bounds)) {
         return()
       }
-      maps_ready(TRUE)
+      truth_map_ready(TRUE)
       if (identical(sync_guard(), "truth")) {
         sync_guard(NULL)
         return()
@@ -305,14 +309,20 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
     })
 
     shiny::observeEvent(open_signal(), {
-      maps_ready(FALSE)
+      observed_map_ready(FALSE)
+      truth_map_ready(FALSE)
       sync_guard(NULL)
       play_state(FALSE)
       shiny::updateActionButton(session, "play_toggle", label = "Play")
       shiny::isolate(animation_turn(NULL))
 
       session$onFlushed(function() {
-        maps_ready(TRUE)
+        if (!is.null(input$map_observed_bounds)) {
+          observed_map_ready(TRUE)
+        }
+        if (!is.null(input$map_truth_bounds)) {
+          truth_map_ready(TRUE)
+        }
       }, once = TRUE)
 
     }, ignoreInit = TRUE)
@@ -611,31 +621,35 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       )
     })
 
-    shiny::observe({
+    replay_layer_inputs <- shiny::reactive({
       shiny::req(has_ended())
-      if ((is.null(input$map_observed_bounds) || is.null(input$map_truth_bounds)) && !maps_ready()) {
-        shiny::invalidateLater(100, session)
-        return()
-      }
-      if (!maps_ready()) {
-        shiny::invalidateLater(100, session)
-        return()
-      }
-
-      truth_df <- truth_turn()
-      obs_df <- observed_turn()
-      actions_df <- actions_turn()
+      shiny::req(isTRUE(maps_ready()))
 
       window <- input$infectious_period
       if (is.null(window) || !is.finite(window)) {
         window <- 3
       }
 
+      list(
+        truth_df = truth_turn(),
+        obs_df = observed_turn(),
+        actions_df = actions_turn(),
+        truth_log = truth_log(),
+        selected_turn = selected_turn(),
+        show_actions = isTRUE(input$show_actions),
+        truth_metric = input$truth_metric,
+        window = window
+      )
+    })
+
+    shiny::observeEvent(replay_layer_inputs(), {
+      layer_inputs <- replay_layer_inputs()
+
       observed_layers <- replay_build_observed_layers(
         borough_names = borough_names,
-        obs_df = obs_df,
-        actions_df = actions_df,
-        show_actions = isTRUE(input$show_actions)
+        obs_df = layer_inputs$obs_df,
+        actions_df = layer_inputs$actions_df,
+        show_actions = layer_inputs$show_actions
       )
 
       observed_proxy <- leaflet::leafletProxy(ns("map_observed"), data = boros, deferUntilFlush = FALSE) |>
@@ -652,8 +666,8 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
         )
 
-      if (isTRUE(input$show_actions)) {
-        points_df <- replay_build_action_points(actions_df, centroid_tbl)
+      if (layer_inputs$show_actions) {
+        points_df <- replay_build_action_points(layer_inputs$actions_df, centroid_tbl)
         if (nrow(points_df) > 0) {
           observed_proxy <- observed_proxy |>
             leaflet::addCircleMarkers(
@@ -672,11 +686,11 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
 
       truth_layers <- replay_build_truth_layers(
         borough_names = borough_names,
-        truth_df = truth_df,
-        truth_log = truth_log(),
-        selected_turn = selected_turn(),
-        window = window,
-        truth_metric = input$truth_metric
+        truth_df = layer_inputs$truth_df,
+        truth_log = layer_inputs$truth_log,
+        selected_turn = layer_inputs$selected_turn,
+        window = layer_inputs$window,
+        truth_metric = layer_inputs$truth_metric
       )
 
       leaflet::leafletProxy(ns("map_truth"), data = boros, deferUntilFlush = FALSE) |>
@@ -691,7 +705,7 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
           group = "truth",
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
         )
-    })
+    }, ignoreInit = FALSE)
 
     output$actions_table <- shiny::renderTable({
       shiny::req(has_ended())
