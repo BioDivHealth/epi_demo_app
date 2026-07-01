@@ -617,7 +617,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
 
     observeEvent(input$admin_reset_all, {
       shiny::req(is_admin())
-      reset_signal(reset_signal() + 1L)
+      trigger_host_reset(reset_signal)
     })
 
     observeEvent(input$admin_reset_defaults, {

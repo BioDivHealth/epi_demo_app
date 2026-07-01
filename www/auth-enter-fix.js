@@ -4,27 +4,17 @@
       return false;
     }
 
-    if (
+    return Boolean(
       el.matches &&
       (
         el.matches("#auth_user") ||
         el.matches("#auth_pwd") ||
         el.matches("#admin_login_user") ||
-        el.matches("#admin_login_password")
+        el.matches("#admin_login_password") ||
+        el.matches("input[name='auth_user']") ||
+        el.matches("input[name='auth_pwd']")
       )
-    ) {
-      return true;
-    }
-
-    if (el.matches && el.matches("input[type='password']")) {
-      return true;
-    }
-
-    if (el.matches && el.matches("input[name='auth_user'], input[name='user']")) {
-      return true;
-    }
-
-    return false;
+    );
   }
 
   function findLoginButton() {
@@ -33,9 +23,8 @@
       document.querySelector("#auth_button") ||
       document.querySelector("#auth-go_auth") ||
       document.querySelector("button#go_auth") ||
-      document.querySelector("#button") ||
-      document.querySelector(".auth .btn, .auth button[type='submit']") ||
-      document.querySelector("button[type='submit']")
+      document.querySelector(".auth button[type='submit']") ||
+      document.querySelector(".auth .btn")
     );
   }
 

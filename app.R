@@ -57,22 +57,7 @@ if (!auth_disabled && file.exists(auth_credentials_path)) {
   ), call. = FALSE)
 }
 
-shared_admin <- reactiveValues(
-  Rt = 1.3,
-  k = 0.5,
-  imports_prob = 0.01,
-  lambda_import = 0.5,
-  seed_borough = NA_integer_,
-  seed_cases = 100L,
-  kernel_key = "default",
-  susceptible_frac = 1,
-  scenario_id = "custom",
-  show_scenario = FALSE,
-  death_ifr = 0.002,
-  death_delay = 6L
-)
-
-shared_reset_signal <- reactiveVal(0L)
+host_admin_store <- create_host_admin_store()
 
 empty_results <- tibble(
   borough_index = integer(),
@@ -128,7 +113,7 @@ app_ui <- page_fluid(
   uiOutput("main_layout"),
   div(
     class = "text-muted small mt-2",
-    "Data: GLA/ONS borough boundaries. Click boroughs to allocate tests, then advance turns."
+    "Data: GLA/ONS borough boundaries. Auto mode is the default; switch to Manual if you want to click boroughs yourself."
   )
 )
 
@@ -136,6 +121,8 @@ ui <- app_ui
 
 server <- function(input, output, session) {
   turn_progress_notification_id <- "turn-progress-toast"
+  host_admin_state <- host_admin_store$state
+  host_reset_counter <- host_admin_store$reset_counter
   admin_session <- reactiveValues(
     active = FALSE,
     user = NULL
@@ -157,8 +144,8 @@ server <- function(input, output, session) {
   })
 
   show_help_modal <- function() {
-    scenario_id <- isolate(shared_admin$scenario_id)
-    show_scenario <- isTRUE(isolate(shared_admin$show_scenario))
+    scenario_id <- isolate(host_admin_state$scenario_id)
+    show_scenario <- isTRUE(isolate(host_admin_state$show_scenario))
     showModal(modalDialog(
       title = "Welcome and guidance",
       help_modal_body(
@@ -292,39 +279,44 @@ server <- function(input, output, session) {
   })
 
   output$main_layout <- renderUI({
-    content <- bslib::layout_columns(
-      col_widths = if (is_admin()) c(8, 4) else c(7, 5),
-      fill = FALSE,
-      fillable = FALSE,
-      mod_map_ui(
-        "map",
-        intervention_defs = intervention_defs,
-        run_controls_ui = mod_controls_run_ui("controls"),
-        run_mode_ui = mod_controls_run_mode_ui("controls"),
-        testing_pool_ui = mod_controls_testing_pool_ui("controls"),
-        borough_policy_ui = mod_controls_borough_policy_ui("controls")
-      ),
-      mod_dashboard_ui(
-        "dashboard",
-        turn_ui = div(
-          class = "turn-badge badge bg-secondary",
-          textOutput("turn_display", inline = TRUE)
+    div(
+      class = "app-shell",
+      div(
+        class = "app-shell-main",
+        bslib::layout_columns(
+          col_widths = c(7, 5),
+          fill = FALSE,
+          fillable = FALSE,
+          mod_map_ui(
+            "map",
+            intervention_defs = intervention_defs,
+            run_controls_ui = mod_controls_run_ui("controls"),
+            run_mode_ui = mod_controls_run_mode_ui("controls"),
+            testing_pool_ui = mod_controls_testing_pool_ui("controls"),
+            borough_policy_ui = mod_controls_borough_policy_ui("controls")
+          ),
+          mod_dashboard_ui(
+            "dashboard",
+            turn_ui = div(
+              class = "turn-badge badge bg-secondary",
+              textOutput("turn_display", inline = TRUE)
+            )
+          )
         )
-      )
+      ),
+      uiOutput("admin_sidebar")
     )
-    if (is_admin()) {
-      bslib::layout_sidebar(
-        content,
-        sidebar = bslib::sidebar(
-          mod_controls_ui("controls"),
-          width = "280px",
-          open = "desktop"
-        ),
-        fill = FALSE
-      )
-    } else {
-      content
+  })
+
+  output$admin_sidebar <- renderUI({
+    if (!is_admin()) {
+      return(NULL)
     }
+
+    div(
+      class = "app-shell-sidebar",
+      mod_controls_ui("controls")
+    )
   })
 
   turn <- reactiveVal(0L)
@@ -338,7 +330,7 @@ server <- function(input, output, session) {
   auto_stop_reason <- reactiveVal(NULL)
 
   active_kernel <- reactive({
-    key <- shared_admin$kernel_key
+    key <- host_admin_state$kernel_key
     if (is.null(key) || key == "" || identical(key, "default")) {
       return(inputs$K)
     }
@@ -349,7 +341,7 @@ server <- function(input, output, session) {
   })
 
   effective_pop_tbl <- reactive({
-    frac <- shared_admin$susceptible_frac
+    frac <- host_admin_state$susceptible_frac
     if (is.null(frac) || !is.finite(frac)) {
       frac <- 1
     }
@@ -365,8 +357,8 @@ server <- function(input, output, session) {
 
   output$scenario_display <- renderUI({
     scenario_display <- student_scenario_display(
-      scenario_id = shared_admin$scenario_id,
-      show_scenario = shared_admin$show_scenario
+      scenario_id = host_admin_state$scenario_id,
+      show_scenario = host_admin_state$show_scenario
     )
     if (!isTRUE(scenario_display$visible)) {
       return(NULL)
@@ -397,8 +389,8 @@ server <- function(input, output, session) {
   controls <- mod_controls_server(
     id = "controls",
     is_admin = is_admin,
-    shared_admin = shared_admin,
-    reset_signal = shared_reset_signal,
+    shared_admin = host_admin_state,
+    reset_signal = host_reset_counter,
     borough_names = inputs$pop_tbl$borough_name
   )
 
@@ -603,12 +595,12 @@ server <- function(input, output, session) {
     budget <- controls$budget()
 
     n_boros <- nrow(inputs$pop_tbl)
-    seed_borough <- shared_admin$seed_borough
+    seed_borough <- host_admin_state$seed_borough
     if (is.null(seed_borough) || is.na(seed_borough) ||
         seed_borough < 1L || seed_borough > n_boros) {
       seed_borough <- sample.int(n_boros, 1L)
     }
-    seed_cases <- as.integer(shared_admin$seed_cases)
+    seed_cases <- as.integer(host_admin_state$seed_cases)
     if (length(seed_cases) != 1L || is.na(seed_cases) || seed_cases < 0L) {
       seed_cases <- 100L
     }
@@ -898,19 +890,17 @@ server <- function(input, output, session) {
     player_result <- run_single_turn(player_request)
     baseline_result <- run_single_turn(baseline_request)
 
-    budget_failed <- identical(player_result$status, "budget_exceeded") ||
-      identical(baseline_result$status, "budget_exceeded")
-    if (isTRUE(budget_failed)) {
-      error_message <- if (identical(player_result$status, "budget_exceeded")) {
-        player_result$error_message
-      } else {
-        baseline_result$error_message
-      }
+    failure_statuses <- c("budget_exceeded", "intervention_cap_exceeded")
+    player_failed <- isTRUE(player_result$status %in% failure_statuses)
+    baseline_failed <- isTRUE(baseline_result$status %in% failure_statuses)
+    if (isTRUE(player_failed || baseline_failed)) {
+      failed_result <- if (player_failed) player_result else baseline_result
+      error_message <- failed_result$error_message
 
       showNotification(error_message, type = "error")
       if (identical(source, "auto")) {
         auto_running(FALSE)
-        auto_stop_reason("budget_exceeded")
+        auto_stop_reason(failed_result$status)
       }
       return(FALSE)
     }
@@ -1008,7 +998,7 @@ server <- function(input, output, session) {
     TRUE
   }
 
-  observeEvent(shared_reset_signal(), {
+  observeEvent(host_reset_counter(), {
     removeNotification(turn_progress_notification_id)
     reset_auto_state(reason = "reset_or_reseed")
     initialise_truth(seed = controls$reseed())
@@ -1218,6 +1208,7 @@ server <- function(input, output, session) {
 
   observeEvent(controls$end(), {
     req(truth_state())
+    removeModal()
 
     if (isTRUE(auto_running())) {
       auto_running(FALSE)

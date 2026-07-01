@@ -12,6 +12,7 @@ LazyData: true
 Depends: R (>= 4.3)
 Imports:
     shiny,
+    shinyjs,
     shinymanager,
     bslib,
     leaflet,
