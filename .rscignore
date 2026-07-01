@@ -10,7 +10,6 @@
 .Rproj.user
 AGENTS.md
 AGENTS_nested.md
-config/credentials.csv
 data_raw
 docs
 generate_agents_from_cursor.py
