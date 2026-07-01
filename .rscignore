@@ -21,6 +21,7 @@ README.md
 renv
 renv.lock
 rsconnect
+scripts/dev/export_codex_chats.py
 Screenshot 2025-10-17 at 18.08.50.png
 Screenshot 2025-10-17 at 18.13.08.png
 session-ses_3464.md
