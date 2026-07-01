@@ -1,0 +1,29 @@
+.cmds
+.cursor
+.git
+.Rbuildignore
+.Rhistory
+.Rprofile
+.rsconnectignore
+.rsyncignore
+.vscode
+.Rproj.user
+AGENTS.md
+AGENTS_nested.md
+data_raw
+docs
+generate_agents_from_cursor.py
+Outbreak_London_Project_Summary.md
+prepare_data.R
+pr3-reveal-verification.png
+random
+README.md
+renv
+renv.lock
+rsconnect
+Screenshot 2025-10-17 at 18.08.50.png
+Screenshot 2025-10-17 at 18.13.08.png
+session-ses_3464.md
+session-ses_3465.md
+tests
+.DS_Store

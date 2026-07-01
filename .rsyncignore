@@ -1,0 +1,14 @@
+.cursor/
+.vscode/
+.git/
+.Rhistory
+*.Rproj
+.Rproj.user/
+data_raw/
+random/
+tests/
+renv/library/
+rsconnect/
+Screenshot*
+.DS_Store
+.cmds
