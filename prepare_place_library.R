@@ -21,7 +21,7 @@
 #
 # Rules (deliberately blunt, see R/place_library.R). Every place needs at least
 # 10 areas to be playable; places that cannot reach 10 are left out.
-#   country -> the coarsest admin level (1, then 2, then 3) giving 10-250 areas
+#   country -> the coarsest admin level (1, then 2, then 3) giving 10-600 areas
 #              once far islands are dropped
 #   city    -> the coarsest admin level (2, then 3) with at least 10 areas inside
 #              the urban radius (at most the 60 nearest); if neither reaches 10,
@@ -49,7 +49,7 @@ dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 gravity <- list(alpha = 1, beta = 2)
 min_areas <- 10           # fewer areas than this is not a playable game
-max_country_areas <- 250  # a country level with more areas than this is too fiddly
+max_country_areas <- 600  # a country level with more areas than this is too fiddly (Australia has 545)
 max_city_areas <- 60      # cities keep at most the 60 nearest areas
 city_min_pop <- 1e6       # cities at least this big (capitals always included)
 

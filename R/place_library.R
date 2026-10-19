@@ -4,7 +4,7 @@
 # and a population raster into one small .rds per place plus an index.
 # At run time the app only looks things up here: no internet needed.
 #
-#   country -> the coarsest admin level (1, 2, 3) giving 10-250 areas
+#   country -> the coarsest admin level (1, 2, 3) giving 10-600 areas
 #   city    -> the coarsest admin level (2, 3) giving at least 10 areas inside
 #              the urban radius; otherwise the 10 nearest at the finest level
 #   Places that cannot reach 10 areas are left out (thin games are not playable).
