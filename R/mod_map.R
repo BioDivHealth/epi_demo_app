@@ -106,7 +106,8 @@ mod_map_server <- function(
     observed_history = shiny::reactive(NULL),
     pop_tbl,
     app_ready = shiny::reactive(TRUE),
-    intervention_defs = intervention_catalog()) {
+    intervention_defs = intervention_catalog(),
+    first_report = shiny::reactive(NULL)) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     ready <- shiny::reactive({
@@ -256,7 +257,8 @@ mod_map_server <- function(
             "<div style='font-size:11px;line-height:1.4'>",
             "<span style='display:inline-block;width:10px;height:10px;background:#3d4f61'></span> no results this report<br>",
             "<span style='display:inline-block;width:10px;height:10px;border:3px solid #ff4d4d'></span> restricted<br>",
-            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #4fc3f7'></span> chosen for testing",
+            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #4fc3f7'></span> chosen for testing<br>",
+            "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4d;border:2px solid #fff'></span> first patient reported",
             "</div>"
           ),
           position = "bottomleft"
@@ -528,6 +530,25 @@ mod_map_server <- function(
 
       # (no circles for planned tests: they covered the map; chosen areas
       # have a blue outline instead)
+
+      # where the first patient was reported (public, stays all game)
+      proxy <- proxy |> leaflet::clearGroup("first_report")
+      first <- first_report()
+      if (!is.null(first) && !is.na(first$index)) {
+        spot <- centroid_tbl[first$index, ]
+        proxy |>
+          leaflet::addCircleMarkers(
+            lng = spot$lng,
+            lat = spot$lat,
+            radius = 8,
+            color = "#ffffff",
+            weight = 2,
+            fillColor = "#ff4d4d",
+            fillOpacity = 1,
+            label = first$label,
+            group = "first_report"
+          )
+      }
     })
 
     list(

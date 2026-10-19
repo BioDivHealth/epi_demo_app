@@ -666,7 +666,16 @@ server <- function(input, output, session) {
     observed_history = reactive(observation_state()$history),
     pop_tbl = inputs$pop_tbl,
     app_ready = app_ready,
-    intervention_defs = intervention_defs
+    intervention_defs = intervention_defs,
+    # only the public first report: the area and what happened there
+    first_report = reactive({
+      info <- starter_alert_info()
+      if (is.null(info)) return(NULL)
+      list(
+        index = match(info$alerted, inputs$pop_tbl$borough_name),
+        label = sprintf("First patient %s here, %s", info$first_event, info$report_date_txt)
+      )
+    })
   )
 
   dashboard_module <- mod_dashboard_server(
@@ -726,7 +735,9 @@ server <- function(input, output, session) {
       true_start = inputs$pop_tbl$borough_name[state$alert$true_start],
       hidden_days = state$alert$hidden_turns * config$bio$gen_days,
       began = report_date - state$alert$hidden_turns * config$bio$gen_days,
-      infected_by_report = state$start_infections
+      infected_by_report = state$start_infections,
+      first_event = if (identical(state$alert$trigger, "death")) "died" else "reported",
+      report_date_txt = format_date(report_date)
     ))
 
     first_event <- if (identical(state$alert$trigger, "death")) "died of" else "presented with"
