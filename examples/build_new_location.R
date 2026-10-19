@@ -46,11 +46,20 @@ units <- units_raw[!units_raw$name %in% c("Azores", "Madeira"), ]
 message("Units: ", nrow(units))
 
 # ---- population ----
+# Preference order: user CSV > WorldPop raster summed per unit > area placeholder
+raster_path <- file.path("data_raw", "global", "worldpop", "prt_ppp_2020_1km_Aggregated_UNadj.tif")
+
 if (file.exists(pop_csv)) {
   pop_tbl <- read.csv(pop_csv, stringsAsFactors = FALSE)
   message("Using population from ", pop_csv)
+} else if (file.exists(raster_path)) {
+  # WorldPop 2020, 1 km, UN-adjusted: people per cell, summed within each district
+  unit_pop <- raster_population(units, raster_path)
+  pop_tbl <- data.frame(name = units$name, pop = round(unit_pop))
+  write.csv(pop_tbl, pop_csv, row.names = FALSE)
+  message("Using WorldPop raster; wrote ", pop_csv)
 } else {
-  warning("No ", pop_csv, " found; using an area-based PLACEHOLDER population")
+  warning("No ", pop_csv, " or raster found; using an area-based PLACEHOLDER population")
 
   # National total from Natural Earth admin-0
   country_sf <- rnaturalearth::ne_countries(country = country, returnclass = "sf")
@@ -63,10 +72,24 @@ if (file.exists(pop_csv)) {
     name = units$name,
     pop = round(national_pop * area_share)
   )
-
-  # Write a template so the user can paste real numbers in
-  write.csv(pop_tbl, file.path(out_dir, "population_template.csv"), row.names = FALSE)
 }
+
+# ---- sense-check figure: the admin units and their population ----
+admin_df <- merge(units[, "name"], pop_tbl, by = "name")
+admin_df$label <- paste0(admin_df$name, "
+", round(admin_df$pop / 1e3), "k")
+
+admin_map <- ggplot(admin_df) +
+  geom_sf(aes(fill = pop / 1e6), colour = "white", linewidth = 0.3) +
+  geom_sf_text(aes(label = label), size = 2.4) +
+  scale_fill_distiller(name = "Population
+(millions)", palette = "Blues", direction = 1) +
+  labs(title = paste0(country, ": units in play (", nrow(admin_df), ")"),
+       subtitle = "Population = WorldPop 2020 1 km raster summed within each unit",
+       x = NULL, y = NULL) +
+  theme_minimal()
+
+ggsave(file.path(out_dir, "admin_units.png"), admin_map, width = 5, height = 7, dpi = 120)
 
 # ---- build the bundle ----
 inputs <- build_location_inputs(
@@ -86,7 +109,7 @@ self_share <- diag(inputs$K)
 print(round(sort(self_share, decreasing = TRUE), 2))
 
 # ---- sense-check figure: one unit's kernel row ----
-# Row i of K says where unit i's new infections are drawn from.
+# Row j of K = where unit j's onward infections land (engine: crossprod(K, I) * Rt).
 # Expect: high on the unit itself, high on big/near neighbours, fading with distance.
 focus_idx <- match(focus_unit, inputs$pop_tbl$borough_name)
 
@@ -99,9 +122,9 @@ kernel_map <- ggplot(map_df) +
   geom_sf(data = map_df[map_df$is_focus, ], fill = NA, colour = "black", linewidth = 0.8) +
   scale_fill_viridis_c(name = "K weight", trans = "sqrt") +
   labs(
-    title = paste0("Gravity kernel row for ", focus_unit),
-    subtitle = paste0("K_ij ~ pop_j^", gravity$alpha, " / d_ij^", gravity$beta,
-                      "; row sums to 1 (outlined = focus unit)")
+    title = paste0("Gravity kernel row for ", focus_unit, " (outlined)"),
+    subtitle = paste0("Where ", focus_unit, "'s onward infections land: K[j, i] ~ pop_i^",
+                      gravity$alpha, " / d^", gravity$beta, "; row sums to 1")
   ) +
   theme_minimal()
 

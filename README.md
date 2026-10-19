@@ -149,11 +149,31 @@ inputs <- build_location_inputs(units_sf, pop = pop_tbl, name_col = "name",
 save_location_inputs(inputs, "locations/my_country")
 ```
 
-- `K` is a **gravity kernel**: `K_ij ∝ pop_j^alpha / d_ij^beta` between unit centroids, with a within-unit distance `(2/3)·sqrt(area/π)` on the diagonal, row-normalised to 1. (London's `kernel_K.rds` is plain queen adjacency; it is unchanged.)
+- `K` is a **gravity kernel** using the engine's convention: row j = where unit j's onward infections land, `K[j, i] ∝ pop_i^alpha / d_ji^beta` (destination population) between unit centroids, with a within-unit distance `(2/3)·sqrt(area/π)` on the diagonal; each row sums to 1 and the engine spreads with `crossprod(K, I)`. The within-unit term is already in K, so don't blend `within_share` on top. (London's `kernel_K.rds` is unchanged.)
 - Queen adjacency (`nb`, `A`) is built exactly as in `prepare_data.R`.
-- `pop` is a numeric vector in unit order, or a data frame with `pop` and a name column. Natural Earth admin-1 has **no population**; sum a WorldPop or GHS-POP raster over each polygon, or use census tables.
-- Worked example (Portugal, plus a map of one unit's kernel row to sense-check the weights): `source("examples/build_new_location.R")`.
+- `pop` is a numeric vector in unit order, or a data frame with `pop` and a name column. Natural Earth admin-1 has **no population**; `raster_population(units_sf, "worldpop.tif")` sums a WorldPop or GHS-POP raster over each polygon.
+- Worked example (Portugal: WorldPop 2020 1 km population per district, an admin map, and a map of one unit's kernel row): `source("examples/build_new_location.R")`.
 - `load_inputs()` still requires 33 boroughs, so the app itself stays London-only for now.
+
+### Any country or city: the place library
+
+Players type a country or city; the game zooms one admin level down (country → regions, city → local areas). Everything is prebuilt offline, so the app needs no internet for data.
+
+The built library ships with the code in `locations/library/` (~20 MB: 195 countries, 600 cities; one small `.rds` per place + `index.rds` + `LICENSES.csv`). To try it: `shiny::runApp("examples/location_picker")`. It has a "Choose country or city" box, a map showing the surrounding area in grey and the units in play in colour, and returns the game bundle. The map has no web basemap, so it works offline.
+
+To rebuild (only when sources or rules change; ~1 hour):
+
+1. Download once into `data_raw/global/` (git-ignored, ~880 MB): geoBoundaries CGAZ `geoBoundariesCGAZ_ADM1.gpkg` + `geoBoundariesCGAZ_ADM2.gpkg` + `geoBoundariesOpen-meta.csv`, and GHS-POP 2020 30 arcsec (`ghs_pop_2020_30ss.zip`). Links are in the script header.
+2. `source("prepare_place_library.R")`. Set `options(place_library.test_run = TRUE)` first to build a dozen test places in a few minutes.
+3. `source("examples/plot_place_library.R")` draws a grid of places to sense-check the result.
+
+Rules (in `R/place_library.R`):
+- A country uses admin-1 units. It uses admin-2 instead if it has fewer than 8 admin-1 units, but only when that gives 250 units or fewer. Only the most populous cluster of units is kept, so far islands drop out.
+- A city (≥1 million people, or a capital) uses the admin-2 units within its Natural Earth urban radius (at least 5, at most 60). Where admin-2 units are large, such as Indian districts, a "city" becomes a region.
+- London uses the original 33 boroughs from `data/`.
+- K is not stored. It is rebuilt on load from unit centroids, areas and population, so `load_place(..., gravity = list(alpha, beta))` can change the kernel at game time.
+
+**Data licences:** boundaries keep each country's geoBoundaries licence (mostly ODbL, CC BY, public domain; some CC BY-SA). Places needing direct permission (Oman) are excluded. See [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) for the credits and the share-alike terms.
 
 ## Tests
 
@@ -161,6 +181,7 @@ The test suite covers:
 
 - `test_adjacency.R` — Validates adjacency matrix and kernel properties
 - `test_build_location_inputs.R` — New-location bundle: K square, rows sum to 1, population aligned, nearer/bigger units weighted more
+- `test_place_library.R` — Place search ranking, city unit picking, island dropping, prebuilt places load as valid bundles
 - `test_branching.R` — Verifies `step_truth()` produces valid incidence
 - `test_observation.R` — Tests observation model and delay queues
 - `test_interventions.R` — Checks intervention effect calculations

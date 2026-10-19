@@ -58,19 +58,22 @@ test_that("missing or bad population is an error", {
                "positive")
 })
 
+# Convention: row j = where unit j's onward infections land
+
 test_that("closer units get more weight (equal populations)", {
   units <- make_row_of_squares(4)
   inputs <- build_location_inputs(units, pop = rep(1000, 4), name_col = "name", planar_crs = 3857)
   K <- inputs$K
 
-  # From unit 1: neighbour > two away > three away
+  # Unit 1's infections land more on its neighbour than further away
   expect_gt(K[1, 2], K[1, 3])
   expect_gt(K[1, 3], K[1, 4])
 })
 
 test_that("bigger units get more weight (equal distances)", {
   units <- make_row_of_squares(3)
-  # unit_2 sits in the middle; units 1 and 3 are equally far from it
+  # unit_2 sits in the middle; units 1 and 3 are equally far from it,
+  # so more of unit_2's infections land in the bigger unit_3
   inputs <- build_location_inputs(units, pop = c(1000, 1000, 5000), name_col = "name", planar_crs = 3857)
   K <- inputs$K
 
@@ -113,4 +116,17 @@ test_that("save_location_inputs refuses to write into data/", {
   save_location_inputs(inputs, out_dir)
   expect_true(file.exists(file.path(out_dir, "kernel_K.rds")))
   expect_true(file.exists(file.path(out_dir, "pop_boroughs.rds")))
+})
+
+test_that("spreading with crossprod(K, I) conserves cases (each case causes Rt)", {
+  units <- make_row_of_squares(4)
+  inputs <- build_location_inputs(units, pop = c(100, 200, 300, 400), name_col = "name", planar_crs = 3857)
+
+  I <- c(10, 0, 5, 0)
+  Rt <- 1.5
+  mu <- as.numeric(crossprod(inputs$K, I)) * Rt
+
+  expect_equal(sum(mu), sum(I) * Rt)
+  # Some of unit 1's cases land in unit 2, which had none
+  expect_gt(mu[2], 0)
 })

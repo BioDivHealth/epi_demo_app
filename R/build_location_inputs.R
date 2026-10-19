@@ -4,15 +4,19 @@
 # These helpers build the same bundle for any polygons (e.g. Natural Earth
 # admin-1 units for one country) so the game can be pointed at a new place.
 #
-# Differences from the London kernel (prepare_data.R):
-#   - London K is queen adjacency, row-normalised (infection only moves to
-#     touching boroughs).
-#   - Here K is a gravity kernel between unit centroids:
-#         K_ij  proportional to  pop_j^alpha / d_ij^beta
-#     with an explicit within-unit term on the diagonal, then row-normalised
-#     so each row sums to 1 (same semantics as docs/rules/epidemiological-model.md:
-#     I_{t+1} ~ NegBin(K %*% I_t * Rt, k)).
-#   - Queen adjacency (nb, A) is still built and returned, exactly as London.
+# Kernel convention (same as the London engine, docs/rules/epidemiological-model.md):
+#   Row j = where unit j's onward infections land; each row sums to 1, and the
+#   engine spreads with crossprod(K, I) * Rt, so every case causes Rt new cases
+#   wherever it is.
+#
+# Here K is a gravity kernel between unit centroids:
+#     K[j, i]  proportional to  pop_i^alpha / d_ji^beta    (i = destination)
+# with an explicit within-unit term on the diagonal, then rows normalised to 1.
+#
+# London builds its K differently (queen adjacency blended with a within-borough
+# share inside load_inputs()). This K already includes the within-unit term,
+# so use it as is: do NOT blend another within_share on top.
+# Queen adjacency (nb, A) is still built and returned, as for London.
 #
 # Nothing here reads or writes data/. The London default is untouched.
 
@@ -98,8 +102,11 @@ build_location_inputs <- function(units_sf,
   }
   boros_planar <- sf::st_transform(boros, planar_crs)
 
-  # ---- queen adjacency (same recipe as prepare_data.R) ----
-  nb <- spdep::poly2nb(sf::st_geometry(boros_planar), queen = TRUE)
+  # ---- queen adjacency ----
+  # Units are neighbours if they share at least one point. GEOS st_intersects
+  # gives exactly the same London adjacency as spdep::poly2nb (prepare_data.R)
+  # but is ~100x faster on detailed coastlines (Canada: 2 s vs 5 min).
+  nb <- queen_nb(boros_planar)
   A <- spdep::nb2mat(nb, style = "B", zero.policy = TRUE)
 
   # Islands (no neighbours) get a 1 on the diagonal, as in London
@@ -110,6 +117,13 @@ build_location_inputs <- function(units_sf,
 
   # ---- gravity kernel ----
   K <- gravity_kernel(boros_planar, unit_pop, alpha = alpha, beta = beta)
+
+  # Keep centroid and area on the map layer, so K can be rebuilt later
+  # (e.g. with other alpha/beta) without the full polygons
+  points <- unit_points(boros_planar)
+  boros_wgs84$centroid_lon <- points$centroid_lon
+  boros_wgs84$centroid_lat <- points$centroid_lat
+  boros_wgs84$area_km2 <- points$area_km2
 
   # ---- population table ----
   pop_tbl <- tibble::tibble(
@@ -141,26 +155,47 @@ build_location_inputs <- function(units_sf,
 
 #' Gravity kernel between unit centroids
 #'
-#' K_ij is proportional to pop_j^alpha / d_ij^beta, rows normalised to 1.
+#' Row j = where unit j's onward infections land:
+#' K[j, i] is proportional to pop_i^alpha / d_ji^beta (destination population),
+#' rows normalised to 1. Spread with crossprod(K, I) * Rt.
 #' The diagonal uses a within-unit distance: the mean distance from a random
 #' point in a disc to its centre, (2/3) * sqrt(area / pi). Bigger units
 #' therefore keep less of their own infection than small dense ones.
 #'
-#' @param units_planar sf object in a planar CRS (metres).
+#' @param units_planar sf object in a planar CRS (metres), with `borough_name`.
 #' @param pop Numeric population, same order as `units_planar`.
 #' @param alpha Population exponent.
 #' @param beta Distance-decay exponent.
 #' @return N x N row-normalised matrix with unit names as dimnames.
 #' @export
 gravity_kernel <- function(units_planar, pop, alpha = 1, beta = 2) {
+  points <- unit_points(units_planar)
+  gravity_kernel_from_points(points$centroid_lon, points$centroid_lat, points$area_km2,
+                             pop, units_planar$borough_name, alpha = alpha, beta = beta)
+}
 
-  # Centroid-to-centroid distances in km
-  centroids <- sf::st_centroid(sf::st_geometry(units_planar))
-  dist_m <- sf::st_distance(centroids)
-  dist_km <- matrix(as.numeric(dist_m), nrow = length(pop)) / 1000
+
+#' Gravity kernel from unit centroids and areas
+#'
+#' Same kernel as gravity_kernel(), from stored numbers instead of polygons
+#' (the place library keeps these, so K is rebuilt on load and alpha/beta
+#' can be changed at game time).
+#'
+#' @param lon,lat Unit centroids (degrees).
+#' @param area_km2 Unit areas (km^2), for the within-unit distance.
+#' @param pop Unit populations.
+#' @param unit_names Names for the dimnames.
+#' @export
+gravity_kernel_from_points <- function(lon, lat, area_km2, pop, unit_names,
+                                       alpha = 1, beta = 2) {
+  n_units <- length(pop)
+
+  # Centroid-to-centroid great-circle distances in km
+  dist_km <- outer(seq_len(n_units), seq_len(n_units), function(i, j) {
+    haversine_km(lon[i], lat[i], lon[j], lat[j])
+  })
 
   # Within-unit distance for the diagonal (km)
-  area_km2 <- as.numeric(sf::st_area(units_planar)) / 1e6
   self_km <- (2 / 3) * sqrt(area_km2 / pi)
   diag(dist_km) <- self_km
 
@@ -168,14 +203,14 @@ gravity_kernel <- function(units_planar, pop, alpha = 1, beta = 2) {
     stop("Zero distance between units; check for duplicate or empty polygons")
   }
 
-  # Gravity weights: column j is the source population
-  pop_weight <- matrix(pop^alpha, nrow = length(pop), ncol = length(pop), byrow = TRUE)
+  # Gravity weights: row = source unit, column = destination unit,
+  # so each column carries the destination population
+  pop_weight <- matrix(pop^alpha, nrow = n_units, ncol = n_units, byrow = TRUE)
   W <- pop_weight / dist_km^beta
 
   # Row-normalise so each row sums to 1
   K <- W / rowSums(W)
 
-  unit_names <- units_planar$borough_name
   dimnames(K) <- list(unit_names, unit_names)
   K
 }
@@ -211,7 +246,67 @@ save_location_inputs <- function(inputs, out_dir) {
 }
 
 
+#' Sum a population raster within each polygon
+#'
+#' Works with any people-per-cell raster (WorldPop, GHS-POP). Partial cells
+#' on unit edges are weighted by the share of the cell inside the unit.
+#'
+#' @param units_sf sf polygons.
+#' @param raster_path Path to a GeoTIFF of people per cell.
+#' @return Numeric population per unit, same order as `units_sf`.
+#' @export
+raster_population <- function(units_sf, raster_path) {
+  if (!requireNamespace("exactextractr", quietly = TRUE) || !requireNamespace("terra", quietly = TRUE)) {
+    stop("Packages 'terra' and 'exactextractr' are needed; install.packages(c('terra', 'exactextractr'))")
+  }
+
+  pop_raster <- terra::rast(raster_path)
+
+  # Match the raster CRS before extracting
+  units_in_raster_crs <- sf::st_transform(units_sf, terra::crs(pop_raster))
+
+  unit_pop <- exactextractr::exact_extract(pop_raster, units_in_raster_crs, "sum", progress = FALSE)
+  unit_pop
+}
+
+
 # ---- small helpers ----------------------------------------------------------
+
+# Centroid (lon/lat) and area (km^2) of each unit, from planar polygons
+unit_points <- function(units_planar) {
+  centroids <- sf::st_centroid(sf::st_geometry(units_planar))
+  centroids_lonlat <- sf::st_coordinates(sf::st_transform(centroids, 4326))
+  data.frame(
+    centroid_lon = centroids_lonlat[, 1],
+    centroid_lat = centroids_lonlat[, 2],
+    area_km2 = as.numeric(sf::st_area(units_planar)) / 1e6
+  )
+}
+
+# Great-circle distance in km
+haversine_km <- function(lon1, lat1, lon2, lat2) {
+  to_rad <- pi / 180
+  d_lat <- (lat2 - lat1) * to_rad
+  d_lon <- (lon2 - lon1) * to_rad
+  a <- sin(d_lat / 2)^2 + cos(lat1 * to_rad) * cos(lat2 * to_rad) * sin(d_lon / 2)^2
+  6371 * 2 * asin(pmin(1, sqrt(a)))
+}
+
+# Queen neighbours as an spdep "nb" object (0L = no neighbours)
+queen_nb <- function(units_planar) {
+  touching <- sf::st_intersects(units_planar)
+
+  nb <- lapply(seq_along(touching), function(i) {
+    neighbours <- setdiff(touching[[i]], i)
+    if (length(neighbours) == 0) 0L else sort(as.integer(neighbours))
+  })
+
+  class(nb) <- "nb"
+  attr(nb, "region.id") <- as.character(seq_along(nb))
+  attr(nb, "type") <- "queen"
+  attr(nb, "sym") <- TRUE
+  nb
+}
 
 # Return population as a numeric vector in the same order as unit_names
 align_population <- function(pop, unit_names, name_col) {
