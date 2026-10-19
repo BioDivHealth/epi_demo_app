@@ -445,9 +445,10 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
         leaflet::clearGroup("action_markers") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
-          weight = 1,
-          color = "#555555",
-          fillOpacity = 0.7,
+          weight = 0.8,
+          color = "#ffffff",
+          opacity = 0.8,
+          fillOpacity = 0.9,
           fillColor = observed_layers$fill_cols,
           label = lapply(observed_layers$labels, htmltools::HTML),
           group = "observed",
@@ -485,9 +486,10 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
         leaflet::clearGroup("truth") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
-          weight = 1,
-          color = "#08519c",
-          fillOpacity = 0.7,
+          weight = 0.8,
+          color = "#ffffff",
+          opacity = 0.8,
+          fillOpacity = 0.9,
           fillColor = truth_layers$fill_cols,
           label = lapply(truth_layers$labels, htmltools::HTML),
           group = "truth",

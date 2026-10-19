@@ -86,16 +86,18 @@ replay_base_map <- function(boros, bounds_list, reset_js, bbox, group) {
   leaflet::leaflet(
     boros,
     options = leaflet::leafletOptions(
+      scrollWheelZoom = FALSE,
       # keep the view on the place, at whatever zoom fits it
       maxBounds = bounds_list
     )
   ) |>
     leaflet::addPolygons(
       layerId = boros$borough_name,
-      weight = 1,
-      color = "#555555",
-      fillOpacity = 0.7,
-      fillColor = "#cccccc",
+      weight = 0.8,
+      color = "#ffffff",
+      opacity = 0.8,
+      fillOpacity = 0.9,
+      fillColor = "#3d4f61",
       label = ~borough_name,
       group = group,
       highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
@@ -215,7 +217,7 @@ replay_build_observed_layers <- function(borough_names, obs_df, actions_df, show
     }
   }
 
-  observed_palette <- leaflet::colorNumeric("YlOrRd", domain = c(0, 1), na.color = "#cccccc")
+  observed_palette <- leaflet::colorNumeric("YlOrRd", domain = c(0, 1), na.color = "#3d4f61")
   fill_cols_obs <- observed_palette(positivity_vals)
   fill_cols_obs[is.na(positivity_vals)] <- "#cccccc"
 
@@ -313,7 +315,7 @@ replay_build_truth_layers <- function(
   if (!is.finite(max_truth) || max_truth <= 0) {
     max_truth <- 1
   }
-  truth_palette <- leaflet::colorNumeric("Blues", domain = c(0, max_truth), na.color = "#cccccc")
+  truth_palette <- leaflet::colorNumeric("Blues", domain = c(0, max_truth), na.color = "#3d4f61")
   truth_fill <- truth_palette(truth_display_vals)
   truth_fill[is.na(truth_display_vals)] <- "#cccccc"
 

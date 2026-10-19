@@ -152,7 +152,9 @@ app_ui <- page_fluid(
       .top-stat .value { font-weight: 600; }
       /* no basemap tiles (the old tile service now needs an API key):
          boroughs are drawn on a plain light background */
-      .leaflet-container { background: #eef1f4; }
+      .leaflet-container, .leaflet-container.leaflet-touch { background: #1b2631 !important; }
+      /* the page scrolls, not the cards inside it */
+      .bslib-card, .bslib-card .card-body { overflow: visible !important; }
       .main-header h3 { margin: 0; color: #5a5a5a; }
       .header-actions { display: flex; align-items: center; gap: 0.5rem; }
       .help-button { white-space: nowrap; }
@@ -415,13 +417,11 @@ server <- function(input, output, session) {
         " and have been tasked with controlling it."
       ),
       tags$p(tags$strong("What will you do?")),
-      tags$p(
-        class = "text-muted small",
-        sprintf(
-          "You have %d reports to act on, one every few days, and a fixed budget for the whole response.",
-          teaching_params()$game_turns
-        )
-      ),
+      tags$p(sprintf(
+        "You have %d days, until %s, to bring it under control. You will get a surveillance report every %d days, and you have one budget for the whole response.",
+        response_days(current_config()), format_date(response_end_date(current_config())),
+        current_config()$bio$gen_days
+      )),
       footer = tagList(
         actionButton("sitrep_help", "Read the briefing", class = "btn-outline-secondary"),
         modalButton("Open the response room")
@@ -484,8 +484,8 @@ server <- function(input, output, session) {
   output$turn_display <- renderText({
     config <- current_config()
     paste0(
-      "Day ", turn_day(turn(), config), " · ", format_date(turn_date(turn(), config)),
-      " (report ", turn() + 1, " of ", teaching_params()$game_turns, ")"
+      "Day ", turn_day(turn(), config), " of ", response_days(config), " · ",
+      format_date(turn_date(turn(), config))
     )
   })
 
@@ -857,7 +857,7 @@ server <- function(input, output, session) {
 
     # the game lasts a fixed number of turns
     if (state$turn >= teaching_params()$game_turns) {
-      showNotification("That was the last report. Press End response & review to see what really happened.", type = "message")
+      showNotification("Time is up. Press End response & review to see what really happened.", type = "message")
       return()
     }
     config <- current_config()
@@ -1006,7 +1006,7 @@ server <- function(input, output, session) {
       log <- c(log, sprintf("Labs are behind: this turn's PCR results will be %d turn(s) late.", result$pcr_extra_delay))
     }
     if (new_state$turn >= teaching_params()$game_turns) {
-      log <- c(log, "That was the last report. Press End response & review.")
+      log <- c(log, sprintf("Time is up (day %d). Press End response & review.", response_days(config)))
     }
     turn_log(c(sprintf(
       "Report for %s (day %d):",

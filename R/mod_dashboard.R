@@ -7,7 +7,6 @@
 mod_dashboard_ui <- function(id) {
   ns <- shiny::NS(id)
   bslib::card(
-    style = "height: 100%; overflow-y: auto;",
     bslib::card_header("Surveillance"),
     bslib::card_body(
       class = "p-2",

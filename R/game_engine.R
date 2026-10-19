@@ -19,6 +19,15 @@ turn_date <- function(turn, config) {
   as.Date(config$tp$start_date) + turn_day(turn, config)
 }
 
+# Length of the response in days, and the day it ends
+response_days <- function(config) {
+  config$tp$game_turns * (config$bio$gen_days %||% 5L)
+}
+
+response_end_date <- function(config) {
+  as.Date(config$tp$start_date) + response_days(config)
+}
+
 format_date <- function(date) {
   trimws(format(as.Date(date), "%e %B %Y"))
 }

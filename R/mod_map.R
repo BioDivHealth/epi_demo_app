@@ -225,15 +225,18 @@ mod_map_server <- function(
         boros,
         options = leaflet::leafletOptions(
           # keep the view on the place, at whatever zoom fits it
-          maxBounds = bounds_list
+          maxBounds = bounds_list,
+          # the mouse wheel scrolls the page; zoom with the +/- buttons
+          scrollWheelZoom = FALSE
         )
       ) |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
-          weight = 1,
-          color = "#555555",
-          fillOpacity = 0.7,
-          fillColor = "#cccccc",
+          weight = 0.8,
+          color = "#ffffff",
+          opacity = 0.8,
+          fillOpacity = 0.9,
+          fillColor = "#3d4f61",
           label = ~borough_name,
           group = "boroughs",
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
@@ -251,9 +254,9 @@ mod_map_server <- function(
         leaflet::addControl(
           html = paste0(
             "<div style='font-size:11px;line-height:1.4'>",
-            "<span style='display:inline-block;width:10px;height:10px;background:#e0e0e0'></span> no results this turn<br>",
-            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #b2182b'></span> restricted<br>",
-            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #2166ac'></span> chosen for testing",
+            "<span style='display:inline-block;width:10px;height:10px;background:#3d4f61'></span> no results this report<br>",
+            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #ff4d4d'></span> restricted<br>",
+            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #4fc3f7'></span> chosen for testing",
             "</div>"
           ),
           position = "bottomleft"
@@ -384,6 +387,10 @@ mod_map_server <- function(
       test_name <- if (p$test == "ag") "antigen" else "PCR"
       who_name <- if (identical(input$who, "random")) "a random sample of residents" else "people with symptoms"
 
+      if (p$asked <= 0) {
+        return("No tests planned yet: move the spend slider to start testing.")
+      }
+
       if (length(p$targets) == 0) {
         where_txt <- if (p$where == "positives") "no borough has had a positive result yet" else "no boroughs chosen yet (click the map)"
         return(paste0("No tests this turn: ", where_txt, "."))
@@ -457,13 +464,16 @@ mod_map_server <- function(
       # colour scale runs up to the highest positivity this turn (at least
       # 1%), so differences between areas show even when positivity is low
       top <- if (all(is.na(values))) 0.01 else max(0.01, max(values, na.rm = TRUE))
+      # cool light blue (low) to deep red (high): reads well on the dark map
+      # and stays distinct from the slate used for "no results"
       palette <- leaflet::colorNumeric(
-        palette = "YlOrRd",
+        palette = c("#a9c5d6", "#f6d55c", "#f28e2b", "#e15759", "#9c1f2e"),
         domain = c(0, top),
-        na.color = "#e0e0e0"
+        na.color = "#3d4f61"
       )
 
-      fill_cols <- ifelse(is.na(values), "#e0e0e0", palette(values))
+      # areas with no results this report stay dark slate
+      fill_cols <- ifelse(is.na(values), "#3d4f61", palette(values))
 
       # Build labels including planned tests
       labels <- lapply(seq_len(nrow(boros)), function(i) {
@@ -488,8 +498,8 @@ mod_map_server <- function(
       # outlines: red = restricted, blue = chosen for testing
       is_restricted <- seq_len(nrow(boros)) %in% restricted()
       is_chosen <- seq_len(nrow(boros)) %in% chosen() & identical(input$where, "chosen")
-      outline_col <- ifelse(is_restricted, "#b2182b", ifelse(is_chosen, "#2166ac", "#555555"))
-      outline_weight <- ifelse(is_restricted | is_chosen, 4, 1)
+      outline_col <- ifelse(is_restricted, "#ff4d4d", ifelse(is_chosen, "#4fc3f7", "#ffffff"))
+      outline_weight <- ifelse(is_restricted | is_chosen, 3.5, 0.8)
 
       proxy <- leaflet::leafletProxy(ns("map"), data = boros) |>
         leaflet::removeControl("positivity_legend") |>
@@ -508,7 +518,8 @@ mod_map_server <- function(
           layerId = boros$borough_name,
           weight = outline_weight,
           color = outline_col,
-          fillOpacity = 0.7,
+          opacity = 0.9,
+          fillOpacity = 0.9,
           fillColor = fill_cols,
           label = labels,
           group = "boroughs",
@@ -527,7 +538,7 @@ mod_map_server <- function(
       reset = function() {
         shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
       },
-      # new game: clear everything and suggest a fair share of the money
+      # new game: everything starts off and at zero; the player decides
       clear_interventions = function(fair_share = 0, max_spend = NULL) {
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
         shiny::updateCheckboxInput(session, "tracing", value = FALSE)
@@ -540,10 +551,10 @@ mod_map_server <- function(
           shiny::updateSliderInput(
             session, "spend",
             max = floor(max_spend / step) * step, step = step,
-            value = round(fair_share / step) * step
+            value = 0
           )
         } else {
-          shiny::updateSliderInput(session, "spend", value = round(fair_share, -3))
+          shiny::updateSliderInput(session, "spend", value = 0)
         }
         restricted(integer())
         chosen(integer())
