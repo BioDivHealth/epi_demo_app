@@ -28,6 +28,7 @@ library(rnaturalearth)   # ne_states() also needs rnaturalearthhires
 library(ggplot2)
 
 source("R/build_location_inputs.R")
+source("R/place_library.R")
 
 # ---- settings ----
 country <- "Portugal"

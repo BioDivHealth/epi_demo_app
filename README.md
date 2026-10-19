@@ -177,13 +177,13 @@ The built library ships with the code in `locations/library/` (~20 MB: 195 count
 
 To rebuild (only when sources or rules change; ~1 hour):
 
-1. Download once into `data_raw/global/` (git-ignored, ~880 MB): geoBoundaries CGAZ `geoBoundariesCGAZ_ADM1.gpkg` + `geoBoundariesCGAZ_ADM2.gpkg` + `geoBoundariesOpen-meta.csv`, and GHS-POP 2020 30 arcsec (`ghs_pop_2020_30ss.zip`). Links are in the script header.
+1. Download once into `data_raw/global/` (git-ignored, ~1.2 GB): geoBoundaries CGAZ `geoBoundariesCGAZ_ADM1.gpkg` + `geoBoundariesCGAZ_ADM2.gpkg` + `geoBoundariesOpen-meta.csv`, the per-country geoBoundaries admin-3 files (`adm3/<ISO>.geojson`, ~80 countries), and GHS-POP 2020 30 arcsec (`ghs_pop_2020_30ss.zip`). Links are in the script header.
 2. `source("prepare_place_library.R")`. Set `options(place_library.test_run = TRUE)` first to build a dozen test places in a few minutes.
 3. `source("examples/plot_place_library.R")` draws a grid of places to sense-check the result.
 
-Rules (in `R/place_library.R`):
-- A country uses admin-1 units. It uses admin-2 instead if it has fewer than 8 admin-1 units, but only when that gives 250 units or fewer. Only the most populous cluster of units is kept, so far islands drop out.
-- A city (≥1 million people, or a capital) uses the admin-2 units within its Natural Earth urban radius (at least 5, at most 60). Where admin-2 units are large, such as Indian districts, a "city" becomes a region.
+Rules (in `R/place_library.R` and `prepare_place_library.R`). Every place has **at least 10 areas**; a place that can't reach 10 is left out and listed in `locations/library/DROPPED.csv`.
+- A country uses the coarsest admin level (1, then 2, then 3) that gives 10–250 areas. Only the most populous cluster of units is kept, so far islands drop out.
+- A city (≥1 million people, or a capital) uses the coarsest level (admin-2, then admin-3) with at least 10 areas inside its Natural Earth urban radius, keeping at most the 60 nearest. If neither level reaches 10, it takes the 10 nearest areas at the finest level available, so in countries with only coarse boundaries a "city" becomes its surrounding region.
 - London uses the original 33 boroughs from `data/`.
 - K is not stored. It is rebuilt on load from unit centroids, areas and population, so `load_place(..., gravity = list(alpha, beta))` can change the kernel at game time.
 
