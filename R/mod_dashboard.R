@@ -17,7 +17,7 @@ mod_dashboard_ui <- function(id) {
       # the latest report (stays until the next one)
       shiny::div(
         class = "p-2 mb-2 rounded small",
-        style = "background: #f4f6f8; border-left: 4px solid #6c757d;",
+        style = "background: var(--bs-tertiary-bg); border-left: 4px solid var(--bs-secondary-color);",
         shiny::htmlOutput(ns("turn_log"))
       ),
 
@@ -38,6 +38,7 @@ mod_dashboard_server <- function(
     turn_log = shiny::reactive(character()),
     system_status = shiny::reactive(NULL),
     date_label = function(turn) turn,
+    dark_mode = shiny::reactive(FALSE),
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
     ready <- shiny::reactive({
@@ -206,14 +207,15 @@ mod_dashboard_server <- function(
 
       max_turn <- max(4, max(s$turn))
       rt_line <- tibble::tibble(panel = factor(panels[["rt"]], levels = panels), y = 1)
+      col <- chart_colours(dark_mode())
 
       ggplot2::ggplot(long, ggplot2::aes(x = turn, y = value)) +
-        ggplot2::geom_hline(data = rt_line, ggplot2::aes(yintercept = y), linetype = "dashed", colour = "grey60") +
-        ggplot2::geom_line(colour = "#2c3e50", linewidth = 0.8, na.rm = TRUE) +
-        ggplot2::geom_point(colour = "#2c3e50", size = 1.4, na.rm = TRUE) +
+        ggplot2::geom_hline(data = rt_line, ggplot2::aes(yintercept = y), linetype = "dashed", colour = col$muted) +
+        ggplot2::geom_line(colour = col$line, linewidth = 0.8, na.rm = TRUE) +
+        ggplot2::geom_point(colour = col$line, size = 1.4, na.rm = TRUE) +
         ggplot2::geom_text(
           data = ends, ggplot2::aes(label = label),
-          hjust = -0.1, size = 3.2, colour = "#c0392b", fontface = "bold"
+          hjust = -0.1, size = 3.2, colour = col$accent, fontface = "bold"
         ) +
         ggplot2::facet_wrap(~panel, ncol = 1, scales = "free_y") +
         ggplot2::scale_x_continuous(
@@ -226,13 +228,12 @@ mod_dashboard_server <- function(
         ) +
         ggplot2::scale_y_continuous(labels = scales::label_comma(), expand = ggplot2::expansion(mult = c(0.05, 0.25))) +
         ggplot2::labs(x = NULL, y = NULL) +
-        ggplot2::theme_minimal(base_size = 10) +
+        chart_theme(dark_mode(), base_size = 10) +
         ggplot2::theme(
           strip.text = ggplot2::element_text(hjust = 0, face = "bold", size = 9),
-          panel.grid.minor = ggplot2::element_blank(),
           plot.margin = ggplot2::margin(2, 5, 2, 5)
         )
-    })
+    }, bg = "transparent")
 
     output$totals_text <- shiny::renderText({
       req(ready())

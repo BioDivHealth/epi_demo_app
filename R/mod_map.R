@@ -258,7 +258,8 @@ mod_map_server <- function(
             "<span style='display:inline-block;width:10px;height:10px;background:#3d4f61'></span> no results this report<br>",
             "<span style='display:inline-block;width:10px;height:10px;border:3px solid #ff4d4d'></span> restricted<br>",
             "<span style='display:inline-block;width:10px;height:10px;border:3px solid #4fc3f7'></span> chosen for testing<br>",
-            "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4d;border:2px solid #fff'></span> first patient reported",
+            "<span style='display:inline-block;width:10px;height:10px;background:#b56cf0;border:2px solid #e0b3ff'></span> first patient's area (lit until tested)",
+            "<br><span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4d;border:2px solid #fff'></span> first patient reported",
             "</div>"
           ),
           position = "bottomleft"
@@ -503,6 +504,21 @@ mod_map_server <- function(
       outline_col <- ifelse(is_restricted, "#ff4d4d", ifelse(is_chosen, "#4fc3f7", "#ffffff"))
       outline_weight <- ifelse(is_restricted | is_chosen, 3.5, 0.8)
 
+      # the first patient's area is lit: violet (outside the positivity
+      # scale) until results come back from there, and a violet outline all
+      # game unless one of the player's own outlines takes priority
+      first <- first_report()
+      if (!is.null(first) && !is.na(first$index)) {
+        f <- first$index
+        if (is.na(values[f])) {
+          fill_cols[f] <- "#b56cf0"
+        }
+        if (!is_restricted[f] && !is_chosen[f]) {
+          outline_col[f] <- "#e0b3ff"
+          outline_weight[f] <- 3
+        }
+      }
+
       proxy <- leaflet::leafletProxy(ns("map"), data = boros) |>
         leaflet::removeControl("positivity_legend") |>
         leaflet::addLegend(
@@ -533,7 +549,6 @@ mod_map_server <- function(
 
       # where the first patient was reported (public, stays all game)
       proxy <- proxy |> leaflet::clearGroup("first_report")
-      first <- first_report()
       if (!is.null(first) && !is.na(first$index)) {
         spot <- centroid_tbl[first$index, ]
         proxy |>

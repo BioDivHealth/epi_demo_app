@@ -379,7 +379,7 @@ replay_action_table <- function(actions_df) {
     dplyr::arrange(desc(spend))
 }
 
-replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
+replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L, dark = FALSE) {
   if (is.null(truth_log) || nrow(truth_log) == 0) {
     return(NULL)
   }
@@ -459,7 +459,7 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
           "Truth prevalence (active)" = "#08519c",
           "Observed positivity" = "#ef6548"
         )) +
-        ggplot2::theme_minimal()
+        chart_theme(dark)
     )
   }
 
@@ -482,10 +482,10 @@ replay_plot_prevalence <- function(truth_log, obs_log, pop_tbl, window = 3L) {
       "Truth prevalence (active)" = "#08519c",
       "Observed positivity" = "#ef6548"
     )) +
-    ggplot2::theme_minimal()
+    chart_theme(dark)
 }
 
-replay_plot_testing <- function(action_log) {
+replay_plot_testing <- function(action_log, dark = FALSE) {
   if (is.null(action_log) || nrow(action_log) == 0) {
     return(NULL)
   }
@@ -517,5 +517,5 @@ replay_plot_testing <- function(action_log) {
       fill = "Test type"
     ) +
     ggplot2::scale_fill_manual(values = c("Antigen" = "#74c476", "PCR" = "#6baed6")) +
-    ggplot2::theme_minimal()
+    chart_theme(dark)
 }

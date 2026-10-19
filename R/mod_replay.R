@@ -86,7 +86,7 @@ mod_replay_ui <- function(id) {
   )
 }
 
-mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NULL) {
+mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NULL, dark_mode = shiny::reactive(FALSE)) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     if (is.null(open_signal)) {
@@ -508,13 +508,14 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
         truth_log = truth_log(),
         obs_log = log_data()$observations,
         pop_tbl = pop_tbl,
-        window = input$infectious_period
+        window = input$infectious_period,
+        dark = dark_mode()
       )
-    })
+    }, bg = "transparent")
 
     output$testing_plot <- shiny::renderPlot({
       shiny::req(has_ended())
-      replay_plot_testing(log_data()$actions)
-    })
+      replay_plot_testing(log_data()$actions, dark = dark_mode())
+    }, bg = "transparent")
   })
 }

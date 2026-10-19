@@ -143,12 +143,12 @@ app_ui <- page_fluid(
     tags$style(HTML("
       .main-header { margin-bottom: 1rem; }
       .top-bar {
-        background: #ffffff; border-bottom: 1px solid #dee2e6;
+        background: var(--bs-body-bg); border-bottom: 1px solid var(--bs-border-color);
         padding: 0.5rem 0.75rem; margin: 0 -0.75rem 0.75rem -0.75rem; z-index: 1000;
       }
-      .top-bar h4 { margin: 0; color: #3e3f3a; }
+      .top-bar h4 { margin: 0; color: var(--bs-emphasis-color); }
       .top-stat { font-size: 0.9rem; line-height: 1.2; }
-      .top-stat .label { display: block; font-size: 0.7rem; color: #6c757d; text-transform: uppercase; }
+      .top-stat .label { display: block; font-size: 0.7rem; color: var(--bs-secondary-color); text-transform: uppercase; }
       .top-stat .value { font-weight: 600; }
       /* no basemap tiles (the old tile service now needs an API key):
          boroughs are drawn on a plain light background */
@@ -159,7 +159,7 @@ app_ui <- page_fluid(
       .header-actions { display: flex; align-items: center; gap: 0.5rem; }
       .help-button { white-space: nowrap; }
       .turn-badge { font-size: 1.1rem; font-weight: 600; }
-      .scenario-label { font-size: 0.85rem; color: #6c757d; }
+      .scenario-label { font-size: 0.85rem; color: var(--bs-secondary-color); }
       #map-map {
         height: 55vh !important;
         min-height: 320px;
@@ -197,6 +197,34 @@ app_ui <- page_fluid(
       }
     "))
     ,
+    # tell the server whether the browser is in dark mode (charts follow it)
+    tags$script(HTML("(
+      function() {
+        var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+        function isDark() { return !!(mq && mq.matches); }
+        // the page itself switches (Bootstrap colour modes)...
+        function applyTheme() {
+          document.documentElement.setAttribute('data-bs-theme', isDark() ? 'dark' : 'light');
+        }
+        // ...and the server is told, so the charts switch with it
+        function sendToServer() {
+          var connected = window.Shiny && Shiny.shinyapp && Shiny.shinyapp.isConnected && Shiny.shinyapp.isConnected();
+          if (connected) {
+            Shiny.setInputValue('dark_mode', isDark());
+            return true;
+          }
+          return false;
+        }
+        applyTheme();
+        var tries = 0;
+        (function waitForShiny() {
+          if (!sendToServer() && tries++ < 80) { setTimeout(waitForShiny, 250); }
+        })();
+        if (mq && mq.addEventListener) {
+          mq.addEventListener('change', function() { applyTheme(); sendToServer(); });
+        }
+      }
+    )();")),
     tags$script(HTML("(
       function() {
         var key = 'epilondon_help_seen';
@@ -700,6 +728,7 @@ server <- function(input, output, session) {
       )
     }),
     date_label = function(turns) format(turn_date(turns, current_config()), "%d %b"),
+    dark_mode = reactive(isTRUE(input$dark_mode)),
     app_ready = app_ready
   )
 
@@ -1054,27 +1083,28 @@ server <- function(input, output, session) {
     both$series <- factor(both$series, levels = c("Real new infections", "Confirmed cases you saw"))
     report_date <- as.Date(config$tp$start_date)
     true_start <- min(both$date)
+    col <- chart_colours(isTRUE(input$dark_mode))
 
     ggplot2::ggplot(both, ggplot2::aes(x = date, y = cases, colour = series)) +
       ggplot2::annotate("rect", xmin = true_start, xmax = report_date, ymin = -Inf, ymax = Inf,
-                        fill = "grey85", alpha = 0.6) +
+                        fill = col$shade, alpha = 0.6) +
       ggplot2::annotate("text", x = true_start, y = Inf, label = "Unseen spread",
-                        hjust = -0.05, vjust = 1.5, size = 3.5, colour = "grey30") +
-      ggplot2::geom_vline(xintercept = report_date, linetype = "dashed", colour = "grey40") +
+                        hjust = -0.05, vjust = 1.5, size = 3.5, colour = col$muted) +
+      ggplot2::geom_vline(xintercept = report_date, linetype = "dashed", colour = col$muted) +
       ggplot2::annotate("text", x = report_date, y = Inf, label = "First patient reported",
-                        hjust = -0.05, vjust = 3.2, size = 3.5, colour = "grey30") +
+                        hjust = -0.05, vjust = 3.2, size = 3.5, colour = col$muted) +
       ggplot2::geom_line(linewidth = 1) +
       ggplot2::geom_point(size = 1.6) +
-      ggplot2::scale_colour_manual(values = c("Real new infections" = "black", "Confirmed cases you saw" = "#d62728")) +
+      ggplot2::scale_colour_manual(values = c("Real new infections" = col$real, "Confirmed cases you saw" = "#e8443a")) +
       ggplot2::scale_y_continuous(
         trans = scales::pseudo_log_trans(base = 10),
         breaks = c(0, 1, 10, 100, 1000, 1e4, 1e5, 1e6, 1e7),
         labels = scales::label_comma()
       ) +
       ggplot2::labs(x = NULL, y = "Cases per report", colour = NULL) +
-      ggplot2::theme_minimal(base_size = 12) +
-      ggplot2::theme(legend.position = "top", panel.grid.minor = ggplot2::element_blank())
-  })
+      chart_theme(isTRUE(input$dark_mode), base_size = 12) +
+      ggplot2::theme(legend.position = "top")
+  }, bg = "transparent")
 
   # Review card: what the disease was, and where and when it really began
   disease_card_ui <- function() {
@@ -1375,7 +1405,8 @@ server <- function(input, output, session) {
     boros = inputs$boros,
     pop_tbl = inputs$pop_tbl,
     ended = reactive(replay_unlocked()),
-    open_signal = reactive(replay_open_id())
+    open_signal = reactive(replay_open_id()),
+    dark_mode = reactive(isTRUE(input$dark_mode))
   )
 }
 
