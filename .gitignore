@@ -4,3 +4,6 @@
 renv/library/
 renv/staging/
 renv/cache/
+
+# strategy-bot heatmap results (regenerate with sim/run_heatmap.R)
+sim/results/

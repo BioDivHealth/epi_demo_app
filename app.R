@@ -145,6 +145,17 @@ app_ui <- page_fluid(
   tags$head(
     tags$style(HTML("
       .main-header { margin-bottom: 1rem; }
+      .top-bar {
+        background: #ffffff; border-bottom: 1px solid #dee2e6;
+        padding: 0.5rem 0.75rem; margin: 0 -0.75rem 0.75rem -0.75rem; z-index: 1000;
+      }
+      .top-bar h4 { margin: 0; color: #3e3f3a; }
+      .top-stat { font-size: 0.9rem; line-height: 1.2; }
+      .top-stat .label { display: block; font-size: 0.7rem; color: #6c757d; text-transform: uppercase; }
+      .top-stat .value { font-weight: 600; }
+      /* no basemap tiles (the old tile service now needs an API key):
+         boroughs are drawn on a plain light background */
+      .leaflet-container { background: #eef1f4; }
       .main-header h3 { margin: 0; color: #5a5a5a; }
       .header-actions { display: flex; align-items: center; gap: 0.5rem; }
       .help-button { white-space: nowrap; }
@@ -203,7 +214,7 @@ app_ui <- page_fluid(
         var type = navType();
         var seen = false;
         try { seen = localStorage.getItem(key) === '1'; } catch (e) { seen = false; }
-        var shouldShow = (!seen) || type === 'reload';
+        var shouldShow = !seen;
         if (shouldShow) {
           try { localStorage.setItem(key, '1'); } catch (e) {}
         }
@@ -236,25 +247,29 @@ app_ui <- page_fluid(
       }
     )();"))
   ),
+  # top bar: always visible, holds where you are and the main buttons
+  div(
+    class = "top-bar sticky-top d-flex flex-wrap align-items-center gap-3",
     div(
-      class = "main-header d-flex justify-content-between align-items-center",
-      div(
-        h3("Outbreaks in London: simulation"),
-        div(class = "scenario-label", textOutput("scenario_display"))
-      ),
-      div(
-        class = "header-actions",
-        actionButton("help", "Help", class = "btn btn-outline-secondary btn-sm help-button"),
-        div(
-          class = "turn-badge badge bg-secondary",
-          textOutput("turn_display", inline = TRUE)
-        )
-      )
+      h4("Outbreaks in London"),
+      div(class = "scenario-label", textOutput("scenario_display", inline = TRUE))
     ),
+    div(class = "top-stat", span(class = "label", "Turn"), span(class = "value", textOutput("turn_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Money"), span(class = "value", textOutput("money_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Testing and hospitals"), span(class = "value", textOutput("system_display", inline = TRUE))),
+    div(
+      class = "ms-auto d-flex flex-wrap gap-2",
+      actionButton("advance_turn", "Advance turn", class = "btn-primary"),
+      actionButton("controls-end", "End & reveal", class = "btn-success"),
+      actionButton("controls-reseed", "New outbreak", class = "btn-outline-secondary btn-sm"),
+      actionButton("controls-reset", "Replay this outbreak", class = "btn-outline-secondary btn-sm"),
+      actionButton("help", "Help", class = "btn-outline-secondary btn-sm help-button")
+    )
+  ),
   uiOutput("main_layout"),
   div(
     class = "text-muted small mt-2",
-    "Data: GLA/ONS borough boundaries. Click boroughs to allocate tests, then advance turns."
+    "Data: GLA/ONS borough boundaries."
   )
 )
 
@@ -304,7 +319,7 @@ server <- function(input, output, session) {
     scenario_id <- isolate(shared_admin$scenario_id)
     showModal(modalDialog(
       title = "Welcome and guidance",
-      help_modal_body(scenario_id = scenario_id),
+      help_modal_body(scenario_id = scenario_id, show_scenario = isolate(is_admin())),
       footer = modalButton("Close"),
       size = "l",
       easyClose = TRUE
@@ -344,36 +359,23 @@ server <- function(input, output, session) {
   })
 
   output$main_layout <- renderUI({
+    # map and plan on the left, results on the right; stacked on narrow screens
+    main <- bslib::layout_columns(
+      col_widths = bslib::breakpoints(sm = c(12, 12), lg = c(7, 5)),
+      fill = FALSE,
+      mod_map_ui("map", intervention_defs = intervention_defs),
+      mod_dashboard_ui("dashboard")
+    )
+
+    # only admins get the sidebar (seed and scenario settings)
     if (is_admin()) {
       bslib::layout_sidebar(
-        bslib::layout_columns(
-          col_widths = c(8, 4),
-          fill = FALSE,
-          mod_map_ui("map", intervention_defs = intervention_defs),
-          mod_dashboard_ui("dashboard")
-        ),
-        sidebar = bslib::sidebar(
-          mod_controls_ui("controls"),
-          width = "320px",
-          open = "desktop"
-        ),
+        main,
+        sidebar = bslib::sidebar(mod_controls_ui("controls"), width = "300px", open = "desktop"),
         fill = FALSE
       )
     } else {
-      bslib::layout_sidebar(
-        bslib::layout_columns(
-          col_widths = c(7, 5),
-          fill = FALSE,
-          mod_map_ui("map", intervention_defs = intervention_defs),
-          mod_dashboard_ui("dashboard")
-        ),
-        sidebar = bslib::sidebar(
-          mod_controls_ui("controls"),
-          width = "280px",
-          open = "desktop"
-        ),
-        fill = FALSE
-      )
+      main
     }
   })
 
@@ -382,33 +384,38 @@ server <- function(input, output, session) {
   spend_current <- reactiveVal(list(total = 0, last_turn = 0, remaining = 0, within_budget = TRUE, interventions = "None"))
   app_ready <- reactiveVal(FALSE)
 
-  active_kernel <- reactive({
-    key <- shared_admin$kernel_key
-    if (is.null(key) || key == "" || identical(key, "default")) {
-      return(inputs$K)
-    }
-    if (identical(key, "measles") && !is.null(inputs$K_measles)) {
-      return(inputs$K_measles)
-    }
-    inputs$K
-  })
-
-  effective_pop_tbl <- reactive({
-    frac <- shared_admin$susceptible_frac
-    if (is.null(frac) || !is.finite(frac)) {
-      frac <- 1
-    }
-    frac <- max(0, frac)
-    pop_tbl <- inputs$pop_tbl
-    pop_tbl$pop <- pmax(pop_tbl$pop * frac, 1)
-    pop_tbl
-  })
-
   output$turn_display <- renderText({
-    paste("Turn", turn())
+    paste(turn(), "of", teaching_params()$game_turns)
+  })
+
+  # money left this turn (after the current plan) and in total
+  output$money_display <- renderText({
+    req(game_state())
+    budget <- turn_budget_info()
+    planned <- allocations_module$planned_total()
+    paste0(
+      "£", format(round(budget$budget - planned), big.mark = ",", scientific = FALSE), " left this turn · £",
+      format(round(budget$pot_left), big.mark = ",", scientific = FALSE), " left in total"
+    )
+  })
+
+  # what testing, hospitals and labs publish
+  output$system_display <- renderText({
+    req(game_state())
+    budget <- turn_budget_info()
+    view <- player_view(game_state(), current_config())
+    paste0(
+      budget$testing$label, if (isTRUE(budget$testing$building)) " (upgrading)" else "",
+      " · beds ", round(100 * view$bed_pressure), "% full",
+      " · lab backlog ", format(round(view$lab_backlog), big.mark = ",", scientific = FALSE)
+    )
   })
 
   output$scenario_display <- renderText({
+    # students should work out what kind of outbreak this is from the data
+    if (!isTRUE(is_admin())) {
+      return("")
+    }
     scenario_id <- shared_admin$scenario_id
     if (is.null(scenario_id) || is.na(scenario_id) || scenario_id == "custom") {
       return("")
@@ -445,6 +452,95 @@ server <- function(input, output, session) {
   truth_state <- reactiveVal(NULL)
   truth_history <- reactiveVal(list())
 
+  # the whole game (hidden truth, test queues, money, levels) lives in one
+  # engine state; see R/game_engine.R
+  game_state <- reactiveVal(NULL)
+
+  # the seed of the current outbreak, so it can be replayed exactly
+  game_seed <- reactiveVal(NULL)
+
+  # what happened last turn, shown on the dashboard (instead of pop-ups)
+  turn_log <- reactiveVal(character())
+
+  # hidden testing biases for this game (see teaching_params())
+  game_biases <- reactiveVal(NULL)
+
+  # where the starter alert pointed, and where the outbreak really started
+  starter_alert_info <- reactiveVal(NULL)
+
+  # settings for the current game, from the shared admin values and the
+  # chosen scenario's disease biology
+  current_config <- reactive({
+    scenario <- scenario_lookup(shared_admin$scenario_id)
+
+    seed_cases <- as.integer(shared_admin$seed_cases)
+    if (length(seed_cases) != 1L || is.na(seed_cases) || seed_cases < 0L) {
+      seed_cases <- 100L
+    }
+    seed_borough <- shared_admin$seed_borough
+    if (is.null(seed_borough) || is.na(seed_borough) ||
+        seed_borough < 1L || seed_borough > nrow(inputs$pop_tbl)) {
+      seed_borough <- NA_integer_
+    }
+
+    game_config(
+      inputs = inputs,
+      epi = list(
+        Rt = shared_admin$Rt,
+        k = shared_admin$k,
+        imports_prob = shared_admin$imports_prob,
+        lambda_import = shared_admin$lambda_import,
+        seed_borough = seed_borough,
+        seed_cases = seed_cases
+      ),
+      mort = list(
+        death_ifr = shared_admin$death_ifr,
+        death_delay = shared_admin$death_delay
+      ),
+      kernel_key = shared_admin$kernel_key,
+      susceptible_frac = shared_admin$susceptible_frac,
+      test_level = scenario$test_level[[1]],
+      bio = list(
+        asymptomatic = scenario$asymptomatic[[1]],
+        presymptomatic = scenario$presymptomatic[[1]],
+        delay_decay = scenario$delay_decay[[1]],
+        hosp_frac = scenario$hosp_frac[[1]]
+      )
+    )
+  })
+
+  # copy the engine state into the reactives the modules and logs read
+  sync_from_state <- function(state) {
+    game_state(state)
+    truth_state(state$truth)
+    truth_history(state$truth$history)
+    observation_state(state$obs)
+    available_now(state$available)
+    game_biases(state$biases)
+    total_spend(state$spend_total)
+    turn(state$turn)
+  }
+
+  # money, costs and testing level for this turn (what the map needs)
+  turn_budget_info <- reactive({
+    state <- game_state()
+    req(state)
+    config <- current_config()
+    view <- player_view(state, config)
+    list(
+      budget = view$budget,
+      pot_left = view$budget_left,
+      costs = view$costs,
+      local_costs = view$local_costs,
+      tracing_cost = view$tracing_cost,
+      testing = view$testing,
+      allowance = view$allowance,
+      streaks = view$streaks,
+      local_streaks = view$local_streaks,
+      pool_size = view$pool_size
+    )
+  })
+
   controls <- mod_controls_server(
     id = "controls",
     is_admin = is_admin,
@@ -457,8 +553,9 @@ server <- function(input, output, session) {
     id = "map",
     boros = inputs$boros,
     allocations_init = allocations_template,
-    budget_info = controls$budget,
+    budget_info = turn_budget_info,
     observed_this_turn = reactive(available_now()),
+    observed_history = reactive(observation_state()$history),
     pop_tbl = inputs$pop_tbl,
     app_ready = app_ready,
     intervention_defs = intervention_defs
@@ -470,18 +567,16 @@ server <- function(input, output, session) {
     queue_state = reactive(observation_state()$queue),
     spend_info = spend_current,
     available_now = reactive(available_now()),
-    reported_deaths = reactive({
-      rl <- run_log()
-      if (is.null(rl) || nrow(rl) == 0 || !"reported_deaths" %in% names(rl)) {
-        return(0)
-      }
-      latest_turn <- max(rl$turn, na.rm = TRUE)
-      vals <- rl$reported_deaths[rl$turn == latest_turn]
-      if (length(vals) == 0 || all(is.na(vals))) {
-        0
-      } else {
-        vals[[1]]
-      }
+    reports = reactive({
+      state <- game_state()
+      if (is.null(state)) NULL else state$reports
+    }),
+    turn_log = turn_log,
+    system_status = reactive({
+      state <- game_state()
+      if (is.null(state)) return(NULL)
+      view <- player_view(state, current_config())
+      list(bed_pressure = view$bed_pressure, lab_backlog = view$lab_backlog)
     }),
     app_ready = app_ready
   )
@@ -502,28 +597,38 @@ server <- function(input, output, session) {
   }, striped = TRUE, bordered = TRUE, spacing = "s", digits = 2)
 
   initialise_truth <- function(seed = NULL) {
-    if (!is.null(seed)) {
-      set.seed(seed)
-    }
+    config <- current_config()
 
-    params_epi <- controls$epidemiology()
-    budget <- controls$budget()
-
-    n_boros <- nrow(inputs$pop_tbl)
-    seed_borough <- shared_admin$seed_borough
-    if (is.null(seed_borough) || is.na(seed_borough) ||
-        seed_borough < 1L || seed_borough > n_boros) {
-      seed_borough <- sample.int(n_boros, 1L)
-    }
-    seed_cases <- as.integer(shared_admin$seed_cases)
-    if (length(seed_cases) != 1L || is.na(seed_cases) || seed_cases < 0L) {
-      seed_cases <- 100L
-    }
-    init <- init_truth(
-      n_boroughs = n_boros,
-      seed_boroughs = seed_borough,
-      seed_cases = seed_cases
+    starter_option <- controls$starter_intel()
+    state <- new_game(
+      config,
+      seed = seed,
+      starter = starter_option,
+      sampling_mode = "symptomatic"
     )
+    init <- state$truth
+    starter_alloc <- state$starter_alloc
+    game_seed(state$seed)
+
+    # first log entry: the early alert
+    alerted <- which(starter_alloc$n_ag + starter_alloc$n_pcr > 0)
+    turn_log(if (length(alerted) == 1) {
+      sprintf(
+        "An early alert sent %d free tests to %s. Results come back as they are processed.",
+        sum(starter_alloc$n_ag + starter_alloc$n_pcr), inputs$pop_tbl$borough_name[alerted]
+      )
+    } else {
+      "New outbreak. No alerts yet."
+    })
+
+    # remember where the alert pointed, for the reveal
+    starter_alert_info(NULL)
+    if (!is.null(state$alert)) {
+      starter_alert_info(list(
+        alerted = inputs$pop_tbl$borough_name[state$alert$alerted],
+        true_start = inputs$pop_tbl$borough_name[state$alert$true_start]
+      ))
+    }
 
     blank_logs <- init_turn_logs(inputs$pop_tbl)
     turn_logs$truth <- blank_logs$truth
@@ -537,28 +642,10 @@ server <- function(input, output, session) {
       truth_history = list()
     ))
 
-    truth_state(init)
-    truth_history(init$history)
-    base_observation <- init_observation_state()
-    starter_option <- controls$starter_intel()
-    testing_params <- controls$testing()
-    starter_alloc <- starter_intel_allocations(starter_option, truth_state = init, pop_tbl = inputs$pop_tbl)
-
-    starter_obs <- NULL
-    if (sum(starter_alloc$n_ag) + sum(starter_alloc$n_pcr) > 0) {
-      starter_obs <- observe_tests(
-        state = base_observation,
-        turn = 0,
-        allocations = starter_alloc,
-        truth_incidence = init$incidence,
-        pop_tbl = effective_pop_tbl(),
-        params = testing_params
-      )
-      base_observation <- list(queue = starter_obs$queue, history = starter_obs$history)
-      current_available <- starter_obs$available
-    } else {
-      current_available <- empty_results
-    }
+    sync_from_state(state)
+    current_available <- state$available
+    params_epi <- config$epi
+    pot <- config$tp$budget_total
 
     turn_logs$truth <- append_truth_log(
       truth_log = turn_logs$truth,
@@ -572,7 +659,7 @@ server <- function(input, output, session) {
       pop_tbl = inputs$pop_tbl
     )
 
-    starter_spend_stats <- summarise_budget(starter_alloc, list(pcr = 0, ag = 0), budget$budget)
+    starter_spend_stats <- summarise_budget(starter_alloc, list(pcr = 0, ag = 0), pot)
     turn_logs$actions <- append_action_log(
       action_log = turn_logs$actions,
       turn = 0L,
@@ -584,7 +671,7 @@ server <- function(input, output, session) {
         intervention_cost = 0,
         total_turn_spend = starter_spend_stats$spend,
         cumulative_spend = 0,
-        budget_remaining = budget$budget,
+        budget_remaining = pot,
         interventions_active = "None"
       )
     )
@@ -596,22 +683,18 @@ server <- function(input, output, session) {
       pop_tbl = inputs$pop_tbl
     )
 
-    observation_state(base_observation)
-    available_now(current_available)
-    total_spend(0)
     spend_current(list(
       total = 0,
       last_turn = 0,
-      remaining = budget$budget,
+      remaining = pot,
       within_budget = TRUE,
       interventions = "None"
     ))
-    turn(0L)
     allocations_module$reset()
-    allocations_module$clear_interventions()
+    allocations_module$clear_interventions(fair_share = player_view(state, config)$allowance)
 
     starter_note <- starter_intel_label(starter_option)
-    starter_queue <- if (!is.null(starter_obs)) sum(starter_obs$queue$n) else 0
+    starter_queue <- sum(state$obs$queue$n)
     run_log(tibble(
       turn = 0L,
       truth_total = sum(init$incidence),
@@ -623,7 +706,7 @@ server <- function(input, output, session) {
       cumulative_spend = 0,
       observed_tests = sum(current_available$n),
       observed_positives = sum(current_available$positives),
-      reported_deaths = sum(init$cumulative_deaths),
+      reported_deaths = 0,
       active_interventions = "None",
       notes = starter_note,
       queue_pending = starter_queue
@@ -637,21 +720,8 @@ server <- function(input, output, session) {
     showNotification("Admin reset triggered", type = "message")
   }, ignoreInit = TRUE)
 
-  observe({
-    # keep spend panel current when budget sliders change between turns
-    budget <- controls$budget()
-    current_info <- spend_current()
-    spend_current(list(
-      total = current_info$total,
-      last_turn = current_info$last_turn,
-      remaining = budget$budget - current_info$last_turn,
-      within_budget = current_info$last_turn <= budget$budget + 1e-6,
-      interventions = if (is.null(current_info$interventions)) "None" else current_info$interventions
-    ))
-  })
-
   observeEvent(controls$reseed(), {
-    already_initialised <- !is.null(isolate(truth_state()))
+    already_initialised <- !is.null(isolate(game_state()))
     if (!already_initialised) {
       app_ready(FALSE)
     }
@@ -660,50 +730,75 @@ server <- function(input, output, session) {
       app_ready(TRUE)
     }
     if (already_initialised) {
-      showNotification("Simulation reseeded", type = "message")
+      showNotification("New outbreak started", type = "message")
     }
   }, ignoreNULL = FALSE)
 
+  # replay: the same hidden outbreak again, to try a different strategy
   observeEvent(controls$reset(), {
-    initialise_truth(seed = controls$reseed())
+    initialise_truth(seed = game_seed())
+    showNotification("Replaying the same outbreak", type = "message")
   })
 
-  observeEvent(allocations_module$advance(), {
-    req(truth_state())
+  observeEvent(input$advance_turn, {
+    state <- game_state()
+    req(state)
 
-    current_turn <- turn()
-    allocs <- allocations_module$allocations()
-    budget <- controls$budget()
-    params_epi <- controls$epidemiology()
-    params_mort <- controls$mortality()
-    testing_params <- controls$testing()
-    active_ids <- allocations_module$interventions()
-    effects <- compute_intervention_effects(active_ids, intervention_defs)
-    intervention_label <- if (length(effects$labels) == 0) "None" else paste(effects$labels, collapse = ", ")
+    # the game lasts a fixed number of turns
+    if (state$turn >= teaching_params()$game_turns) {
+      showNotification("That was the last turn. Press End & reveal to see what really happened.", type = "message")
+      return()
+    }
+    config <- current_config()
+    current_turn <- state$turn
 
-    params_epi$Rt <- params_epi$Rt * effects$Rt_multiplier
-    params_epi$imports_prob <- min(1, max(0, params_epi$imports_prob * effects$imports_multiplier))
+    # everything the player chose this turn
+    actions <- list(
+      allocations = allocations_module$allocations(),
+      sampling_mode = allocations_module$who(),
+      interventions = allocations_module$interventions(),
+      local_restrictions = allocations_module$restricted(),
+      tracing = allocations_module$tracing(),
+      build_testing = allocations_module$build_testing()
+    )
 
-    testing_params$delays$ag <- max(0, testing_params$delays$ag + effects$delay_adjust$ag)
-    testing_params$delays$pcr <- max(0, testing_params$delays$pcr + effects$delay_adjust$pcr)
-
-    spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-    intervention_cost <- effects$cost
-    turn_spend <- spend_stats$spend + intervention_cost
-    remaining_budget <- budget$budget - turn_spend
-
-    if (remaining_budget < -1e-6) {
+    result <- play_turn(state, actions, config)
+    if (!result$ok) {
       showNotification("Adjust allocations/interventions to meet budget", type = "error")
       return()
     }
 
-    new_total_spend <- total_spend() + turn_spend
-    total_spend(new_total_spend)
+    new_state <- result$state
+    sync_from_state(new_state)
+    allocs <- result$allocations
+    obs <- list(available = result$available, queue = result$queue)
+
+    # one line describing every action taken this turn, for the logs/replay
+    action_parts <- character()
+    if (!identical(result$intervention_label, "None")) {
+      action_parts <- c(action_parts, result$intervention_label)
+    }
+    if (length(result$restricted) > 0) {
+      action_parts <- c(action_parts, paste0(
+        "Restricted: ", paste(inputs$pop_tbl$borough_name[result$restricted], collapse = ", ")
+      ))
+    }
+    if (isTRUE(actions$tracing)) {
+      action_parts <- c(action_parts, "Contact tracing")
+    }
+    if (result$build_cost > 0) {
+      action_parts <- c(action_parts, "Started building testing")
+    }
+    intervention_label <- if (length(action_parts) == 0) "None" else paste(action_parts, collapse = "; ")
+
+    other_cost <- result$intervention_cost + result$local_cost + result$tracing_cost + result$build_cost
+    pot_left <- config$tp$budget_total - new_state$spend_total
+
     spend_current(list(
-      total = new_total_spend,
-      last_turn = turn_spend,
-      remaining = remaining_budget,
-      within_budget = remaining_budget >= -1e-6,
+      total = new_state$spend_total,
+      last_turn = result$turn_spend,
+      remaining = pot_left,
+      within_budget = TRUE,
       interventions = intervention_label
     ))
 
@@ -712,33 +807,16 @@ server <- function(input, output, session) {
       turn = current_turn,
       allocations = allocs,
       pop_tbl = inputs$pop_tbl,
-      costs = budget$costs,
+      costs = test_setup(state, config)$costs,
       meta = list(
-        allocation_spend = spend_stats$spend,
-        intervention_cost = intervention_cost,
-        total_turn_spend = turn_spend,
-        cumulative_spend = new_total_spend,
-        budget_remaining = remaining_budget,
+        allocation_spend = result$allocation_spend,
+        intervention_cost = other_cost,
+        total_turn_spend = result$turn_spend,
+        cumulative_spend = new_state$spend_total,
+        budget_remaining = pot_left,
         interventions_active = intervention_label
       )
     )
-
-    obs <- observe_tests(
-      state = observation_state(),
-      turn = turn(),
-      allocations = allocs,
-      truth_incidence = truth_state()$incidence,
-      pop_tbl = effective_pop_tbl(),
-      params = testing_params
-    )
-
-    observation_state(list(queue = obs$queue, history = obs$history))
-    available_now(obs$available)
-
-    current_deaths <- 0
-    if (!is.null(truth_state()$cumulative_deaths)) {
-      current_deaths <- sum(truth_state()$cumulative_deaths)
-    }
 
     turn_logs$observations <- append_observation_log(
       observation_log = turn_logs$observations,
@@ -747,21 +825,7 @@ server <- function(input, output, session) {
       pop_tbl = inputs$pop_tbl
     )
 
-    next_truth <- step_truth(
-      state = truth_state(),
-      K = active_kernel(),
-      Rt_global = params_epi$Rt,
-      k_overdisp = params_epi$k,
-      imports_prob = params_epi$imports_prob,
-      lambda_import = params_epi$lambda_import,
-      pop = effective_pop_tbl()$pop,
-      death_ifr = params_mort$death_ifr,
-      death_delay = params_mort$death_delay
-    )
-
-    truth_state(next_truth)
-    truth_history(next_truth$history)
-
+    next_truth <- new_state$truth
     turn_logs$truth <- append_truth_log(
       truth_log = turn_logs$truth,
       turn = next_truth$turn,
@@ -770,7 +834,7 @@ server <- function(input, output, session) {
       deaths = next_truth$deaths,
       cumulative_deaths = next_truth$cumulative_deaths,
       imports = next_truth$last_imports,
-      Rt = params_epi$Rt,
+      Rt = result$Rt_used,
       pop_tbl = inputs$pop_tbl
     )
 
@@ -778,13 +842,13 @@ server <- function(input, output, session) {
       turn = current_turn,
       tests_ag = sum(allocs$n_ag),
       tests_pcr = sum(allocs$n_pcr),
-      allocation_spend = spend_stats$spend,
-      intervention_cost = intervention_cost,
-      total_turn_spend = turn_spend,
-      cumulative_spend = new_total_spend,
+      allocation_spend = result$allocation_spend,
+      intervention_cost = other_cost,
+      total_turn_spend = result$turn_spend,
+      cumulative_spend = new_state$spend_total,
       observed_tests = sum(obs$available$n),
       observed_positives = sum(obs$available$positives),
-      reported_deaths = current_deaths,
+      reported_deaths = sum(new_state$reports$deaths),
       active_interventions = intervention_label,
       notes = "",
       queue_pending = sum(obs$queue$n)
@@ -798,40 +862,128 @@ server <- function(input, output, session) {
       run_log(rl)
     }
 
-    next_turn <- current_turn + 1L
-    turn(next_turn)
     allocations_module$reset()
 
-    # Show turn summary notification
+    # what happened this turn, kept on the dashboard until the next turn
     n_results <- sum(obs$available$n)
     n_positives <- sum(obs$available$positives)
     n_pending <- sum(obs$queue$n)
+    new_reports <- new_state$reports[new_state$reports$turn == new_state$turn, ]
+    log <- c(
+      if (n_results > 0) {
+        sprintf("%s test results came back: %s positive (%.1f%%).",
+                format(n_results, big.mark = ","), format(n_positives, big.mark = ","),
+                100 * n_positives / n_results)
+      } else {
+        "No test results came back this turn."
+      },
+      if (n_pending > 0) sprintf("%s tests still waiting for results.", format(n_pending, big.mark = ",")),
+      sprintf("Hospitals reported %s new admissions and %s deaths.",
+              format(sum(new_reports$admissions), big.mark = ","), format(sum(new_reports$deaths), big.mark = ","))
+    )
 
-    summary_msg <- if (n_results > 0) {
-      sprintf(
-        "Turn %d complete: %d results returned (%d positive). %d tests pending.",
-        current_turn, n_results, n_positives, n_pending
-      )
+    # tell the player if fewer tests ran than they asked for
+    asked <- sum(actions$allocations$n_ag + actions$allocations$n_pcr)
+    ran <- sum(allocs$n_ag + allocs$n_pcr)
+    if (ran < asked) {
+      log <- c(log, sprintf(
+        "Only %s of the %s planned tests ran: not enough people came forward, or there were not enough kits.",
+        format(ran, big.mark = ","), format(asked, big.mark = ",")
+      ))
+    }
+    if (result$pcr_extra_delay > 0) {
+      log <- c(log, sprintf("Labs are behind: this turn's PCR results will be %d turn(s) late.", result$pcr_extra_delay))
+    }
+    if (new_state$turn >= teaching_params()$game_turns) {
+      log <- c(log, "That was the last turn. Press End & reveal.")
+    }
+    turn_log(c(sprintf("Turn %d:", current_turn), log))
+  })
+
+  # Debrief card: the hidden things that were distorting what students saw
+  hidden_distortions_ui <- function() {
+    biases <- game_biases()
+    if (is.null(biases)) {
+      return(NULL)
+    }
+
+    care <- tibble(
+      borough = inputs$pop_tbl$borough_name,
+      care_seeking = biases$care_seeking
+    ) |>
+      arrange(care_seeking)
+    least <- paste(head(care$borough, 3), collapse = ", ")
+    most <- paste(rev(tail(care$borough, 3)), collapse = ", ")
+
+    alert <- starter_alert_info()
+    alert_txt <- if (is.null(alert)) {
+      "No starter alert this game."
+    } else if (identical(alert$alerted, alert$true_start)) {
+      sprintf("The starter alert was right: the outbreak began in %s.", alert$true_start)
     } else {
       sprintf(
-        "Turn %d complete: No results yet. %d tests pending.",
-        current_turn, n_pending
+        "The starter alert was a false alarm: it pointed at %s, but the outbreak began in %s.",
+        alert$alerted, alert$true_start
       )
     }
 
-    showNotification(
-      summary_msg,
-      type = if (n_positives > 0) "warning" else "message",
-      duration = 5
+    # hospitals: how long they were over capacity and what that cost
+    hospital <- game_state()$hospital
+    beds <- teaching_params()$hospital$beds
+    turns_full <- sum(hospital$occupancy > beds)
+    hospital_txt <- tags$p(
+      tags$strong("Hospitals: "),
+      if (turns_full == 0) {
+        sprintf("never ran out of beds (peak %d%% full).", round(100 * max(c(0, hospital$occupancy)) / beds))
+      } else {
+        sprintf(
+          "ran out of beds for %d turn(s); about %s extra people died because there was no bed for them.",
+          turns_full, format(sum(hospital$extra_deaths), big.mark = ",", scientific = FALSE)
+        )
+      }
     )
-  })
+
+    tp <- teaching_params()
+    tags$div(
+      class = "card border-info mb-3",
+      tags$div(class = "card-header", tags$strong("What was distorting your data")),
+      tags$div(
+        class = "card-body small",
+        tags$p(alert_txt),
+        tags$p(
+          tags$strong("Who comes forward for a test (symptomatic pool): "),
+          "least likely in ", least, "; most likely in ", most, ". ",
+          "Infections there were under- or over-represented in your results."
+        ),
+        tags$p(
+          tags$strong("Other respiratory illness: "),
+          sprintf(
+            "a wave of non-target illness peaked around turn %d, swelling the symptomatic pool and pulling positivity down even if cases were rising.",
+            biases$wave_peak
+          )
+        ),
+        hospital_txt,
+        tags$p(
+          tags$strong("Antigen false positives: "),
+          sprintf(
+            "antigen specificity was %.1f%%, so about %d in every 1,000 uninfected people tested came back positive.",
+            100 * tp$tests$spec$ag, round(1000 * (1 - tp$tests$spec$ag))
+          )
+        ),
+        tags$p(
+          class = "text-muted",
+          "Care-seeking and the illness wave only affected symptomatic testing; random testing was unbiased but found fewer cases."
+        )
+      )
+    )
+  }
 
   observeEvent(controls$end(), {
     req(truth_state())
     report <- build_run_report(
       truth_history = truth_history(),
       observed_history = observation_state()$history,
-      pop_tbl = effective_pop_tbl(),
+      pop_tbl = inputs$pop_tbl,
       total_spend = total_spend(),
       run_log = run_log(),
       truth_log = turn_logs$truth
@@ -843,10 +995,11 @@ server <- function(input, output, session) {
 
     metrics <- report$metrics
 
-    # Calculate detection coverage
-    total_true <- sum(sapply(truth_history(), sum))
-    total_observed <- sum(observation_state()$history$positives)
-    detection_rate <- if (total_true > 0) round(100 * total_observed / total_true, 1) else NA
+    # real cases found by the player's own tests (not the starter alert, not
+    # false positives)
+    found_pct <- if (is.na(metrics$share_of_infections_found)) NA else round(100 * metrics$share_of_infections_found, 1)
+    false_pct <- if (is.na(metrics$false_positives) || metrics$own_positives == 0) NA else
+      round(100 * metrics$false_positives / metrics$own_positives)
 
     format_rt <- function(mean_rt, lower_rt, upper_rt) {
       if (is.na(mean_rt) || is.na(lower_rt) || is.na(upper_rt)) {
@@ -886,8 +1039,8 @@ server <- function(input, output, session) {
             tags$div(
               class = "card-body",
               tags$p(
-                tags$strong("Time to first detection: "),
-                ifelse(is.na(metrics$time_to_detection), "Never detected!", paste("Turn", metrics$time_to_detection))
+                tags$strong("First real case found by your testing: "),
+                ifelse(is.na(metrics$time_to_detection), "never", paste("turn", metrics$time_to_detection))
               ),
               tags$p(
                 tags$strong("Peak observed: "),
@@ -895,11 +1048,21 @@ server <- function(input, output, session) {
               ),
               tags$p(
                 tags$strong("Total spend: "),
-                paste0("£", round(metrics$total_spend, 0))
+                paste0("£", format(round(metrics$total_spend, 0), big.mark = ",", scientific = FALSE))
               ),
               tags$p(
-                tags$strong("Detection rate: "),
-                ifelse(is.na(detection_rate), "N/A", paste0(detection_rate, "% of true cases"))
+                tags$strong("Real cases your tests found: "),
+                format(metrics$real_cases_found, big.mark = ",", scientific = FALSE),
+                ifelse(is.na(found_pct), "", paste0(" (", found_pct, "% of all infections)"))
+              ),
+              tags$p(
+                tags$strong("False positives: "),
+                ifelse(
+                  is.na(false_pct), "none",
+                  paste0(format(metrics$false_positives, big.mark = ",", scientific = FALSE),
+                         " of your ", format(metrics$own_positives, big.mark = ",", scientific = FALSE),
+                         " positives (", false_pct, "%)")
+                )
               ),
               tags$p(
                 tags$strong("Estimated Rt (observed): "),
@@ -938,6 +1101,7 @@ server <- function(input, output, session) {
           )
         )
       ),
+      hidden_distortions_ui(),
       tags$hr(),
       tags$h5("Turn-by-Turn Comparison"),
       tags$div(

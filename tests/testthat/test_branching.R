@@ -48,3 +48,19 @@ test_that("expected growth tracks Rt when k is infinite", {
 
   expect_equal(mean(draws), 20 * Rt, tolerance = 0.1)
 })
+
+test_that("vaccination (susceptible fraction) scales the effective R", {
+  K1 <- matrix(1, 1, 1)
+  state <- init_truth(n_boroughs = 1, seed_boroughs = 1, seed_cases = 1000)
+
+  set.seed(1)
+  full <- step_truth(state, K1, Rt_global = 15, k_overdisp = Inf,
+                     imports_prob = 0, lambda_import = 0, pop = 1e7, susceptible_frac = 1)
+  set.seed(1)
+  vaccinated <- step_truth(state, K1, Rt_global = 15, k_overdisp = Inf,
+                           imports_prob = 0, lambda_import = 0, pop = 1e7, susceptible_frac = 0.08)
+
+  # about 15 vs about 1.2 new cases per case
+  expect_equal(sum(full$incidence) / 1000, 15, tolerance = 0.05)
+  expect_equal(sum(vaccinated$incidence) / 1000, 15 * 0.08, tolerance = 0.1)
+})

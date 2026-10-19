@@ -12,6 +12,10 @@ init_observation_state <- function() {
       type = character(),
       n = integer(),
       positives = integer(),
+      true_pos = integer(),
+      infectious_pos = integer(),
+      mode = character(),
+      source = character(),
       turn_sampled = integer(),
       turn_available = integer()
     ),
@@ -21,6 +25,10 @@ init_observation_state <- function() {
       type = character(),
       n = integer(),
       positives = integer(),
+      true_pos = integer(),
+      infectious_pos = integer(),
+      mode = character(),
+      source = character(),
       turn_sampled = integer(),
       turn_available = integer()
     )
@@ -35,7 +43,11 @@ init_observation_state <- function() {
 #'   n_pcr, n_ag.
 #' @param truth_incidence Numeric vector of underlying infections per borough.
 #' @param pop_tbl Population tibble with `pop` column.
-#' @param params List with components `sens`, `spec`, `delays`, `prev_floor`.
+#' @param params List with components `sens`, `spec`, `delays`, `prev_floor`,
+#'   and optionally `sampling_mode`, `sampling_pool_frac` and `care_seeking`
+#'   (per-borough multiplier, symptomatic mode only), and `detectable`
+#'   (list with `ag` / `pcr`: per-borough people still test-positive from
+#'   recent infections, random mode only).
 #' @return Updated state with queue/history and tibble of available results.
 #' @export
 observe_tests <- function(
@@ -65,7 +77,13 @@ observe_tests <- function(
   if (sampling_mode == "symptomatic") {
     pool_frac <- params$sampling_pool_frac %||% 0.1
     pool_frac <- max(min(pool_frac, 1), 1e-6)
-    prev <- truth_incidence / (pop_tbl$pop * pool_frac)
+
+    # some boroughs are less likely to come forward for a test, so fewer of
+    # their infected people end up in the tested pool (1 = no bias)
+    care_seeking <- params$care_seeking %||% 1
+    # people with no symptoms never come forward
+    symptomatic_share <- params$symptomatic_share %||% 1
+    prev <- truth_incidence * symptomatic_share * care_seeking / (pop_tbl$pop * pool_frac)
   }
   prev <- pmax(prev, prev_floor)
   prev <- pmin(prev, 0.9)
@@ -84,10 +102,26 @@ observe_tests <- function(
     spec <- sp[[type]]
     delay <- delays[[type]]
 
-    p_star <- sens * prev + (1 - spec) * (1 - prev)
+    # random testing finds anyone still test-positive from recent turns,
+    # but only this turn's infections are still spreading
+    prev_type <- prev
+    current_share <- rep(1, length(n_tests))
+    detectable <- params$detectable[[type]]
+    if (sampling_mode == "random" && !is.null(detectable)) {
+      prev_type <- pmin(pmax(detectable / pop_tbl$pop, prev_floor), 0.9)
+      current_share <- ifelse(detectable > 0, pmin(1, truth_incidence / detectable), 0)
+    }
+
+    p_star <- sens * prev_type + (1 - spec) * (1 - prev_type)
     p_star <- pmin(pmax(p_star, 0), 1)
 
     positives <- stats::rbinom(length(n_tests), size = n_tests, prob = p_star)
+
+    # how many of those positives are real infections, and how many of
+    # those are still infectious (both hidden from players)
+    true_share <- ifelse(p_star > 0, pmin(1, sens * prev_type / p_star), 0)
+    true_pos <- stats::rbinom(length(positives), size = positives, prob = true_share)
+    infectious_pos <- stats::rbinom(length(true_pos), size = true_pos, prob = current_share)
 
     tibble::tibble(
       borough_index = allocations$borough_index,
@@ -95,6 +129,10 @@ observe_tests <- function(
       type = type,
       n = n_tests,
       positives = positives,
+      true_pos = true_pos,
+      infectious_pos = infectious_pos,
+      mode = sampling_mode,
+      source = params$source %||% "player",
       turn_sampled = turn,
       turn_available = turn + delay
     ) |> 

@@ -79,9 +79,9 @@ devtools::test()
 - State per borough *i*, turn *t*:
   Use a branching process with overdispersion:
   - I_{i,t+1} ~ NegBin(mean = mu_{i,t}, size = k)
-  - mu_{i,t} = (K %*% I_t)[i] * R_t
+  - mu_{i,t} = R_t * sum_j K[j, i] * I_{j,t}   (crossprod(K, I) * R_t)
   where:
-  - K is the row-normalised spatial kernel (each row sums to 1), precomputed in data/kernel_K.rds.
+  - Row j of K = where borough j's onward infections land; rows sum to 1, so each case causes R_t new cases wherever it is. Built in load_inputs() from data/kernel_K.rds plus a within-borough share.
   - k controls overdispersion (superspreading).
 
   Imports: allow small stochastic introductions each turn. Example (pseudocode):

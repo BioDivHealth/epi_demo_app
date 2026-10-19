@@ -48,11 +48,18 @@ init_truth <- function(n_boroughs, seed_boroughs = 1L, seed_cases = 10L) {
 #' Advance the hidden outbreak by one turn
 #'
 #' @param state Current truth state as returned by `init_truth()` / `step_truth()`.
-#' @param K Row-normalised spatial kernel matrix.
+#' @param K Spatial kernel. Row j = where borough j's onward infections land;
+#'   each row sums to 1, so every case causes Rt_global new cases on average.
 #' @param Rt_global Effective reproduction number applied uniformly.
 #' @param k_overdisp Negative binomial size parameter controlling overdispersion.
 #' @param imports_prob Probability an import event occurs in each borough on a turn.
 #' @param lambda_import Mean size of the Poisson import when it occurs.
+#' @param isolated Per-borough number of (effectively) isolated cases that do
+#'   not transmit this turn.
+#' @param local_multiplier Per-borough multiplier on onward transmission from
+#'   cases in that borough (local restrictions).
+#' @param susceptible_frac Share of the population susceptible at the start
+#'   (1 = nobody immune). Rt_global is the R in a fully susceptible population.
 #' @return An updated state list with the next turn's incidence and cumulative totals.
 #' @export
 step_truth <- function(
@@ -64,7 +71,10 @@ step_truth <- function(
     lambda_import,
     pop = NULL,
     death_ifr = 0,
-    death_delay = 0) {
+    death_delay = 0,
+    isolated = 0,
+    local_multiplier = 1,
+    susceptible_frac = 1) {
   if (is.null(state) || !is.list(state)) {
     stop("state must be a list created by init_truth()")
   }
@@ -113,15 +123,23 @@ step_truth <- function(
     stop("death_delay must be non-negative")
   }
 
-  mu <- as.numeric(K %*% I_t) * Rt_global
+  # isolated cases (found by testing) do not pass the infection on, and
+  # cases in boroughs under local restrictions pass it on less
+  I_transmit <- pmax(I_t - isolated, 0) * local_multiplier
+
+  # each borough's cases spread along its row of K:
+  # mu[i] = Rt * sum_j K[j, i] * I_transmit[j]
+  mu <- as.numeric(crossprod(K, I_transmit)) * Rt_global
   mu[mu < 0] <- 0
 
-  # Apply susceptible depletion if population provided
+  # Only susceptible people can be infected: the share still susceptible
+  # starts at susceptible_frac (e.g. after vaccination) and falls as people
+  # are infected. Effective R = Rt x share still susceptible.
   if (!is.null(pop)) {
     if (length(pop) != length(I_t)) {
       stop("Length of pop vector must match number of boroughs")
     }
-    S_frac <- 1 - (state$cumulative / pop)
+    S_frac <- susceptible_frac - (state$cumulative / pop)
     S_frac[!is.finite(S_frac)] <- 0
     S_frac <- pmax(0, pmin(1, S_frac))
     mu <- mu * S_frac

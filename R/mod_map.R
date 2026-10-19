@@ -1,82 +1,107 @@
 # Map module -----------------------------------------------------------------
+#
+# The testing plan (who, where, which test, how much to spend) sits above the
+# map and carries over from turn to turn until changed. Map clicks either
+# choose boroughs to test or put local restrictions on a borough.
 
 mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
   ns <- shiny::NS(id)
+  tp <- teaching_params()
   intervention_choices <- stats::setNames(
     intervention_defs$id,
-    sprintf("%s (£%s)", intervention_defs$label, intervention_defs$cost)
+    sprintf("%s (£%s/turn)", intervention_defs$label, format(intervention_defs$cost, big.mark = ",", scientific = FALSE))
   )
   bslib::card(
     full_screen = TRUE,
-    bslib::card_header(
-      class = "d-flex justify-content-between align-items-center",
-      shiny::span("Click boroughs to allocate tests"),
-      shiny::span(
-        class = "badge bg-info",
-        shiny::textOutput(ns("budget_badge"), inline = TRUE)
-      )
-    ),
+    bslib::card_header("Your plan: testing and control measures"),
+
+    # testing plan: who, where, which test, how much
     shiny::div(
-      class = "mb-2 d-flex flex-wrap gap-3 align-items-center p-2 bg-light rounded",
-      shiny::div(
-        class = "d-flex gap-2 align-items-center",
-        shiny::tags$label(class = "mb-0", "Test type:"),
-        shiny::radioButtons(
-          ns("test_type"),
-          label = NULL,
-        choices = c("Antigen (fast)" = "ag", "PCR (accurate)" = "pcr"),
-          selected = "ag",
-          inline = TRUE
+      class = "mb-2 p-2 bg-light rounded small",
+      shiny::fluidRow(
+        shiny::column(
+          width = 6,
+          shiny::radioButtons(
+            ns("who"),
+            label = "Who to test",
+            choices = c("People with symptoms" = "symptomatic", "Random sample of residents" = "random"),
+            selected = "symptomatic",
+            inline = TRUE
+          ),
+          shiny::radioButtons(
+            ns("where"),
+            label = "Where",
+            choices = c(
+              "Everywhere (by population)" = "everywhere",
+              "Boroughs with positive results so far" = "positives",
+              "Boroughs I choose on the map" = "chosen"
+            ),
+            selected = "everywhere"
+          )
+        ),
+        shiny::column(
+          width = 6,
+          shiny::radioButtons(
+            ns("test_type"),
+            label = "Test",
+            choices = c("Antigen" = "ag", "PCR" = "pcr"),
+            selected = "pcr",
+            inline = TRUE
+          ),
+          shiny::sliderInput(
+            ns("spend"),
+            label = "Spend on tests per turn (£)",
+            min = 0,
+            max = tp$tests$budget,
+            value = 0,
+            step = 5000,
+            ticks = FALSE,
+            sep = ","
+          ),
+          shiny::radioButtons(
+            ns("click_mode"),
+            label = "Clicking the map will",
+            choices = c("Choose boroughs to test" = "choose", "Restrict a borough" = "restrict"),
+            selected = "choose",
+            inline = TRUE
+          )
         )
       ),
-      shiny::div(
-        class = "d-flex gap-2 align-items-center",
-        shiny::tags$label(class = "mb-0 small", "Tests per click:"),
-        shiny::sliderInput(
-          ns("tests_per_click"),
-          label = NULL,
-          min = 1,
-          max = 20,
-          value = 5,
-          step = 1,
-          width = "120px",
-          ticks = FALSE
-        )
-      ),
-      shiny::actionButton(
-        ns("mass_test"),
-        "Mass Testing",
-        class = "btn-outline-primary btn-sm"
-      ),
-      shiny::tags$span(class = "ms-auto small text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
+      shiny::div(class = "text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
     ),
-    leaflet::leafletOutput(ns("map"), height = "400px"),
-    shiny::hr(class = "my-2"),
-    shiny::fluidRow(
-      shiny::column(
-        width = 7,
-        shiny::div(
-          class = "d-flex flex-wrap gap-2",
-          shiny::tags$label(class = "form-label small mb-0 me-2", "Interventions:"),
+
+    # control measures, with what each will do next turn
+    shiny::div(
+      class = "mb-2 p-2 bg-light rounded small",
+      shiny::tags$strong("Control measures"),
+      shiny::div(
+        class = "d-flex flex-wrap gap-3",
           shiny::checkboxGroupInput(
             ns("interventions"),
             label = NULL,
             choices = intervention_choices,
             selected = character(),
             inline = TRUE
+          ),
+          shiny::checkboxInput(
+            ns("tracing"),
+            sprintf("Contact tracing (£%s/turn)", format(tp$tracing$cost, big.mark = ",", scientific = FALSE)),
+            value = FALSE
+          ),
+          shiny::checkboxInput(
+            ns("build_testing"),
+            sprintf(
+              "Build better testing (£%s once, %d turns, half capacity meanwhile)",
+              format(tp$build_testing$cost, big.mark = ",", scientific = FALSE), tp$build_testing$turns
+            ),
+            value = FALSE
           )
-        )
       ),
-      shiny::column(
-        width = 5,
-        shiny::div(
-          class = "d-flex gap-2 justify-content-end",
-          shiny::div(class = "small text-muted align-self-center", shiny::textOutput(ns("turn_positivity"), inline = TRUE)),
-          shiny::actionButton(ns("clear_alloc"), "Clear", class = "btn-outline-secondary btn-sm"),
-          shiny::actionButton(ns("advance"), "Advance Turn", class = "btn-primary")
-        )
-      )
-    )
+      shiny::div(class = "text-muted", shiny::htmlOutput(ns("measure_status")))
+    ),
+
+    leaflet::leafletOutput(ns("map"), height = "400px"),
+    shiny::div(class = "small text-muted mt-1", shiny::textOutput(ns("turn_positivity"), inline = TRUE))
   )
 }
 
@@ -86,6 +111,7 @@ mod_map_server <- function(
     allocations_init,
     budget_info,
     observed_this_turn,
+    observed_history = shiny::reactive(NULL),
     pop_tbl,
     app_ready = shiny::reactive(TRUE),
     intervention_defs = intervention_catalog()) {
@@ -102,10 +128,80 @@ mod_map_server <- function(
       }
     })
 
-    allocations <- shiny::reactiveVal(allocations_init)
+    chosen <- shiny::reactiveVal(integer())
+    restricted <- shiny::reactiveVal(integer())
     selected_interventions <- shiny::reactive({
       sel <- input$interventions
       if (is.null(sel)) character() else sel
+    })
+
+    # everything planned this turn apart from tests: interventions, local
+    # restrictions, tracing and building testing
+    other_cost <- function(restricted_now = restricted()) {
+      budget <- budget_info()
+      interventions <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
+      local <- sum(budget$local_costs[restricted_now])
+      tracing <- if (isTRUE(input$tracing)) budget$tracing_cost else 0
+      build <- if (isTRUE(input$build_testing) && isTRUE(budget$testing$can_build)) budget$testing$build_cost else 0
+      interventions + local + tracing + build
+    }
+
+    # boroughs that have had at least one positive result returned so far
+    positive_boroughs <- shiny::reactive({
+      hist <- observed_history()
+      if (is.null(hist) || nrow(hist) == 0) {
+        return(integer())
+      }
+      sort(unique(hist$borough_index[hist$positives > 0]))
+    })
+
+    # turn the testing plan into tests per borough ---------------------------
+    plan <- shiny::reactive({
+      budget <- budget_info()
+
+      # test type (PCR if antigen does not exist yet)
+      test <- input$test_type %||% "pcr"
+      if (test == "ag" && !isTRUE(budget$testing$ag_available)) {
+        test <- "pcr"
+      }
+      cost <- budget$costs[[test]]
+
+      # which boroughs
+      where <- input$where %||% "everywhere"
+      targets <- switch(
+        where,
+        everywhere = seq_len(nrow(pop_tbl)),
+        positives = positive_boroughs(),
+        chosen = chosen()
+      )
+
+      # money: what the student asked for, cut down to what is left this turn
+      asked <- input$spend %||% 0
+      money <- max(0, min(asked, budget$budget - other_cost()))
+      n_tests <- if (length(targets) == 0 || cost <= 0) 0 else floor(money / cost)
+
+      # spread the tests over the chosen boroughs by population
+      per_borough <- integer(nrow(pop_tbl))
+      if (n_tests > 0) {
+        per_borough[targets] <- spread_tests(n_tests, pop_tbl$pop[targets])
+      }
+
+      allocs <- allocations_init
+      if (test == "ag") {
+        allocs$n_ag <- as.integer(per_borough)
+      } else {
+        allocs$n_pcr <- as.integer(per_borough)
+      }
+
+      list(
+        allocations = allocs,
+        test = test,
+        where = where,
+        targets = targets,
+        asked = asked,
+        money = money,
+        cut_down = money < asked - 1e-6
+      )
     })
 
     # Compute borough centroids for allocation markers
@@ -129,62 +225,6 @@ mod_map_server <- function(
       bounds_list[[2]][1], bounds_list[[2]][2]
     )
 
-    observeEvent(input$clear_alloc, {
-      allocations(allocations_init)
-    })
-
-    observeEvent(input$mass_test, {
-      budget <- budget_info()
-      cost_ag <- budget$costs[["ag"]]
-      if (is.null(cost_ag)) {
-        cost_ag <- 0
-      }
-      if (cost_ag <= 0) {
-        shiny::showNotification("Antigen cost is zero or missing.", type = "error")
-        return()
-      }
-
-      allocs <- allocations()
-      spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
-      remaining <- budget$budget - spend_stats$spend - intervention_cost
-
-      if (!is.finite(remaining) || remaining < cost_ag) {
-        shiny::showNotification("Not enough budget for mass testing.", type = "message")
-        return()
-      }
-
-      total_tests <- floor(remaining / cost_ag)
-      if (total_tests <= 0) {
-        shiny::showNotification("Not enough budget for mass testing.", type = "message")
-        return()
-      }
-
-      weights <- pop_tbl$pop
-      if (length(weights) != nrow(allocs)) {
-        shiny::showNotification("Population data mismatch.", type = "error")
-        return()
-      }
-
-      weights <- weights / sum(weights)
-      base_alloc <- floor(total_tests * weights)
-      remainder <- total_tests - sum(base_alloc)
-
-      if (remainder > 0) {
-        fractional <- (total_tests * weights) - base_alloc
-        extra_idx <- order(fractional, decreasing = TRUE)[seq_len(remainder)]
-        base_alloc[extra_idx] <- base_alloc[extra_idx] + 1L
-      }
-
-      allocs$n_ag <- allocs$n_ag + as.integer(base_alloc)
-      allocations(allocs)
-
-      shiny::showNotification(
-        paste0("Mass testing allocated ", total_tests, " antigen tests."),
-        type = "message"
-      )
-    })
-
     output$map <- leaflet::renderLeaflet({
       leaflet::leaflet(
         boros,
@@ -193,7 +233,6 @@ mod_map_server <- function(
           minZoom = 9
         )
       ) |>
-        leaflet::addProviderTiles("CartoDB.Positron") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
           weight = 1,
@@ -211,6 +250,25 @@ mod_map_server <- function(
             onClick = htmlwidgets::JS(reset_js)
           )
         ) |>
+        # colour = share of tests positive among results back this turn
+        leaflet::addLegend(
+          position = "bottomright",
+          pal = leaflet::colorNumeric("YlOrRd", domain = c(0, 1)),
+          values = c(0, 1),
+          title = "Positive<br>(results back<br>this turn)",
+          labFormat = leaflet::labelFormat(suffix = "%", transform = function(x) 100 * x),
+          opacity = 0.8
+        ) |>
+        leaflet::addControl(
+          html = paste0(
+            "<div style='font-size:11px;line-height:1.4'>",
+            "<span style='display:inline-block;width:10px;height:10px;background:#e0e0e0'></span> no results this turn<br>",
+            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #b2182b'></span> restricted<br>",
+            "<span style='display:inline-block;width:10px;height:10px;border:3px solid #2166ac'></span> chosen for testing",
+            "</div>"
+          ),
+          position = "bottomleft"
+        ) |>
         leaflet::fitBounds(
           lng1 = bbox[["xmin"]],
           lat1 = bbox[["ymin"]],
@@ -219,81 +277,129 @@ mod_map_server <- function(
         )
     })
 
-    # Handle map clicks - add tests based on selected type
+    # Map clicks: choose boroughs to test, or toggle a local restriction
     observeEvent(input$map_shape_click, {
       req(ready())
       click <- input$map_shape_click
       req(click$id)
-      idx <- match(click$id, allocations()$borough_name)
+      idx <- match(click$id, pop_tbl$borough_name)
       req(!is.na(idx))
 
-      test_type <- input$test_type
-      if (is.null(test_type)) test_type <- "ag"
-
-      qty <- input$tests_per_click
-      if (is.null(qty) || !is.finite(qty)) qty <- 5L
-      qty <- as.integer(qty)
-      current_allocs <- allocations()
-      col_name <- if (test_type == "pcr") "n_pcr" else "n_ag"
-      current_value <- current_allocs[[col_name]][idx]
-      new_value <- current_value + qty
-
-      trial_allocs <- current_allocs
-      trial_allocs[[col_name]][idx] <- new_value
-
-      budget <- budget_info()
-      spend_stats <- summarise_budget(trial_allocs, budget$costs, budget$budget)
-      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
-
-      if ((budget$budget - spend_stats$spend - intervention_cost) < -1e-6) {
-        shiny::showNotification("Budget exceeded", type = "error")
+      if (identical(input$click_mode, "restrict")) {
+        current <- restricted()
+        if (idx %in% current) {
+          restricted(setdiff(current, idx))
+          return()
+        }
+        trial <- c(current, idx)
+        if (budget_info()$budget - other_cost(trial) < -1e-6) {
+          shiny::showNotification("Not enough money left this turn to restrict another borough.", type = "error")
+          return()
+        }
+        restricted(trial)
         return()
       }
 
-      allocations(trial_allocs)
+      # choose mode: toggle the borough, and test only chosen boroughs
+      current <- chosen()
+      chosen(if (idx %in% current) setdiff(current, idx) else sort(c(current, idx)))
+      if (!identical(input$where, "chosen")) {
+        shiny::updateRadioButtons(session, "where", selected = "chosen")
+      }
     })
 
-    output$budget_badge <- shiny::renderText({
+    # what each control measure will do next turn (lag, fading, capacity)
+    output$measure_status <- shiny::renderUI({
       req(ready())
-      allocs <- allocations()
       budget <- budget_info()
-      spend_stats <- summarise_budget(allocs, budget$costs, budget$budget)
-      intervention_cost <- compute_intervention_effects(selected_interventions(), intervention_defs)$cost
-      total_spend <- spend_stats$spend + intervention_cost
-      remaining <- budget$budget - total_spend
-      paste0("£", round(remaining, 0), " left")
+      lines <- character()
+
+      for (id in selected_interventions()) {
+        def <- intervention_defs[intervention_defs$id == id, ]
+        next_streak <- get_streak(budget$streaks, id) + 1L
+        strength <- intervention_strength(next_streak, def$lag, def$fatigue)
+        lines <- c(lines, if (strength == 0) {
+          sprintf("%s: no effect next turn (takes a turn to start).", def$label)
+        } else {
+          sprintf("%s: %d%% strength next turn.", def$label, round(100 * strength))
+        })
+      }
+
+      if (length(restricted()) > 0) {
+        lr <- teaching_params()$local_restrictions
+        next_streaks <- budget$local_streaks[restricted()] + 1L
+        strengths <- vapply(next_streaks, intervention_strength, numeric(1), lag = lr$lag, fatigue = lr$fatigue)
+        lines <- c(lines, sprintf(
+          "Local restrictions on %d borough(s): %s.",
+          length(restricted()),
+          if (all(strengths == 0)) "no effect next turn (takes a turn to start)" else
+            paste0("up to ", round(100 * max(strengths)), "% strength next turn")
+        ))
+      }
+
+      if (isTRUE(input$tracing)) {
+        lines <- c(lines, sprintf("Contact tracing: follows up to %d positives a turn.", teaching_params()$tracing$capacity))
+      }
+      if (isTRUE(budget$testing$building)) {
+        lines <- c(lines, sprintf("Building better testing: %d turn(s) left, capacity halved meanwhile.", budget$testing$build_left))
+      }
+
+      if (length(lines) == 0) {
+        return(shiny::HTML("No control measures on."))
+      }
+      shiny::HTML(paste(lines, collapse = "<br>"))
     })
 
+    # test choices show today's price and wait (antigen only once it exists)
     observe({
       req(ready())
       budget <- budget_info()
-      cost_ag <- budget$costs[["ag"]]
-      cost_pcr <- budget$costs[["pcr"]]
-      if (is.null(cost_ag)) cost_ag <- 0
-      if (is.null(cost_pcr)) cost_pcr <- 0
-      shiny::updateRadioButtons(
-        session,
-        "test_type",
-        choices = stats::setNames(
-          c("ag", "pcr"),
-          c(
-            sprintf("Antigen (fast) £%s", cost_ag),
-            sprintf("PCR (accurate) £%s", cost_pcr)
-          )
-        )
-      )
+      testing <- budget$testing
+      pcr_label <- sprintf("PCR £%s, %d-turn wait", budget$costs[["pcr"]], testing$delays$pcr)
+      if (isTRUE(testing$ag_available)) {
+        choices <- stats::setNames(c("ag", "pcr"), c(sprintf("Antigen £%s, instant", budget$costs[["ag"]]), pcr_label))
+        selected <- shiny::isolate(input$test_type) %||% "pcr"
+      } else {
+        choices <- stats::setNames("pcr", pcr_label)
+        selected <- "pcr"
+      }
+      shiny::updateRadioButtons(session, "test_type", choices = choices, selected = selected)
     })
 
+    # one line saying what this plan will do
     output$allocation_summary <- shiny::renderText({
       req(ready())
-      allocs <- allocations()
-      total_ag <- sum(allocs$n_ag)
-      total_pcr <- sum(allocs$n_pcr)
-      if (total_ag + total_pcr == 0) {
-        "No tests allocated"
-      } else {
-        paste0(total_ag, " Ag + ", total_pcr, " PCR tests")
+      p <- plan()
+      budget <- budget_info()
+      n_tests <- sum(p$allocations$n_ag + p$allocations$n_pcr)
+      test_name <- if (p$test == "ag") "antigen" else "PCR"
+      who_name <- if (identical(input$who, "random")) "a random sample of residents" else "people with symptoms"
+
+      if (length(p$targets) == 0) {
+        where_txt <- if (p$where == "positives") "no borough has had a positive result yet" else "no boroughs chosen yet (click the map)"
+        return(paste0("No tests this turn: ", where_txt, "."))
       }
+
+      where_txt <- if (p$where == "everywhere") "all 33 boroughs" else paste(length(p$targets), "borough(s)")
+      txt <- paste0(
+        format(n_tests, big.mark = ",", scientific = FALSE), " ", test_name, " tests of ", who_name,
+        " in ", where_txt, " (£", format(round(p$money), big.mark = ",", scientific = FALSE), ")."
+      )
+
+      # symptomatic testing can only reach the people who come forward
+      if (identical(input$who, "symptomatic") && !is.null(budget$pool_size)) {
+        reachable <- sum(pmin(p$allocations$n_ag + p$allocations$n_pcr, budget$pool_size))
+        if (reachable < n_tests) {
+          txt <- paste0(
+            txt, " Only about ", format(reachable, big.mark = ",", scientific = FALSE),
+            " people come forward there, so only that many will be tested (and paid for)."
+          )
+        }
+      }
+      if (p$cut_down) {
+        txt <- paste0(txt, " Cut down to fit the money left this turn.")
+      }
+      txt
     })
 
     observe({
@@ -312,7 +418,7 @@ mod_map_server <- function(
       })
     })
 
-    # Update map with results and allocation markers
+    # Update map with results, planned tests, chosen and restricted boroughs
     observe({
       if (!ready()) {
         shiny::invalidateLater(100, session)
@@ -323,7 +429,7 @@ mod_map_server <- function(
         return()
       }
       res <- observed_this_turn()
-      allocs <- allocations()
+      allocs <- plan()$allocations
 
       # Aggregate observed results
       agg <- res |>
@@ -347,11 +453,10 @@ mod_map_server <- function(
 
       fill_cols <- ifelse(is.na(values), "#e0e0e0", palette(values))
 
-      # Build labels including allocations
+      # Build labels including planned tests
       labels <- lapply(seq_len(nrow(boros)), function(i) {
         name <- boros$borough_name[i]
         val <- values[i]
-        alloc_idx <- match(name, allocs$borough_name)
 
         result_txt <- if (is.na(val)) {
           "<em>No results yet</em>"
@@ -361,25 +466,26 @@ mod_map_server <- function(
           sprintf("<span style='color:#d95f02'>%.1f%% positive</span>", 100 * val)
         }
 
-        alloc_txt <- ""
-        if (!is.na(alloc_idx)) {
-          ag <- allocs$n_ag[alloc_idx]
-          pcr <- allocs$n_pcr[alloc_idx]
-          if (ag + pcr > 0) {
-            alloc_txt <- sprintf("<br><small>Allocated: %d Ag, %d PCR</small>", ag, pcr)
-          }
-        }
+        planned <- allocs$n_ag[i] + allocs$n_pcr[i]
+        alloc_txt <- if (planned > 0) sprintf("<br><small>Planned: %d tests</small>", planned) else ""
+        restrict_txt <- if (i %in% restricted()) "<br><small><b>Restricted</b></small>" else ""
 
-        htmltools::HTML(paste0("<strong>", name, "</strong><br>", result_txt, alloc_txt))
+        htmltools::HTML(paste0("<strong>", name, "</strong><br>", result_txt, alloc_txt, restrict_txt))
       })
+
+      # outlines: red = restricted, blue = chosen for testing
+      is_restricted <- seq_len(nrow(boros)) %in% restricted()
+      is_chosen <- seq_len(nrow(boros)) %in% chosen() & identical(input$where, "chosen")
+      outline_col <- ifelse(is_restricted, "#b2182b", ifelse(is_chosen, "#2166ac", "#555555"))
+      outline_weight <- ifelse(is_restricted | is_chosen, 4, 1)
 
       proxy <- leaflet::leafletProxy(ns("map"), data = boros) |>
         leaflet::clearGroup("boroughs") |>
         leaflet::clearGroup("alloc_markers") |>
         leaflet::addPolygons(
           layerId = boros$borough_name,
-          weight = 1,
-          color = "#555555",
+          weight = outline_weight,
+          color = outline_col,
           fillOpacity = 0.7,
           fillColor = fill_cols,
           label = labels,
@@ -387,23 +493,15 @@ mod_map_server <- function(
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
         )
 
-      # Add allocation markers
+      # planned tests as circles (only when testing a few boroughs, so the
+      # map stays readable when testing everywhere)
       allocs_with_coords <- allocs |>
         dplyr::filter(n_ag > 0 | n_pcr > 0) |>
         dplyr::left_join(centroid_tbl, by = "borough_name")
 
-      if (nrow(allocs_with_coords) > 0) {
+      if (nrow(allocs_with_coords) > 0 && nrow(allocs_with_coords) < nrow(boros)) {
         total_tests <- allocs_with_coords$n_ag + allocs_with_coords$n_pcr
-        radius <- 4 + sqrt(total_tests)
-
-        marker_labels <- lapply(seq_len(nrow(allocs_with_coords)), function(i) {
-          htmltools::HTML(sprintf(
-            "%s<br>Ag: %d, PCR: %d",
-            allocs_with_coords$borough_name[i],
-            allocs_with_coords$n_ag[i],
-            allocs_with_coords$n_pcr[i]
-          ))
-        })
+        radius <- 4 + sqrt(total_tests) / 4
 
         proxy <- proxy |>
           leaflet::addCircleMarkers(
@@ -412,25 +510,39 @@ mod_map_server <- function(
             radius = radius,
             color = "#2166ac",
             fillColor = "#2166ac",
-            fillOpacity = 0.6,
+            fillOpacity = 0.5,
             stroke = TRUE,
             weight = 2,
-            label = marker_labels,
             group = "alloc_markers"
           )
       }
     })
 
     list(
-      allocations = allocations,
+      allocations = shiny::reactive(plan()$allocations),
+      who = shiny::reactive(input$who %||% "symptomatic"),
+      # after each turn the plan carries over; building testing is a one-off
+      # so untick it. Restrictions, interventions and tracing stay on.
       reset = function() {
-        allocations(allocations_init)
+        shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
       },
-      clear_interventions = function() {
+      # new game: clear everything and suggest a fair share of the money
+      clear_interventions = function(fair_share = 0) {
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
+        shiny::updateCheckboxInput(session, "tracing", value = FALSE)
+        shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
+        shiny::updateRadioButtons(session, "who", selected = "symptomatic")
+        shiny::updateRadioButtons(session, "where", selected = "everywhere")
+        shiny::updateSliderInput(session, "spend", value = round(fair_share, -3))
+        restricted(integer())
+        chosen(integer())
       },
       interventions = selected_interventions,
-      advance = shiny::reactive(input$advance)
+      restricted = restricted,
+      tracing = shiny::reactive(isTRUE(input$tracing)),
+      build_testing = shiny::reactive(isTRUE(input$build_testing)),
+      # everything planned this turn (tests and measures), for the top bar
+      planned_total = shiny::reactive(other_cost() + plan()$money)
     )
   })
 }

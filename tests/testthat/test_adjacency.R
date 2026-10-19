@@ -23,3 +23,21 @@ test_that("adjacency kernels have expected dimensions", {
     expect_equal(unname(rowSums(inputs$K_measles)), rep(1, 33), tolerance = 1e-6)
   }
 })
+
+test_that("populations, names, map and adjacency are all in the same borough order", {
+  data_dir <- testthat::test_path("..", "..", "data")
+  inputs <- load_inputs(data_dir = data_dir)
+
+  # names and codes line up row by row with the map
+  expect_equal(inputs$pop_tbl$borough_name, inputs$boros$borough_name)
+  expect_equal(inputs$pop_tbl$gss_code, inputs$boros$gss_code)
+
+  # adjacency rows follow the map: neighbours in A really touch on the map
+  touches <- sf::st_touches(sf::st_make_valid(inputs$boros), sparse = FALSE)
+  expect_true(all(inputs$A == touches))
+
+  # a spot check by name: Camden's neighbours include Westminster
+  camden <- which(inputs$pop_tbl$borough_name == "Camden")
+  westminster <- which(inputs$pop_tbl$borough_name == "Westminster")
+  expect_equal(unname(inputs$A[camden, westminster]), 1)
+})

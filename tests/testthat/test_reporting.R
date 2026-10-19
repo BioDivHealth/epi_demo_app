@@ -62,7 +62,8 @@ report <- build_run_report(
 
 test_that("run report carries metrics and summaries", {
   expect_equal(report$metrics$total_spend, 210)
-  expect_equal(length(report$metrics), 14)
+  expect_true(all(c("time_to_detection", "real_cases_found", "false_positives",
+                    "peak_true_incidence", "rt_observed_mean", "rt_truth_mean") %in% names(report$metrics)))
   expect_equal(nrow(report$turn_summary), length(truth_history))
   expect_equal(report$turn_summary$truth_total, c(5, 7, 6))
   expect_equal(report$turn_summary$imports_total, c(0, 1, 1))

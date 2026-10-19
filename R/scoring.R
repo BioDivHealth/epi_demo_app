@@ -8,52 +8,70 @@
 #' @param total_spend Numeric total spend accumulated across turns.
 #' @return Named list of metrics.
 #' @export
-estimate_rt_series <- function(incid_vector, mean_si = 3.5, std_si = 1.5) {
-  if (length(incid_vector) < 3 || all(is.na(incid_vector))) {
-    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+# Rt from a case series --------------------------------------------------------
+#
+# In this game one turn is one generation: each case's infections appear the
+# next turn, so the serial interval is exactly 1 turn. Rt over a window of
+# turns is then (cases in the window) / (cases one turn earlier), with
+# EpiEstim's uncertainty. (Assuming a longer serial interval, as an earlier
+# version did, overstates Rt: 2.3 for a series growing 1.3x per turn.)
+#
+# Windows with fewer than `min_cases` cases the turn before give NA rather
+# than a number driven by the prior.
+estimate_rt_table <- function(incid_vector, window = 3, min_cases = 5) {
+  incid_vector <- as.numeric(incid_vector)
+  incid_vector[is.na(incid_vector)] <- 0
+  n <- length(incid_vector)
+  if (n < window + 1) {
+    return(tibble::tibble(t_end = integer(), mean = numeric(), lower = numeric(), upper = numeric()))
   }
 
-  window_size <- min(5, length(incid_vector))
-  if (window_size < 3) {
-    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
-  }
+  t_end <- seq(window + 1, n)
+  t_start <- t_end - window + 1
 
-  t_end <- seq(window_size, length(incid_vector))
-  t_start <- pmax(t_end - window_size + 1, 2)
-  valid <- t_start <= t_end
-  t_start <- t_start[valid]
-  t_end <- t_end[valid]
-
-  if (!length(t_start)) {
-    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
-  }
-
-  config <- EpiEstim::make_config(list(
-    mean_si = mean_si,
-    std_si = std_si,
-    t_start = t_start,
-    t_end = t_end
-  ))
-
+  config <- EpiEstim::make_config(list(si_distr = c(0, 1), t_start = t_start, t_end = t_end))
   res <- suppressWarnings(suppressMessages(tryCatch(
-    EpiEstim::estimate_R(
-      incid = incid_vector,
-      method = "parametric_si",
-      config = config
-    ),
+    EpiEstim::estimate_R(incid = round(incid_vector), method = "non_parametric_si", config = config),
     error = function(e) NULL
   )))
-
   if (is.null(res) || nrow(res$R) == 0) {
-    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+    return(tibble::tibble(t_end = integer(), mean = numeric(), lower = numeric(), upper = numeric()))
   }
 
-  last_row <- res$R[nrow(res$R), ]
-  list(
-    mean = last_row$`Mean(R)`,
-    lower = last_row$`Quantile.0.025(R)`,
-    upper = last_row$`Quantile.0.975(R)`
+  # cases one turn before each window (the infectors)
+  infectors <- vapply(seq_along(t_start), function(i) sum(incid_vector[(t_start[i] - 1):(t_end[i] - 1)]), numeric(1))
+  enough <- infectors >= min_cases
+
+  tibble::tibble(
+    t_end = res$R$t_end,
+    mean = ifelse(enough, res$R$`Mean(R)`, NA_real_),
+    lower = ifelse(enough, res$R$`Quantile.0.025(R)`, NA_real_),
+    upper = ifelse(enough, res$R$`Quantile.0.975(R)`, NA_real_)
   )
+}
+
+# Latest Rt estimate from a case series (see estimate_rt_table())
+estimate_rt_series <- function(incid_vector, ...) {
+  tbl <- estimate_rt_table(incid_vector, ...)
+  if (nrow(tbl) == 0) {
+    return(list(mean = NA_real_, lower = NA_real_, upper = NA_real_))
+  }
+  last <- tbl[nrow(tbl), ]
+  list(mean = last$mean, lower = last$lower, upper = last$upper)
+}
+
+# Positives per turn, with every turn present (0 where nothing came back)
+positives_by_turn <- function(observed_history, last_turn = NULL) {
+  turns <- observed_history$turn_available
+  if (is.null(last_turn)) {
+    last_turn <- if (length(turns) == 0) 0 else max(turns)
+  }
+  counts <- numeric(last_turn + 1)
+  if (length(turns) > 0) {
+    by_turn <- tapply(observed_history$positives, turns, sum)
+    counts[as.integer(names(by_turn)) + 1] <- by_turn
+  }
+  counts
 }
 
 score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0) {
@@ -68,9 +86,14 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
   final_truth <- truth_mat[nrow(truth_mat), ]
   true_prev_rate <- sum(final_truth) / sum(pop_tbl$pop)
 
-  detection_turns <- observed_history |>
-    dplyr::filter(positives > 0) |>
-    dplyr::pull(turn_available)
+  # first REAL case found by the player's own tests (not the free starter
+  # alert, not a false positive)
+  own_tests <- observed_history
+  if ("source" %in% names(own_tests)) {
+    own_tests <- own_tests[is.na(own_tests$source) | own_tests$source != "starter", , drop = FALSE]
+  }
+  real_found <- if ("true_pos" %in% names(own_tests)) own_tests$true_pos else own_tests$positives
+  detection_turns <- own_tests$turn_available[real_found > 0]
   time_to_detection <- if (length(detection_turns) == 0 || all(is.na(detection_turns))) {
     NA_integer_
   } else {
@@ -132,16 +155,22 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
     calibration_gap <- mean(turn_metrics$rmse, na.rm = TRUE)
   }
 
-  observed_series <- observed_history |>
-    dplyr::group_by(turn_available) |>
-    dplyr::summarise(positives = sum(positives), .groups = "drop") |>
-    dplyr::arrange(turn_available)
-
-  observed_rt <- estimate_rt_series(observed_series$positives)
+  observed_rt <- estimate_rt_series(positives_by_turn(observed_history, last_turn = n_turns - 1))
   truth_rt <- estimate_rt_series(total_incidence)
+
+  # how many real cases the player's tests found, and how many of their
+  # positives were false
+  real_cases_found <- if ("true_pos" %in% names(own_tests)) sum(own_tests$true_pos) else NA_real_
+  own_positives <- sum(own_tests$positives)
+  false_positives <- if (is.na(real_cases_found)) NA_real_ else own_positives - real_cases_found
+  total_true_infections <- sum(total_incidence)
 
   list(
     time_to_detection = time_to_detection,
+    real_cases_found = real_cases_found,
+    share_of_infections_found = if (total_true_infections > 0) real_cases_found / total_true_infections else NA_real_,
+    own_positives = own_positives,
+    false_positives = false_positives,
     peak_true_incidence = peak_true,
     peak_observed_positives = peak_observed,
     percent_positive = pct_positive,

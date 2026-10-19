@@ -90,7 +90,6 @@ replay_base_map <- function(boros, bounds_list, reset_js, bbox, group) {
       minZoom = 9
     )
   ) |>
-    leaflet::addProviderTiles("CartoDB.Positron") |>
     leaflet::addPolygons(
       layerId = boros$borough_name,
       weight = 1,
