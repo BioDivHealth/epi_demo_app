@@ -106,9 +106,12 @@ mod_replay_server <- function(id, logs, boros, pop_tbl, ended, open_signal = NUL
       sf::st_centroid(of_largest_polygon = TRUE) |>
       sf::st_coordinates()
     bbox <- sf::st_bbox(boros)
+    # a margin of 10% of the place's size (London or a whole country)
+    pad_x <- 0.1 * (bbox[["xmax"]] - bbox[["xmin"]])
+    pad_y <- 0.1 * (bbox[["ymax"]] - bbox[["ymin"]])
     bounds_list <- list(
-      c(bbox[["ymin"]] - 0.02, bbox[["xmin"]] - 0.02),
-      c(bbox[["ymax"]] + 0.02, bbox[["xmax"]] + 0.02)
+      c(bbox[["ymin"]] - pad_y, bbox[["xmin"]] - pad_x),
+      c(bbox[["ymax"]] + pad_y, bbox[["xmax"]] + pad_x)
     )
     reset_js <- sprintf(
       "function(btn, map){ map.fitBounds([[%.6f, %.6f],[%.6f, %.6f]]); }",

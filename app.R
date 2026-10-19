@@ -38,6 +38,9 @@ if (!exists("load_inputs")) {
 
 inputs <- load_inputs()
 
+# Library of other places (countries and cities); London is the default
+place_index <- if (dir.exists(file.path("locations", "library"))) read_place_index() else NULL
+
 auth_disabled <- tolower(Sys.getenv("EPILONDON_AUTH_DISABLE", "false")) %in%
   c("true", "1", "yes")
 
@@ -130,12 +133,6 @@ empty_results <- tibble(
   turn_available = integer()
 )
 
-allocations_template <- tibble(
-  borough_index = seq_len(nrow(inputs$pop_tbl)),
-  borough_name = inputs$pop_tbl$borough_name,
-  n_ag = integer(nrow(inputs$pop_tbl)),
-  n_pcr = integer(nrow(inputs$pop_tbl))
-)
 
 intervention_defs <- intervention_catalog()
 
@@ -251,7 +248,7 @@ app_ui <- page_fluid(
   div(
     class = "top-bar sticky-top d-flex flex-wrap align-items-center gap-3",
     div(
-      h4("Outbreaks in London"),
+      h4(textOutput("place_title", inline = TRUE)),
       div(class = "scenario-label", textOutput("scenario_display", inline = TRUE))
     ),
     div(class = "top-stat", span(class = "label", "Turn"), span(class = "value", textOutput("turn_display", inline = TRUE))),
@@ -263,19 +260,91 @@ app_ui <- page_fluid(
       actionButton("controls-end", "End & reveal", class = "btn-success"),
       actionButton("controls-reseed", "New outbreak", class = "btn-outline-secondary btn-sm"),
       actionButton("controls-reset", "Replay this outbreak", class = "btn-outline-secondary btn-sm"),
+      actionButton("choose_place", "Choose place", class = "btn-outline-secondary btn-sm"),
       actionButton("help", "Help", class = "btn-outline-secondary btn-sm help-button")
     )
   ),
   uiOutput("main_layout"),
   div(
     class = "text-muted small mt-2",
-    "Data: GLA/ONS borough boundaries."
+    textOutput("data_credit", inline = TRUE)
   )
 )
 
 ui <- if (auth_disabled) app_ui else secure_app(app_ui, enable_admin = FALSE)
 
 server <- function(input, output, session) {
+  # Which place this session plays: ?place=<id> in the address (set by the
+  # "Choose place" window), London otherwise. Loaded once per session, so a
+  # new place starts a fresh page and a fresh outbreak.
+  place_meta <- NULL
+  query <- shiny::parseQueryString(shiny::isolate(session$clientData$url_search))
+  place_id <- query$place
+  if (!is.null(place_id) && !is.null(place_index) && place_id %in% place_index$id &&
+      !isTRUE(place_index$use_builtin[place_index$id == place_id])) {
+    place <- load_place(place_id, place_index)
+    place_meta <- place$meta
+    inputs <- place$inputs
+    # measles spreads more locally: steeper distance decay
+    inputs$K_measles <- load_place(place_id, place_index, gravity = list(alpha = 1, beta = 3))$inputs$K
+  }
+
+  # allocation table in this place's area order
+  allocations_template <- tibble(
+    borough_index = seq_len(nrow(inputs$pop_tbl)),
+    borough_name = inputs$pop_tbl$borough_name,
+    n_ag = integer(nrow(inputs$pop_tbl)),
+    n_pcr = integer(nrow(inputs$pop_tbl))
+  )
+
+  output$place_title <- renderText({
+    # cities by their own name ("Lagos"), countries by the country name
+    place_name <- if (is.null(place_meta)) {
+      "London"
+    } else if (identical(place_meta$type[[1]], "city")) {
+      sub(" [(].*$", "", place_meta$label[[1]])
+    } else {
+      place_meta$country[[1]]
+    }
+    paste("Outbreaks in", place_name)
+  })
+  output$data_credit <- renderText({
+    if (is.null(place_meta)) {
+      "Data: GLA/ONS borough boundaries and populations."
+    } else {
+      paste0(
+        place_meta$label[[1]], ": ", nrow(inputs$pop_tbl), " areas. Boundaries: geoBoundaries (",
+        place_meta$boundary_license[[1]] %||% "see docs/DATA_SOURCES.md",
+        "); population: GHS-POP 2020 (EC JRC, CC BY 4.0)."
+      )
+    }
+  })
+
+  # "Choose place": the picker in a window, then reload with ?place=<id>
+  picked_place <- if (!is.null(place_index)) mod_location_picker_server("picker") else NULL
+
+  observeEvent(input$choose_place, {
+    req(picked_place)
+    showModal(modalDialog(
+      title = "Choose where the outbreak happens",
+      mod_location_picker_ui("picker", default_query = if (is.null(place_meta)) "London" else place_meta$country[[1]]),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("play_place", "Start a new outbreak here", class = "btn-primary")
+      ),
+      size = "xl",
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$play_place, {
+    req(picked_place)
+    chosen <- picked_place()$meta
+    target <- if (isTRUE(chosen$use_builtin[[1]])) "?" else paste0("?place=", chosen$id[[1]])
+    updateQueryString(target, mode = "push")
+    session$reload()
+  })
+
   auth <- NULL
   if (auth_disabled) {
     is_admin <- reactive(FALSE)
@@ -394,8 +463,8 @@ server <- function(input, output, session) {
     budget <- turn_budget_info()
     planned <- allocations_module$planned_total()
     paste0(
-      "£", format(round(budget$budget - planned), big.mark = ",", scientific = FALSE), " left this turn · £",
-      format(round(budget$pot_left), big.mark = ",", scientific = FALSE), " left in total"
+      format_money(budget$budget - planned), " left this turn · ",
+      format_money(budget$pot_left), " left in total"
     )
   })
 
@@ -478,6 +547,10 @@ server <- function(input, output, session) {
       seed_cases <- 100L
     }
     seed_borough <- shared_admin$seed_borough
+    if (!is.null(place_meta)) {
+      # the admin picks seed boroughs by London index; elsewhere start at random
+      seed_borough <- NA_integer_
+    }
     if (is.null(seed_borough) || is.na(seed_borough) ||
         seed_borough < 1L || seed_borough > nrow(inputs$pop_tbl)) {
       seed_borough <- NA_integer_
@@ -534,6 +607,7 @@ server <- function(input, output, session) {
       local_costs = view$local_costs,
       tracing_cost = view$tracing_cost,
       testing = view$testing,
+      interventions = view$interventions,
       allowance = view$allowance,
       streaks = view$streaks,
       local_streaks = view$local_streaks,
@@ -691,7 +765,10 @@ server <- function(input, output, session) {
       interventions = "None"
     ))
     allocations_module$reset()
-    allocations_module$clear_interventions(fair_share = player_view(state, config)$allowance)
+    allocations_module$clear_interventions(
+      fair_share = player_view(state, config)$allowance,
+      max_spend = config$tp$tests$budget
+    )
 
     starter_note <- starter_intel_label(starter_option)
     starter_queue <- sum(state$obs$queue$n)
@@ -1048,7 +1125,7 @@ server <- function(input, output, session) {
               ),
               tags$p(
                 tags$strong("Total spend: "),
-                paste0("£", format(round(metrics$total_spend, 0), big.mark = ",", scientific = FALSE))
+                format_money(metrics$total_spend)
               ),
               tags$p(
                 tags$strong("Real cases your tests found: "),

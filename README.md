@@ -167,7 +167,7 @@ save_location_inputs(inputs, "locations/my_country")
 - Queen adjacency (`nb`, `A`) is built exactly as in `prepare_data.R`.
 - `pop` is a numeric vector in unit order, or a data frame with `pop` and a name column. Natural Earth admin-1 has **no population**; `raster_population(units_sf, "worldpop.tif")` sums a WorldPop or GHS-POP raster over each polygon.
 - Worked example (Portugal: WorldPop 2020 1 km population per district, an admin map, and a map of one unit's kernel row): `source("examples/build_new_location.R")`.
-- `load_inputs()` still requires 33 boroughs, so the app itself stays London-only for now.
+- **Playing elsewhere:** press **Choose place** in the game's top bar, type a country or city, and start a new outbreak there. The page reloads with `?place=<id>` in the address and loads just that place (London is the default, from `data/`). Money, lab capacity, beds and tracers scale with the place's population (`scale_to_place()` in `R/game_engine.R`); imports scale with its number of areas; measles uses a kernel with steeper distance decay (beta = 3). Many places currently have fewer than 15 areas, which makes a thin game; see the place library rules below.
 
 ### Any country or city: the place library
 

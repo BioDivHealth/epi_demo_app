@@ -86,8 +86,8 @@ replay_base_map <- function(boros, bounds_list, reset_js, bbox, group) {
   leaflet::leaflet(
     boros,
     options = leaflet::leafletOptions(
-      maxBounds = bounds_list,
-      minZoom = 9
+      # keep the view on the place, at whatever zoom fits it
+      maxBounds = bounds_list
     )
   ) |>
     leaflet::addPolygons(
@@ -171,7 +171,7 @@ replay_build_action_points <- function(actions_df, centroid_tbl) {
     seq_len(nrow(points_df)),
     function(i) {
       sprintf(
-        "%s<br/>Ag: %s, PCR: %s<br/>Spend £%s",
+        paste0("%s<br/>Ag: %s, PCR: %s<br/>Spend %s ", teaching_params()$currency),
         points_df$borough_name[i],
         replay_coalesce_scalar(points_df$tests_ag[i], 0),
         replay_coalesce_scalar(points_df$tests_pcr[i], 0),

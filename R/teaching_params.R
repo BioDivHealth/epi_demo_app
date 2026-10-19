@@ -13,6 +13,17 @@ teaching_params <- function() {
     # app (or set this to FALSE) to give a whole class the same outbreak.
     random_seed_default = TRUE,
 
+    # Money is in a made-up unit so it does not suggest any real country's
+    # prices. Change the name here to change it everywhere.
+    currency = "credits",
+
+    # All money and capacity values below are set for London (33 boroughs,
+    # about 9.1 million people). In another place they are scaled by its
+    # population (a bigger place has a bigger health budget, more labs and
+    # beds), and imports by its number of areas. See scale_to_place().
+    reference_pop = 9089736,
+    reference_units = 33L,
+
     # Starter intel: an early alert sends 200 antigen tests to one borough.
     # The alert is only right some of the time; otherwise it points at a
     # borough picked at random (a false alarm).
@@ -32,7 +43,7 @@ teaching_params <- function() {
       spec = list(ag = 0.98, pcr = 0.999),
       delays = list(ag = 0L, pcr = 1L),
       costs = list(ag = 2, pcr = 10),
-      budget = 200000,        # per-turn spending cap (GBP)
+      budget = 200000,        # per-turn spending cap (credits)
       prev_floor = 1e-6
     ),
 
@@ -216,4 +227,10 @@ symptomatic_pool_frac <- function(turn, wave_peak, params = teaching_params()) {
   bump <- exp(-((turn - wave_peak)^2) / (2 * sym$wave_width^2))
 
   sym$pool_frac * (1 + sym$wave_height * bump)
+}
+
+# Format an amount of money for display, e.g. "60,000 credits" -----------------
+
+format_money <- function(x) {
+  paste(format(round(x), big.mark = ",", scientific = FALSE, trim = TRUE), teaching_params()$currency)
 }

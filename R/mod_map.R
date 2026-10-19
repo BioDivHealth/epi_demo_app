@@ -9,7 +9,7 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
   tp <- teaching_params()
   intervention_choices <- stats::setNames(
     intervention_defs$id,
-    sprintf("%s (£%s/turn)", intervention_defs$label, format(intervention_defs$cost, big.mark = ",", scientific = FALSE))
+    intervention_defs$label  # prices are added once the place is known (see measure labels below)
   )
   bslib::card(
     full_screen = TRUE,
@@ -50,7 +50,7 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
           ),
           shiny::sliderInput(
             ns("spend"),
-            label = "Spend on tests per turn (£)",
+            label = paste0("Spend on tests per turn (", tp$currency, ")"),
             min = 0,
             max = tp$tests$budget,
             value = 0,
@@ -85,15 +85,12 @@ mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
           ),
           shiny::checkboxInput(
             ns("tracing"),
-            sprintf("Contact tracing (£%s/turn)", format(tp$tracing$cost, big.mark = ",", scientific = FALSE)),
+            "Contact tracing",
             value = FALSE
           ),
           shiny::checkboxInput(
             ns("build_testing"),
-            sprintf(
-              "Build better testing (£%s once, %d turns, half capacity meanwhile)",
-              format(tp$build_testing$cost, big.mark = ",", scientific = FALSE), tp$build_testing$turns
-            ),
+            "Build better testing",
             value = FALSE
           )
       ),
@@ -215,9 +212,12 @@ mod_map_server <- function(
     )
 
     bbox <- sf::st_bbox(boros)
+    # a margin of 10% of the place's size (London or a whole country)
+    pad_x <- 0.1 * (bbox[["xmax"]] - bbox[["xmin"]])
+    pad_y <- 0.1 * (bbox[["ymax"]] - bbox[["ymin"]])
     bounds_list <- list(
-      c(bbox[["ymin"]] - 0.02, bbox[["xmin"]] - 0.02),
-      c(bbox[["ymax"]] + 0.02, bbox[["xmax"]] + 0.02)
+      c(bbox[["ymin"]] - pad_y, bbox[["xmin"]] - pad_x),
+      c(bbox[["ymax"]] + pad_y, bbox[["xmax"]] + pad_x)
     )
     reset_js <- sprintf(
       "function(btn, map){ map.fitBounds([[%.6f, %.6f],[%.6f, %.6f]]); }",
@@ -229,8 +229,8 @@ mod_map_server <- function(
       leaflet::leaflet(
         boros,
         options = leaflet::leafletOptions(
-          maxBounds = bounds_list,
-          minZoom = 9
+          # keep the view on the place, at whatever zoom fits it
+          maxBounds = bounds_list
         )
       ) |>
         leaflet::addPolygons(
@@ -308,6 +308,27 @@ mod_map_server <- function(
       }
     })
 
+    # measure labels show this place's prices (they scale with population)
+    observe({
+      req(ready())
+      budget <- budget_info()
+      defs <- budget$interventions
+      shiny::updateCheckboxGroupInput(
+        session, "interventions",
+        choiceNames = sprintf("%s (%s/turn)", defs$label, format_money(defs$cost)),
+        choiceValues = defs$id,
+        selected = shiny::isolate(input$interventions),
+        inline = TRUE
+      )
+      shiny::updateCheckboxInput(session, "tracing",
+                                 label = sprintf("Contact tracing (%s/turn)", format_money(budget$tracing_cost)))
+      shiny::updateCheckboxInput(
+        session, "build_testing",
+        label = sprintf("Build better testing (%s once, %d turns, half capacity meanwhile)",
+                        format_money(budget$testing$build_cost), budget$testing$build_turns)
+      )
+    })
+
     # what each control measure will do next turn (lag, fading, capacity)
     output$measure_status <- shiny::renderUI({
       req(ready())
@@ -355,9 +376,9 @@ mod_map_server <- function(
       req(ready())
       budget <- budget_info()
       testing <- budget$testing
-      pcr_label <- sprintf("PCR £%s, %d-turn wait", budget$costs[["pcr"]], testing$delays$pcr)
+      pcr_label <- sprintf("PCR %s, %d-turn wait", format_money(budget$costs[["pcr"]]), testing$delays$pcr)
       if (isTRUE(testing$ag_available)) {
-        choices <- stats::setNames(c("ag", "pcr"), c(sprintf("Antigen £%s, instant", budget$costs[["ag"]]), pcr_label))
+        choices <- stats::setNames(c("ag", "pcr"), c(sprintf("Antigen %s, instant", format_money(budget$costs[["ag"]])), pcr_label))
         selected <- shiny::isolate(input$test_type) %||% "pcr"
       } else {
         choices <- stats::setNames("pcr", pcr_label)
@@ -380,10 +401,10 @@ mod_map_server <- function(
         return(paste0("No tests this turn: ", where_txt, "."))
       }
 
-      where_txt <- if (p$where == "everywhere") "all 33 boroughs" else paste(length(p$targets), "borough(s)")
+      where_txt <- if (p$where == "everywhere") paste("all", nrow(pop_tbl), "areas") else paste(length(p$targets), "area(s)")
       txt <- paste0(
         format(n_tests, big.mark = ",", scientific = FALSE), " ", test_name, " tests of ", who_name,
-        " in ", where_txt, " (£", format(round(p$money), big.mark = ",", scientific = FALSE), ")."
+        " in ", where_txt, " (", format_money(p$money), ")."
       )
 
       # symptomatic testing can only reach the people who come forward
@@ -527,13 +548,23 @@ mod_map_server <- function(
         shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
       },
       # new game: clear everything and suggest a fair share of the money
-      clear_interventions = function(fair_share = 0) {
+      clear_interventions = function(fair_share = 0, max_spend = NULL) {
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
         shiny::updateCheckboxInput(session, "tracing", value = FALSE)
         shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
         shiny::updateRadioButtons(session, "who", selected = "symptomatic")
         shiny::updateRadioButtons(session, "where", selected = "everywhere")
-        shiny::updateSliderInput(session, "spend", value = round(fair_share, -3))
+        # the slider's range follows this place's per-turn cap (London: 200,000)
+        if (!is.null(max_spend)) {
+          step <- 10^floor(log10(max_spend / 40))
+          shiny::updateSliderInput(
+            session, "spend",
+            max = floor(max_spend / step) * step, step = step,
+            value = round(fair_share / step) * step
+          )
+        } else {
+          shiny::updateSliderInput(session, "spend", value = round(fair_share, -3))
+        }
         restricted(integer())
         chosen(integer())
       },

@@ -7,6 +7,28 @@
 # What a player is allowed to see is built by player_view(). Bots only ever
 # get that view, never the hidden truth.
 
+# Scale London's money and capacity to another place ---------------------------
+#
+# Prices per test stay the same; the budget, per-turn cap, measure costs,
+# lab capacity, beds, tracers and isolation support grow with population.
+scale_to_place <- function(tp, pop_total) {
+  ratio <- pop_total / tp$reference_pop
+  if (!is.finite(ratio) || abs(ratio - 1) < 1e-9) {
+    return(tp)
+  }
+
+  tp$budget_total <- tp$budget_total * ratio
+  tp$tests$budget <- tp$tests$budget * ratio
+  tp$interventions$cost <- tp$interventions$cost * ratio
+  tp$tracing$cost <- tp$tracing$cost * ratio
+  tp$tracing$capacity <- round(tp$tracing$capacity * ratio)
+  tp$build_testing$cost <- tp$build_testing$cost * ratio
+  tp$test_levels$capacity <- round(tp$test_levels$capacity * ratio)
+  tp$hospital$beds <- round(tp$hospital$beds * ratio)
+  tp$isolation$half_strength_load <- tp$isolation$half_strength_load * ratio
+  tp
+}
+
 # Build the settings for one game ---------------------------------------------
 
 game_config <- function(
@@ -18,6 +40,13 @@ game_config <- function(
     test_level = 3L,
     bio = list(asymptomatic = 0, presymptomatic = 0, delay_decay = 0.5, hosp_frac = 0.02),
     tp = teaching_params()) {
+
+  # money and capacity scale with the place's population (1 for London)
+  tp <- scale_to_place(tp, sum(inputs$pop_tbl$pop))
+
+  # imports are per area each turn: keep the place-wide rate like London's
+  n_units <- nrow(inputs$pop_tbl)
+  epi$imports_prob <- min(1, epi$imports_prob * tp$reference_units / n_units)
 
   # choose the spatial kernel
   K <- inputs$K
