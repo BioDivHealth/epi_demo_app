@@ -8,15 +8,16 @@
 #   the extra deaths when hospitals run out of beds. If doing nothing would
 #   have caused almost no deaths, only infections count.)
 #   OR, if doing nothing would have left the outbreak small (under 100
-#   infections) because it died out on its own, you win by not wasting
-#   money: spending at most 20% of the budget.
+#   infections and under 20 deaths) because it died out on its own, you win
+#   by not wasting money: spending at most 20% of the budget.
 #
 # Used by run_heatmap.R, or on its own to re-score saved results without
 # playing the games again:
 #   Rscript --vanilla sim/score_heatmap.R <results_label> [<plot_label>]
 
 WIN_FRACTION <- 0.3     # at most this share of do-nothing infections
-FIZZLE_LINE <- 100      # do-nothing outbreaks smaller than this "die out"
+FIZZLE_LINE <- 100      # do-nothing outbreaks smaller than this "die out"...
+FIZZLE_DEATHS <- 20     # ...but only if doing nothing also kills fewer than this
 THRIFTY_SHARE <- 0.2    # ...and then you must spend at most this share of the budget
 FEW_DEATHS <- 20        # do-nothing deaths below this: too few to judge (one or two deaths is noise)
 
@@ -37,7 +38,9 @@ score_games <- function(results, budget_total) {
       relative = (cumulative_infections + 1) / (reference + 1),
       relative_deaths = ifelse(reference_deaths > 0, deaths_eventual / reference_deaths, NA),
       deaths_ok = reference_deaths < FEW_DEATHS | deaths_eventual <= WIN_FRACTION * reference_deaths,
-      fizzled = reference < FIZZLE_LINE,
+      # "died out anyway" needs few infections AND few deaths: a small
+      # outbreak of a deadly disease is not fine just because it is small
+      fizzled = reference < FIZZLE_LINE & reference_deaths < FIZZLE_DEATHS,
       win_by_control = !fizzled & relative <= WIN_FRACTION & deaths_ok,
       win_by_restraint = fizzled & spend <= THRIFTY_SHARE * budget_total,
       win = win_by_control | win_by_restraint
@@ -79,10 +82,10 @@ plot_heatmap <- function(scored, label, disease_labels, bot_names, n_turns) {
       subtitle = sprintf(
         paste0(
           "Win = prevent at least %d%% of do-nothing infections and deaths (same outbreak), or, if it would have died out\n",
-          "anyway (under %d infections), spend at most %d%% of the budget. Cell: win rate; median infections and deaths vs doing nothing;\n",
-          "median spend. %d outbreaks per cell, %d turns. Hospital beds: %d."
+          "anyway (under %d infections and %d deaths), spend at most %d%% of the budget. Cell: win rate; median infections and\n",
+          "deaths vs doing nothing; median spend. %d outbreaks per cell, %d turns. Hospital beds: %d."
         ),
-        round(100 * (1 - WIN_FRACTION)), FIZZLE_LINE, round(100 * THRIFTY_SHARE), n_seeds, n_turns,
+        round(100 * (1 - WIN_FRACTION)), FIZZLE_LINE, FIZZLE_DEATHS, round(100 * THRIFTY_SHARE), n_seeds, n_turns,
         teaching_params()$hospital$beds
       ),
       x = NULL, y = NULL, fill = "Win rate"
