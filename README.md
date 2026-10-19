@@ -182,7 +182,7 @@ To rebuild (only when sources or rules change; ~1 hour):
 3. `source("examples/plot_place_library.R")` draws a grid of places to sense-check the result.
 
 Rules (in `R/place_library.R` and `prepare_place_library.R`). Every place has **at least 10 areas**; a place that can't reach 10 is left out and listed in `locations/library/DROPPED.csv`.
-- A country uses the coarsest admin level (1, then 2, then 3) that gives 10–250 areas. Only the most populous cluster of units is kept, so far islands drop out.
+- A country uses the coarsest admin level (1, then 2, then 3) that gives 10–600 areas. Only the most populous cluster of units is kept, so far islands drop out.
 - A city (≥1 million people, or a capital) uses the coarsest level (admin-2, then admin-3) with at least 10 areas inside its Natural Earth urban radius, keeping at most the 60 nearest. If neither level reaches 10, it takes the 10 nearest areas at the finest level available, so in countries with only coarse boundaries a "city" becomes its surrounding region.
 - London uses the original 33 boroughs from `data/`.
 - K is not stored. It is rebuilt on load from unit centroids, areas and population, so `load_place(..., gravity = list(alpha, beta))` can change the kernel at game time.
