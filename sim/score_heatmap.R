@@ -112,10 +112,12 @@ if (sys.nframe() == 0) {
   plot_label <- if (length(args) >= 2) args[2] else results_label
 
   results <- read.csv(file.path("sim/results", paste0(results_label, ".csv")))
+  # results saved before the bot was renamed
+  results$bot[results$bot == "Watch and wait"] <- "Respond to hospital reports"
   tp <- teaching_params()
   disease_labels <- setNames(scenario_catalog()$label, scenario_catalog()$id)
   bot_names <- c("Chase the signal", "Broad surveillance", "Test, trace, isolate",
-                 "Build testing first", "Hit hard early", "All-in early", "Watch and wait")
+                 "Build testing first", "Hit hard early", "All-in early", "Respond to hospital reports")
 
   scored <- score_games(results, tp$budget_total)
   plot_heatmap(scored, plot_label, disease_labels, bot_names, tp$game_turns)

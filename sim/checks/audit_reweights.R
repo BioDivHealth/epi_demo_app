@@ -1,6 +1,6 @@
 # Audit of earlier re-weightings -----------------------------------------------
 #
-# A. Watch and wait: before the rebalance it won 53% (COVID) / 85% (Ebola).
+# A. Respond to hospital reports (then called "Watch and wait"): before the rebalance it won 53% (COVID) / 85% (Ebola).
 #    Was that a sensible mechanism (hospital reports point at real hotspots,
 #    restrictions there work) or an artefact? Compare old and new settings.
 # B. Contact tracing barely helped. Was that the result delay (as assumed),
@@ -20,7 +20,7 @@ tp_old$local_restrictions$cost_per_100k <- 6000
 tp_old$reports$hosp_delay <- 2L
 tp_old$reports$own_borough <- 0.7
 
-# A. Watch and wait -------------------------------------------------------------
+# A. Respond to hospital reports -------------------------------------------------------------
 
 audit_watch <- function(disease, tp, label, seeds = 1:30) {
   rows <- list()
@@ -30,7 +30,7 @@ audit_watch <- function(disease, tp, label, seeds = 1:30) {
     memory <- list()
     for (i in seq_len(n_turns)) {
       view <- player_view(state, config)
-      choice <- bot_watch(view, memory)
+      choice <- bot_hospital_reports(view, memory)
       memory <- choice$memory
       result <- play_turn(state, choice$actions, config)
       if (!result$ok) result <- play_turn(state, list(), config)
@@ -58,7 +58,7 @@ watch <- bind_rows(
   audit_watch("ebola_like", teaching_params(), "after")
 )
 
-cat("\n== A. Watch and wait: where do its restrictions land? ==\n")
+cat("\n== A. Respond to hospital reports: where do its restrictions land? ==\n")
 watch |>
   group_by(disease, setting) |>
   summarise(

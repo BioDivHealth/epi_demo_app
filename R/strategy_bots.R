@@ -237,9 +237,9 @@ bot_all_in <- function(view, memory) {
   )
 }
 
-# 6. Watch and wait: no testing; rely on hospital reports and restrict the
+# 6. Respond to hospital reports (formerly "Watch and wait"): no testing; rely on hospital reports and restrict the
 #    boroughs where admissions turn up.
-bot_watch <- function(view, memory) {
+bot_hospital_reports <- function(view, memory) {
   recent <- view$reports |>
     dplyr::filter(turn >= view$turn - 1) |>
     dplyr::group_by(borough_index) |>
@@ -274,7 +274,7 @@ strategy_bots <- function() {
     "Build testing first" = bot_build,
     "Hit hard early" = bot_hit_hard,
     "All-in early" = bot_all_in,
-    "Watch and wait" = bot_watch
+    "Respond to hospital reports" = bot_hospital_reports
   )
 }
 

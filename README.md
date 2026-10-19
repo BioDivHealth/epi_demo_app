@@ -103,7 +103,7 @@ Notes:
 
 ## Strategy bots and balance heatmap
 
-`R/game_engine.R` holds the game (`new_game()`, `play_turn()`, `player_view()`); the app and the bots both use it. `R/strategy_bots.R` has six bots that play like students following one strategy (chase the signal, broad surveillance, test-trace-isolate, build testing first, hit hard early, watch and wait), seeing only `player_view()`.
+`R/game_engine.R` holds the game (`new_game()`, `play_turn()`, `player_view()`); the app and the bots both use it. `R/strategy_bots.R` has six bots that play like students following one strategy (chase the signal, broad surveillance, test-trace-isolate, build testing first, hit hard early, respond to hospital reports), seeing only `player_view()`.
 
 To see how often each strategy wins for each disease (about 3 minutes):
 
