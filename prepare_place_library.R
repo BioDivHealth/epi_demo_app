@@ -6,6 +6,8 @@
 # Inputs (download once into data_raw/global/, git-ignored):
 #   geoBoundariesCGAZ_ADM1.gpkg, geoBoundariesCGAZ_ADM2.gpkg
 #       https://github.com/wmgeolab/geoBoundaries/tree/main/releaseData/CGAZ
+#   adm3/<ISO>.geojson   admin-3 for the ~80 countries geoBoundaries has it for:
+#       https://github.com/wmgeolab/geoBoundaries/raw/4004e96/releaseData/gbOpen/<ISO>/ADM3/geoBoundaries-<ISO>-ADM3_simplified.geojson
 #   ghs_pop_2020_30ss.zip   GHS-POP 2020, 30 arcsec (~1 km), WGS84
 #       https://ghsl.jrc.ec.europa.eu/download.php?ds=pop
 #   geoBoundariesOpen-meta.csv   per-country boundary licences
@@ -14,11 +16,16 @@
 # Output (never data/):
 #   locations/library/index.rds          one row per place, used for search
 #   locations/library/LICENSES.csv       boundary licence per place
+#   locations/library/DROPPED.csv        places left out, and why
 #   locations/library/<id>.rds           meta + game inputs (K rebuilt on load) + backdrop
 #
-# Rules (deliberately blunt, see R/place_library.R):
-#   country -> admin-1 units (admin-2 if fewer than 8 admin-1), far islands dropped
-#   city    -> admin-2 units within the urban radius of the city point
+# Rules (deliberately blunt, see R/place_library.R). Every place needs at least
+# 10 areas to be playable; places that cannot reach 10 are left out.
+#   country -> the coarsest admin level (1, then 2, then 3) giving 10-250 areas
+#              once far islands are dropped
+#   city    -> the coarsest admin level (2, then 3) with at least 10 areas inside
+#              the urban radius (at most the 60 nearest); if neither reaches 10,
+#              the 10 nearest areas at the finest level available
 #              (cities = population >= 1 million, plus national capitals)
 #   London  -> the game's original 33 boroughs in data/ (built-in entry)
 
@@ -41,14 +48,16 @@ out_dir <- getOption("place_library.out_dir", file.path("locations", "library"))
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 gravity <- list(alpha = 1, beta = 2)
-min_units <- 3      # places with fewer units are skipped
-max_country_adm2 <- 250  # small countries drop to admin-2 only if that stays playable
-city_min_pop <- 1e6 # cities at least this big (capitals always included)
+min_areas <- 10           # fewer areas than this is not a playable game
+max_country_areas <- 250  # a country level with more areas than this is too fiddly
+max_city_areas <- 60      # cities keep at most the 60 nearest areas
+city_min_pop <- 1e6       # cities at least this big (capitals always included)
 
 # Quick trial on a few places before the full (slow) run
 test_run <- isTRUE(getOption("place_library.test_run", FALSE))
-test_countries <- c("PRT", "GBR", "KEN", "USA", "CYP")
-test_cities <- c("Lisbon", "London", "Nairobi", "Paris", "New York", "Istanbul", "Zhuhai")
+test_countries <- c("PRT", "GBR", "KEN", "USA", "CYP", "AUS", "BEL", "AUT")
+test_cities <- c("Lisbon", "London", "Nairobi", "Paris", "New York", "Istanbul", "Zhuhai",
+                 "Lagos", "Sheffield", "Mesa", "Mumbai")
 
 
 # ---- population raster ----
@@ -107,6 +116,25 @@ if (file.exists(admin_cache)) {
 
   saveRDS(list(adm1 = adm1, adm2 = adm2), admin_cache)
 }
+
+# Admin-3 (per-country files from geoBoundaries), cached the same way
+adm3_cache <- file.path(raw_dir, "admin3_with_pop.rds")
+
+if (file.exists(adm3_cache)) {
+  adm3 <- readRDS(adm3_cache)
+} else {
+  adm3_files <- list.files(file.path(raw_dir, "adm3"), pattern = "[.]geojson$", full.names = TRUE)
+  message("Reading admin-3 for ", length(adm3_files), " countries ...")
+  adm3 <- do.call(rbind, lapply(adm3_files, read_admin))
+
+  message("Summing population for ", nrow(adm3), " admin-3 units ...")
+  adm3$pop <- exactextractr::exact_extract(pop_raster, adm3, "sum", progress = FALSE)
+
+  saveRDS(adm3, adm3_cache)
+}
+
+# All levels in one place: admin_levels$ADM2 etc.
+admin_levels <- list(ADM1 = adm1, ADM2 = adm2, ADM3 = adm3)
 
 
 # ---- country names (for search) and outlines (for the backdrop) ----
@@ -177,10 +205,12 @@ build_place <- function(units, meta, context) {
   meta
 }
 
-# Run one place, log and skip on error
-safely_build <- function(fun, ...) {
+# Run one place; on error log why it was left out and move on
+dropped <- list()
+safely_build <- function(fun, place_name, ...) {
   tryCatch(fun(...), error = function(e) {
-    message("  skipped: ", conditionMessage(e))
+    message("  dropped: ", conditionMessage(e))
+    dropped[[length(dropped) + 1]] <<- data.frame(place = place_name, reason = conditionMessage(e))
     NULL
   })
 }
@@ -188,16 +218,23 @@ safely_build <- function(fun, ...) {
 
 # ---- countries ----
 build_country <- function(iso3) {
-  units <- adm1[adm1$shapeGroup == iso3, ]
-  level <- "ADM1"
-  adm2_units <- adm2[adm2$shapeGroup == iso3, ]
-  if (nrow(units) < 8 && nrow(adm2_units) <= max_country_adm2) {
-    units <- adm2_units
-    level <- "ADM2"
+  # Coarsest level that gives a playable number of areas (mainland only)
+  units <- NULL
+  counts <- c()
+  for (level in names(admin_levels)) {
+    layer <- admin_levels[[level]]
+    candidates <- layer[layer$shapeGroup == iso3, ]
+    if (nrow(candidates) == 0) next
+    candidates <- candidates[keep_mainland(candidates), ]
+    counts[level] <- nrow(candidates)
+    if (nrow(candidates) >= min_areas && nrow(candidates) <= max_country_areas) {
+      units <- candidates
+      break
+    }
   }
-  units <- units[keep_mainland(units), ]
-  if (nrow(units) < min_units) {
-    stop("only ", nrow(units), " units")
+  if (is.null(units)) {
+    stop("no admin level gives ", min_areas, "-", max_country_areas, " areas (",
+         paste(names(counts), counts, collapse = ", "), ")")
   }
 
   names_info <- country_names(iso3)
@@ -221,7 +258,7 @@ if (test_run) country_codes <- test_countries
 country_meta <- list()
 for (iso3 in country_codes) {
   message("Country ", iso3)
-  country_meta[[iso3]] <- safely_build(build_country, iso3)
+  country_meta[[iso3]] <- safely_build(build_country, paste0(iso3, " (country)"), iso3)
 }
 
 
@@ -249,27 +286,33 @@ build_city <- function(i) {
     stop("city not inside any admin-1 unit")
   }
 
-  # Prefer admin-2; very coarse countries fall back to admin-1
-  candidates <- adm2[adm2$shapeGroup == iso3, ]
-  level <- "ADM2"
-  if (nrow(candidates) < min_units) {
-    candidates <- adm1[adm1$shapeGroup == iso3, ]
-    level <- "ADM1"
-  }
-
   # Urban radius from Natural Earth's urban area (km^2); 15 km if missing
   urban_km2 <- city$MAX_AREAKM
   radius_km <- if (is.na(urban_km2) || urban_km2 <= 0) 15 else sqrt(urban_km2 / pi)
-
   coords <- sf::st_coordinates(city)
-  in_play_idx <- pick_city_units(candidates, coords[1], coords[2], radius_km)
-  units <- candidates[in_play_idx, ]
-  if (nrow(units) < min_units) {
-    stop("only ", nrow(units), " units")
-  }
 
-  # Backdrop: neighbouring admin units at the same level (any country)
-  backdrop_layer <- if (level == "ADM2") adm2 else adm1
+  # Coarsest level (admin-2, then admin-3) with >= 10 areas inside the radius.
+  # If none, the last (finest) level tried is used, widened to the 10 nearest.
+  units <- NULL
+  for (level in c("ADM2", "ADM3")) {
+    layer <- admin_levels[[level]]
+    candidates <- layer[layer$shapeGroup == iso3, ]
+    if (nrow(candidates) < min_areas) next
+
+    in_play_idx <- pick_city_units(candidates, coords[1], coords[2], radius_km,
+                                   n_min = min_areas, n_max = max_city_areas)
+    units <- candidates[in_play_idx, ]
+    chosen_level <- level
+    if (!attr(in_play_idx, "widened")) break
+  }
+  if (is.null(units)) {
+    stop("country has fewer than ", min_areas, " admin-2 or admin-3 areas")
+  }
+  level <- chosen_level
+
+  # Backdrop: neighbouring admin units at the same level
+  # (admin-2 is global, so neighbours across a border show too)
+  backdrop_layer <- admin_levels[[level]]
   backdrop <- backdrop_layer[!backdrop_layer$shapeID %in% units$shapeID, ]
   context <- crop_context(backdrop, units, expand = 0.6)
 
@@ -293,7 +336,7 @@ build_city <- function(i) {
 city_meta <- list()
 for (i in seq_len(nrow(city_join))) {
   message("City ", city_join$NAME[i])
-  city_meta[[i]] <- safely_build(build_city, i)
+  city_meta[[i]] <- safely_build(build_city, paste0(city_join$NAME[i], " (city)"), i)
 }
 
 
@@ -311,7 +354,12 @@ file.remove(setdiff(file.path(out_dir, list.files(out_dir, pattern = "^(country|
 utils::write.csv(index[, c("label", "type", "iso3", "level", "boundary_license", "license_source")],
                  file.path(out_dir, "LICENSES.csv"), row.names = FALSE)
 
+# Places left out because they cannot reach 10 areas (or failed to build)
+dropped_tbl <- do.call(rbind, dropped)
+utils::write.csv(dropped_tbl, file.path(out_dir, "DROPPED.csv"), row.names = FALSE)
+
 saveRDS(index, file.path(out_dir, "index.rds"))
 
 message("Done: ", sum(index$type == "country"), " countries, ",
-        sum(index$type == "city"), " cities in ", out_dir)
+        sum(index$type == "city"), " cities in ", out_dir,
+        "; ", nrow(dropped_tbl), " places dropped (see DROPPED.csv)")

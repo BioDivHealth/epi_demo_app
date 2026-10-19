@@ -53,23 +53,26 @@ test_that("find_place ranks exact matches, then countries, then bigger places", 
 test_that("pick_city_units takes the units near the city point", {
   grid <- make_grid(5, 5)
 
-  # City in the middle cell (0.25, 0.25); radius ~12 km covers the middle + 4 sides
-  in_play <- pick_city_units(grid, city_lon = 0.25, city_lat = 0.25, radius_km = 12)
+  # City in the middle cell (0.25, 0.25). Cells are ~11 km: a 23 km radius covers
+  # the middle, 4 sides, 4 diagonals and the 4 cells two steps away = 13 areas
+  in_play <- pick_city_units(grid, city_lon = 0.25, city_lat = 0.25, radius_km = 23)
 
   expect_equal(grid$shapeName[in_play[1]], "cell_13")   # containing cell first
-  expect_length(in_play, 5)
+  expect_length(in_play, 13)
+  expect_false(attr(in_play, "widened"))
 })
 
-test_that("pick_city_units fills up to a minimum and caps at a maximum", {
+test_that("pick_city_units widens to at least 10 areas and caps at a maximum", {
   grid <- make_grid(5, 5)
 
-  # Tiny radius: only the containing cell, so fall back to the 7 nearest
-  few <- pick_city_units(grid, 0.25, 0.25, radius_km = 1)
-  expect_length(few, 7)
+  # 12 km radius only reaches 5 cells, so widen to the 10 nearest and flag it
+  few <- pick_city_units(grid, 0.25, 0.25, radius_km = 12)
+  expect_length(few, 10)
+  expect_true(attr(few, "widened"))
 
-  # Huge radius: capped
-  many <- pick_city_units(grid, 0.25, 0.25, radius_km = 1000, n_max = 10)
-  expect_length(many, 10)
+  # Huge radius: capped at n_max nearest
+  many <- pick_city_units(grid, 0.25, 0.25, radius_km = 1000, n_max = 15)
+  expect_length(many, 15)
 })
 
 test_that("keep_mainland drops a far island group but keeps the main cluster", {

@@ -4,7 +4,7 @@ The place library (`locations/library/`, built by `prepare_place_library.R`) is 
 
 | Source | Used for | Licence | Credit |
 |---|---|---|---|
-| [geoBoundaries](https://www.geoboundaries.org) CGAZ ADM1/ADM2 | Unit boundaries | **Varies by country**: mostly ODbL 1.0, CC BY 3.0 IGO / 4.0, public domain; some CC BY-SA | Runfola, D. et al. (2020) geoBoundaries: A global database of political administrative boundaries. *PLoS ONE* 15(4): e0231866 |
+| [geoBoundaries](https://www.geoboundaries.org) CGAZ ADM1/ADM2 and gbOpen ADM3 | Unit boundaries | **Varies by country**: mostly ODbL 1.0, CC BY 3.0 IGO / 4.0, public domain; some CC BY-SA | Runfola, D. et al. (2020) geoBoundaries: A global database of political administrative boundaries. *PLoS ONE* 15(4): e0231866 |
 | [GHS-POP R2023A](https://ghsl.jrc.ec.europa.eu) 2020, 30 arcsec | Population per unit | CC BY 4.0 | Schiavina, M. et al. (2023) GHS-POP R2023A. European Commission, Joint Research Centre |
 | [WorldPop](https://www.worldpop.org) 2020 1 km UN-adjusted | Portugal example only | CC BY 4.0 | WorldPop (www.worldpop.org), University of Southampton |
 | [Natural Earth](https://www.naturalearthdata.com) | Country names/outlines, city points, urban area size | Public domain | Made with Natural Earth |

@@ -19,6 +19,10 @@
 # Queen adjacency (nb, A) is still built and returned, as for London.
 #
 # Nothing here reads or writes data/. The London default is untouched.
+#
+# Needs R/place_library.R too: the small kernel/distance helpers shared with
+# the app (gravity_kernel_from_points, haversine_km, local_equal_area_crs)
+# live there, so the app never has to load this build-time file.
 
 
 #' Build a game input bundle for any set of polygons
@@ -175,47 +179,6 @@ gravity_kernel <- function(units_planar, pop, alpha = 1, beta = 2) {
 }
 
 
-#' Gravity kernel from unit centroids and areas
-#'
-#' Same kernel as gravity_kernel(), from stored numbers instead of polygons
-#' (the place library keeps these, so K is rebuilt on load and alpha/beta
-#' can be changed at game time).
-#'
-#' @param lon,lat Unit centroids (degrees).
-#' @param area_km2 Unit areas (km^2), for the within-unit distance.
-#' @param pop Unit populations.
-#' @param unit_names Names for the dimnames.
-#' @export
-gravity_kernel_from_points <- function(lon, lat, area_km2, pop, unit_names,
-                                       alpha = 1, beta = 2) {
-  n_units <- length(pop)
-
-  # Centroid-to-centroid great-circle distances in km
-  dist_km <- outer(seq_len(n_units), seq_len(n_units), function(i, j) {
-    haversine_km(lon[i], lat[i], lon[j], lat[j])
-  })
-
-  # Within-unit distance for the diagonal (km)
-  self_km <- (2 / 3) * sqrt(area_km2 / pi)
-  diag(dist_km) <- self_km
-
-  if (any(dist_km <= 0)) {
-    stop("Zero distance between units; check for duplicate or empty polygons")
-  }
-
-  # Gravity weights: row = source unit, column = destination unit,
-  # so each column carries the destination population
-  pop_weight <- matrix(pop^alpha, nrow = n_units, ncol = n_units, byrow = TRUE)
-  W <- pop_weight / dist_km^beta
-
-  # Row-normalise so each row sums to 1
-  K <- W / rowSums(W)
-
-  dimnames(K) <- list(unit_names, unit_names)
-  K
-}
-
-
 #' Save a location bundle with the same file names load_inputs() reads
 #'
 #' Refuses to write into the app's own data/ folder (London inputs are
@@ -283,15 +246,6 @@ unit_points <- function(units_planar) {
   )
 }
 
-# Great-circle distance in km
-haversine_km <- function(lon1, lat1, lon2, lat2) {
-  to_rad <- pi / 180
-  d_lat <- (lat2 - lat1) * to_rad
-  d_lon <- (lon2 - lon1) * to_rad
-  a <- sin(d_lat / 2)^2 + cos(lat1 * to_rad) * cos(lat2 * to_rad) * sin(d_lon / 2)^2
-  6371 * 2 * asin(pmin(1, sqrt(a)))
-}
-
 # Queen neighbours as an spdep "nb" object (0L = no neighbours)
 queen_nb <- function(units_planar) {
   touching <- sf::st_intersects(units_planar)
@@ -338,13 +292,4 @@ align_population <- function(pop, unit_names, name_col) {
   }
 
   unit_pop
-}
-
-# Lambert azimuthal equal-area projection centred on the units (metres).
-# Works anywhere in the world without having to pick a UTM zone.
-local_equal_area_crs <- function(units_wgs84) {
-  bbox <- sf::st_bbox(units_wgs84)
-  lon_0 <- mean(c(bbox[["xmin"]], bbox[["xmax"]]))
-  lat_0 <- mean(c(bbox[["ymin"]], bbox[["ymax"]]))
-  sprintf("+proj=laea +lat_0=%.4f +lon_0=%.4f +units=m +datum=WGS84", lat_0, lon_0)
 }
