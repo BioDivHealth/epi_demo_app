@@ -53,8 +53,8 @@ mod_replay_ui <- function(id) {
       ),
       shiny::checkboxInput(
         inputId = ns("show_actions"),
-        label = "Show allocation markers",
-        value = TRUE
+        label = "Show where tests were done",
+        value = FALSE
       )
     ),
     shiny::fluidRow(

@@ -164,7 +164,8 @@ replay_build_action_points <- function(actions_df, centroid_tbl) {
     return(tibble::tibble())
   }
 
-  radius <- 4 + sqrt(pmax(points_df$total_tests, 0))
+  # small dots, growing gently with tests (large circles covered the map)
+  radius <- pmin(10, 3 + log10(1 + pmax(points_df$total_tests, 0)))
   radius[!is.finite(radius)] <- 4
 
   point_labels <- vapply(

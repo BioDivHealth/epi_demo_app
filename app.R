@@ -118,7 +118,7 @@ shared_admin <- reactiveValues(
   susceptible_frac = 1,
   scenario_id = "custom",
   death_ifr = 0.002,
-  death_delay = 6L
+  death_delay = 4L
 )
 
 shared_reset_signal <- reactiveVal(0L)
@@ -251,17 +251,17 @@ app_ui <- page_fluid(
       h4(textOutput("place_title", inline = TRUE)),
       div(class = "scenario-label", textOutput("scenario_display", inline = TRUE))
     ),
-    div(class = "top-stat", span(class = "label", "Turn"), span(class = "value", textOutput("turn_display", inline = TRUE))),
-    div(class = "top-stat", span(class = "label", "Money"), span(class = "value", textOutput("money_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Date"), span(class = "value", textOutput("turn_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Budget"), span(class = "value", textOutput("money_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Testing and hospitals"), span(class = "value", textOutput("system_display", inline = TRUE))),
     div(
       class = "ms-auto d-flex flex-wrap gap-2",
-      actionButton("advance_turn", "Advance turn", class = "btn-primary"),
-      actionButton("controls-end", "End & reveal", class = "btn-success"),
+      actionButton("advance_turn", "Advance to next report", class = "btn-primary"),
+      actionButton("controls-end", "End response & review", class = "btn-success"),
       actionButton("controls-reseed", "New outbreak", class = "btn-outline-secondary btn-sm"),
       actionButton("controls-reset", "Replay this outbreak", class = "btn-outline-secondary btn-sm"),
-      actionButton("choose_place", "Choose place", class = "btn-outline-secondary btn-sm"),
-      actionButton("help", "Help", class = "btn-outline-secondary btn-sm help-button")
+      actionButton("choose_place", "Change location", class = "btn-outline-secondary btn-sm"),
+      actionButton("help", "Briefing", class = "btn-outline-secondary btn-sm help-button")
     )
   ),
   uiOutput("main_layout"),
@@ -275,7 +275,7 @@ ui <- if (auth_disabled) app_ui else secure_app(app_ui, enable_admin = FALSE)
 
 server <- function(input, output, session) {
   # Which place this session plays: ?place=<id> in the address (set by the
-  # "Choose place" window), London otherwise. Loaded once per session, so a
+  # "Change location" window), London otherwise. Loaded once per session, so a
   # new place starts a fresh page and a fresh outbreak.
   place_meta <- NULL
   query <- shiny::parseQueryString(shiny::isolate(session$clientData$url_search))
@@ -320,7 +320,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # "Choose place": the picker in a window, then reload with ?place=<id>
+  # "Change location": the picker in a window, then reload with ?place=<id>
   picked_place <- if (!is.null(place_index)) mod_location_picker_server("picker") else NULL
 
   observeEvent(input$choose_place, {
@@ -395,6 +395,41 @@ server <- function(input, output, session) {
     ))
   }
 
+  # Situation report shown when each new outbreak starts
+  show_sitrep <- function(patient_area, report_date, first_event = "presented with") {
+    place_name <- if (is.null(place_meta)) {
+      "London"
+    } else if (identical(place_meta$type[[1]], "city")) {
+      sub(" [(].*$", "", place_meta$label[[1]])
+    } else {
+      place_meta$country[[1]]
+    }
+    showModal(modalDialog(
+      title = paste("Situation report:", format_date(report_date)),
+      tags$p(
+        "On ", tags$strong(format_date(report_date)), ", a patient ", first_event, " an unidentified illness in ",
+        tags$strong(patient_area), ". We know nothing about where they caught it or where it came from."
+      ),
+      tags$p(
+        "You are the chief epidemiologist for ", tags$strong(place_name),
+        " and have been tasked with controlling it."
+      ),
+      tags$p(tags$strong("What will you do?")),
+      tags$p(
+        class = "text-muted small",
+        sprintf(
+          "You have %d reports to act on, one every few days, and a fixed budget for the whole response.",
+          teaching_params()$game_turns
+        )
+      ),
+      footer = tagList(
+        actionButton("sitrep_help", "Read the briefing", class = "btn-outline-secondary"),
+        modalButton("Open the response room")
+      ),
+      easyClose = TRUE
+    ))
+  }
+
   show_help_once <- function() {
     if (isTRUE(help_shown())) {
       return()
@@ -404,22 +439,11 @@ server <- function(input, output, session) {
     help_pending(FALSE)
   }
 
-  observeEvent(list(input$help_auto, auth_ready()), {
-    if (is.null(input$help_auto)) {
-      return()
-    }
-    if (isTRUE(auth_ready())) {
-      show_help_once()
-    } else {
-      help_pending(TRUE)
-    }
-  }, ignoreInit = FALSE)
-
-  observeEvent(auth_ready(), {
-    if (isTRUE(auth_ready()) && isTRUE(help_pending())) {
-      show_help_once()
-    }
-  }, ignoreInit = TRUE)
+  # (no automatic help pop-up: each new outbreak opens with a situation
+  # report instead, which links to the briefing)
+  observeEvent(input$sitrep_help, {
+    show_help_modal()
+  })
 
   observeEvent(input$help, {
     show_help_modal()
@@ -428,12 +452,16 @@ server <- function(input, output, session) {
   })
 
   output$main_layout <- renderUI({
-    # map and plan on the left, results on the right; stacked on narrow screens
-    main <- bslib::layout_columns(
-      col_widths = bslib::breakpoints(sm = c(12, 12), lg = c(7, 5)),
-      fill = FALSE,
-      mod_map_ui("map", intervention_defs = intervention_defs),
-      mod_dashboard_ui("dashboard")
+    # problem (map) and measurement (surveillance) side by side on top, the
+    # response underneath; stacked on narrow screens
+    main <- tagList(
+      bslib::layout_columns(
+        col_widths = bslib::breakpoints(sm = c(12, 12), lg = c(7, 5)),
+        fill = FALSE,
+        mod_map_ui("map", intervention_defs = intervention_defs),
+        mod_dashboard_ui("dashboard")
+      ),
+      mod_response_ui("map", intervention_defs = intervention_defs)
     )
 
     # only admins get the sidebar (seed and scenario settings)
@@ -454,7 +482,11 @@ server <- function(input, output, session) {
   app_ready <- reactiveVal(FALSE)
 
   output$turn_display <- renderText({
-    paste(turn(), "of", teaching_params()$game_turns)
+    config <- current_config()
+    paste0(
+      "Day ", turn_day(turn(), config), " · ", format_date(turn_date(turn(), config)),
+      " (report ", turn() + 1, " of ", teaching_params()$game_turns, ")"
+    )
   })
 
   # money left this turn (after the current plan) and in total
@@ -577,7 +609,9 @@ server <- function(input, output, session) {
         asymptomatic = scenario$asymptomatic[[1]],
         presymptomatic = scenario$presymptomatic[[1]],
         delay_decay = scenario$delay_decay[[1]],
-        hosp_frac = scenario$hosp_frac[[1]]
+        hosp_frac = scenario$hosp_frac[[1]],
+        gen_days = scenario$gen_days[[1]],
+        hosp_delay = scenario$hosp_delay[[1]]
       )
     )
   })
@@ -586,7 +620,7 @@ server <- function(input, output, session) {
   sync_from_state <- function(state) {
     game_state(state)
     truth_state(state$truth)
-    truth_history(state$truth$history)
+    truth_history(utils::tail(state$truth$history, -(state$truth_offset %||% 0)))
     observation_state(state$obs)
     available_now(state$available)
     game_biases(state$biases)
@@ -650,8 +684,13 @@ server <- function(input, output, session) {
       state <- game_state()
       if (is.null(state)) return(NULL)
       view <- player_view(state, current_config())
-      list(bed_pressure = view$bed_pressure, lab_backlog = view$lab_backlog)
+      list(
+        bed_pressure = view$bed_pressure,
+        lab_backlog = view$lab_backlog,
+        pot_share = view$budget_left / current_config()$tp$budget_total
+      )
     }),
+    date_label = function(turns) format(turn_date(turns, current_config()), "%d %b"),
     app_ready = app_ready
   )
 
@@ -674,35 +713,27 @@ server <- function(input, output, session) {
     config <- current_config()
 
     starter_option <- controls$starter_intel()
-    state <- new_game(
-      config,
-      seed = seed,
-      starter = starter_option,
-      sampling_mode = "symptomatic"
-    )
+    state <- new_game(config, seed = seed, sampling_mode = "symptomatic")
     init <- state$truth
     starter_alloc <- state$starter_alloc
     game_seed(state$seed)
 
-    # first log entry: the early alert
-    alerted <- which(starter_alloc$n_ag + starter_alloc$n_pcr > 0)
-    turn_log(if (length(alerted) == 1) {
-      sprintf(
-        "An early alert sent %d free tests to %s. Results come back as they are processed.",
-        sum(starter_alloc$n_ag + starter_alloc$n_pcr), inputs$pop_tbl$borough_name[alerted]
-      )
-    } else {
-      "New outbreak. No alerts yet."
-    })
+    # the first patient, and (hidden until the review) where and when it began
+    patient_area <- inputs$pop_tbl$borough_name[state$alert$alerted]
+    report_date <- as.Date(config$tp$start_date)
+    starter_alert_info(list(
+      alerted = patient_area,
+      true_start = inputs$pop_tbl$borough_name[state$alert$true_start],
+      hidden_days = state$alert$hidden_turns * config$bio$gen_days,
+      began = report_date - state$alert$hidden_turns * config$bio$gen_days,
+      infected_by_report = state$start_infections
+    ))
 
-    # remember where the alert pointed, for the reveal
-    starter_alert_info(NULL)
-    if (!is.null(state$alert)) {
-      starter_alert_info(list(
-        alerted = inputs$pop_tbl$borough_name[state$alert$alerted],
-        true_start = inputs$pop_tbl$borough_name[state$alert$true_start]
-      ))
-    }
+    first_event <- if (identical(state$alert$trigger, "death")) "died of" else "presented with"
+    turn_log(sprintf(
+      "%s: a patient %s an unidentified illness in %s. Nothing else is known yet.",
+      format_date(report_date), first_event, patient_area
+    ))
 
     blank_logs <- init_turn_logs(inputs$pop_tbl)
     turn_logs$truth <- blank_logs$truth
@@ -723,7 +754,7 @@ server <- function(input, output, session) {
 
     turn_logs$truth <- append_truth_log(
       truth_log = turn_logs$truth,
-      turn = init$turn,
+      turn = 0L,
       incidence = init$incidence,
       cumulative = init$cumulative,
       deaths = init$deaths,
@@ -770,7 +801,7 @@ server <- function(input, output, session) {
       max_spend = config$tp$tests$budget
     )
 
-    starter_note <- starter_intel_label(starter_option)
+    starter_note <- paste("First patient reported in", patient_area)
     starter_queue <- sum(state$obs$queue$n)
     run_log(tibble(
       turn = 0L,
@@ -790,6 +821,9 @@ server <- function(input, output, session) {
     ))
 
     run_report(NULL)
+
+    # situation report: the brief for this outbreak
+    show_sitrep(patient_area, report_date, first_event)
   }
 
   observeEvent(shared_reset_signal(), {
@@ -823,7 +857,7 @@ server <- function(input, output, session) {
 
     # the game lasts a fixed number of turns
     if (state$turn >= teaching_params()$game_turns) {
-      showNotification("That was the last turn. Press End & reveal to see what really happened.", type = "message")
+      showNotification("That was the last report. Press End response & review to see what really happened.", type = "message")
       return()
     }
     config <- current_config()
@@ -905,7 +939,7 @@ server <- function(input, output, session) {
     next_truth <- new_state$truth
     turn_logs$truth <- append_truth_log(
       truth_log = turn_logs$truth,
-      turn = next_truth$turn,
+      turn = new_state$turn,
       incidence = next_truth$incidence,
       cumulative = next_truth$cumulative,
       deaths = next_truth$deaths,
@@ -972,10 +1006,115 @@ server <- function(input, output, session) {
       log <- c(log, sprintf("Labs are behind: this turn's PCR results will be %d turn(s) late.", result$pcr_extra_delay))
     }
     if (new_state$turn >= teaching_params()$game_turns) {
-      log <- c(log, "That was the last turn. Press End & reveal.")
+      log <- c(log, "That was the last report. Press End response & review.")
     }
-    turn_log(c(sprintf("Turn %d:", current_turn), log))
+    turn_log(c(sprintf(
+      "Report for %s (day %d):",
+      format_date(turn_date(new_state$turn, config)), turn_day(new_state$turn, config)
+    ), log))
   })
+
+  # Review chart: real new infections (black) against confirmed cases (red),
+  # from the true start, with the unseen period shaded
+  output$review_truth_plot <- renderPlot({
+    req(run_report())
+    state <- game_state()
+    config <- current_config()
+    offset <- state$truth_offset %||% 0
+
+    real <- tibble(
+      turn = seq_along(state$truth$history) - 1L - offset,
+      cases = vapply(state$truth$history, sum, numeric(1)),
+      series = "Real new infections"
+    )
+
+    hist <- state$obs$history
+    last_turn <- max(real$turn)
+    seen <- numeric(last_turn + 1)
+    if (nrow(hist) > 0) {
+      by_turn <- tapply(hist$positives, hist$turn_available, sum)
+      keep <- as.integer(names(by_turn)) <= last_turn
+      seen[as.integer(names(by_turn))[keep] + 1] <- by_turn[keep]
+    }
+    observed <- tibble(turn = 0:last_turn, cases = seen, series = "Confirmed cases you saw")
+
+    both <- bind_rows(real, observed)
+    both$date <- turn_date(both$turn, config)
+    both$series <- factor(both$series, levels = c("Real new infections", "Confirmed cases you saw"))
+    report_date <- as.Date(config$tp$start_date)
+    true_start <- min(both$date)
+
+    ggplot2::ggplot(both, ggplot2::aes(x = date, y = cases, colour = series)) +
+      ggplot2::annotate("rect", xmin = true_start, xmax = report_date, ymin = -Inf, ymax = Inf,
+                        fill = "grey85", alpha = 0.6) +
+      ggplot2::annotate("text", x = true_start, y = Inf, label = "Unseen spread",
+                        hjust = -0.05, vjust = 1.5, size = 3.5, colour = "grey30") +
+      ggplot2::geom_vline(xintercept = report_date, linetype = "dashed", colour = "grey40") +
+      ggplot2::annotate("text", x = report_date, y = Inf, label = "First patient reported",
+                        hjust = -0.05, vjust = 3.2, size = 3.5, colour = "grey30") +
+      ggplot2::geom_line(linewidth = 1) +
+      ggplot2::geom_point(size = 1.6) +
+      ggplot2::scale_colour_manual(values = c("Real new infections" = "black", "Confirmed cases you saw" = "#d62728")) +
+      ggplot2::scale_y_continuous(
+        trans = scales::pseudo_log_trans(base = 10),
+        breaks = c(0, 1, 10, 100, 1000, 1e4, 1e5, 1e6, 1e7),
+        labels = scales::label_comma()
+      ) +
+      ggplot2::labs(x = NULL, y = "Cases per report", colour = NULL) +
+      ggplot2::theme_minimal(base_size = 12) +
+      ggplot2::theme(legend.position = "top", panel.grid.minor = ggplot2::element_blank())
+  })
+
+  # Review card: what the disease was, and where and when it really began
+  disease_card_ui <- function() {
+    config <- current_config()
+    scenario <- scenario_lookup(shared_admin$scenario_id)
+    alert <- starter_alert_info()
+    bio <- config$bio
+    pct <- function(x) paste0(round(100 * x), "%")
+
+    properties <- tibble(
+      Property = c(
+        "Each case would infect (nobody immune)", "Each case infected at the start",
+        "Infections with no symptoms", "Spread before symptoms",
+        "Infected people needing hospital", "Infected people who die",
+        "Days per generation of infection"
+      ),
+      Value = c(
+        format(config$epi$Rt), sprintf("%.2f", config$epi$Rt * config$susceptible_frac),
+        pct(bio$asymptomatic), pct(bio$presymptomatic),
+        pct(bio$hosp_frac), sprintf("%.1f%%", 100 * config$mort$death_ifr),
+        format(bio$gen_days)
+      )
+    )
+
+    began_txt <- if (is.null(alert)) "" else sprintf(
+      paste(
+        "The true start date was %s, with one infected person in %s.",
+        "By the time the first patient was reported (%s, in %s, %d days later),",
+        "%s people had been infected."
+      ),
+      format_date(alert$began), alert$true_start,
+      format_date(as.Date(config$tp$start_date)), alert$alerted, alert$hidden_days,
+      format(alert$infected_by_report, big.mark = ",")
+    )
+
+    tags$div(
+      class = "card border-dark mb-3",
+      tags$div(class = "card-header", tags$strong(paste("The disease:", scenario$label[[1]]))),
+      tags$div(
+        class = "card-body small",
+        tags$p(scenario$blurb[[1]]),
+        tags$p(tags$strong(began_txt)),
+        tags$table(
+          class = "table table-sm mb-0",
+          tags$tbody(lapply(seq_len(nrow(properties)), function(i) {
+            tags$tr(tags$td(properties$Property[i]), tags$td(tags$strong(properties$Value[i])))
+          }))
+        )
+      )
+    )
+  }
 
   # Debrief card: the hidden things that were distorting what students saw
   hidden_distortions_ui <- function() {
@@ -994,13 +1133,16 @@ server <- function(input, output, session) {
 
     alert <- starter_alert_info()
     alert_txt <- if (is.null(alert)) {
-      "No starter alert this game."
+      ""
     } else if (identical(alert$alerted, alert$true_start)) {
-      sprintf("The starter alert was right: the outbreak began in %s.", alert$true_start)
+      sprintf(
+        "The first patient was reported in %s, where the outbreak had begun %d days earlier.",
+        alert$true_start, alert$hidden_days
+      )
     } else {
       sprintf(
-        "The starter alert was a false alarm: it pointed at %s, but the outbreak began in %s.",
-        alert$alerted, alert$true_start
+        "The first patient was reported in %s, but the outbreak had begun in %s %d days earlier.",
+        alert$alerted, alert$true_start, alert$hidden_days
       )
     }
 
@@ -1104,9 +1246,14 @@ server <- function(input, output, session) {
     )
 
     showModal(modalDialog(
-      title = tags$span(
-        tags$i(class = "fa fa-eye me-2"),
-        "True Data Revealed"
+      title = "After-action review: what really happened",
+      disease_card_ui(),
+      tags$h5("What you saw against what was really happening"),
+      plotOutput("review_truth_plot", height = "320px"),
+      tags$p(
+        class = "text-muted small",
+        "Black: real new infections each report (including the unseen start). Red: confirmed cases you saw.",
+        "The scale is logarithmic, so each gridline is ten times the one below."
       ),
       fluidRow(
         column(6,

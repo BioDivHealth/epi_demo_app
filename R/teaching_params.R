@@ -22,6 +22,18 @@ teaching_params <- function() {
     # population (a bigger place has a bigger health budget, more labs and
     # beds), and imports by its number of areas. See scale_to_place().
     reference_pop = 9089736,
+
+    # The outbreak starts unseen, from one infected person, and runs for a
+    # random 1-10 generations before the first patient is reported, whatever
+    # the disease (a fast-growing one is simply bigger by then), or until
+    # the first death, which is always noticed. The first patient is a real
+    # case, wherever the infections happen to be, not necessarily where it
+    # started.
+    # Trap: the first case found is not the first case.
+    head_start = list(min_turns = 1L, max_turns = 10L, index_cases = 1L),
+
+    # Date the first patient is reported (day 0). Day 1 is the first turn.
+    start_date = "2027-10-04",
     reference_units = 33L,
 
     # Starter intel: an early alert sends 200 antigen tests to one borough.
@@ -98,7 +110,7 @@ teaching_params <- function() {
     # not all are recognised as this disease.
     # Trap: hospital data is late, incomplete and in the wrong place.
     reports = list(
-      hosp_delay = 3L,
+      hosp_delay = 3L,        # fallback only: each disease sets its own (scenarios.R)
       hosp_ascertainment = 0.8,
       own_borough = 0.5,
       death_ascertainment = 0.9

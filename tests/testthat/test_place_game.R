@@ -13,7 +13,9 @@ index <- read_place_index(library_dir)
 places <- c(
   kenya = find_place("Kenya", index)$id[1],
   lagos = find_place("Lagos", index)$id[1],
-  uk = find_place("United Kingdom", index)$id[1]
+  uk = find_place("United Kingdom", index)$id[1],
+  # the biggest map (545 areas)
+  australia = find_place("Australia", index)$id[1]
 )
 
 for (name in names(places)) {

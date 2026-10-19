@@ -42,7 +42,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
     scenario_defs <- scenario_catalog()
     default_scenario <- scenario_lookup("custom", scenario_defs)
     default_death_ifr <- 0.002
-    default_death_delay <- 6L
+    default_death_delay <- 4L
     admin_defaults <- list(
       Rt = default_scenario$Rt[[1]],
       k = default_scenario$k[[1]],

@@ -44,8 +44,10 @@ scenario_catalog <- function() {
     seed_cases = c(100L, 30L, 30L, 40L, 60L, 20L, 15L),
     kernel_key = c("default", "measles", "measles", "default", "default", "default", "default"),
     susceptible_frac = c(1, 0.08, 0.2, 0.9, 0.8, 1.0, 1.0),
-    death_ifr = c(NA_real_, 0.001, 0.001, 0.002, 0.001, 0.5, 0.6),
-    death_delay = c(NA_integer_, NA_integer_, NA_integer_, 8L, 8L, 10L, 10L),
+    death_ifr = c(0.002, 0.001, 0.001, 0.002, 0.001, 0.5, 0.6),
+    # turns from infection to death (one turn = gen_days days, below):
+    # about 20 days COVID-like, 12 flu, 24 measles, 15 Ebola, 20 Nipah
+    death_delay = c(4L, 2L, 2L, 4L, 4L, 1L, 2L),
     # testing level at the start (see teaching_params()$test_levels):
     # 1 reference lab only, 2 hospital labs, 3 established, 4 rapid everywhere
     test_level = c(3L, 3L, 3L, 2L, 3L, 1L, 1L),
@@ -58,7 +60,45 @@ scenario_catalog <- function() {
     # (low = fast spreader, a slow result is nearly worthless)
     delay_decay = c(0.5, 0.6, 0.6, 0.4, 0.35, 0.85, 0.8),
     # share of infections admitted to hospital (what gets reported anyway)
-    hosp_frac = c(0.02, 0.1, 0.1, 0.03, 0.01, 0.5, 0.6)
+    hosp_frac = c(0.02, 0.1, 0.1, 0.03, 0.01, 0.5, 0.6),
+    # days per turn: one turn is one generation of infection
+    gen_days = c(5L, 12L, 12L, 5L, 3L, 15L, 10L),
+    # turns from infection to hospital admission: about 10 days COVID-like,
+    # 6 flu, 12 measles, 15 Ebola, 10 Nipah
+    hosp_delay = c(2L, 1L, 1L, 2L, 2L, 1L, 1L),
+    # what the disease was, shown at the start of the after-action review
+    blurb = c(
+      "A new respiratory infection with moderate spread.",
+      paste(
+        "A measles-like virus: extremely contagious through the air (each case would infect about 15 people",
+        "if nobody were immune). Almost everyone infected becomes ill, and cases spread it for a few days",
+        "before the rash. Most people here are vaccinated (8% can still catch it), so it only just keeps spreading."
+      ),
+      paste(
+        "A measles-like virus: extremely contagious through the air (each case would infect about 15 people",
+        "if nobody were immune). Almost everyone infected becomes ill, and cases spread it for a few days",
+        "before the rash. Vaccination here is low (20% can catch it), enough for explosive spread."
+      ),
+      paste(
+        "A new coronavirus, COVID-like. Nearly half of infections have no symptoms, much of the spread",
+        "happens before symptoms start, and a few people infect very many others (superspreading).",
+        "At first only hospital labs could test for it, slowly."
+      ),
+      paste(
+        "An influenza-like virus: a new generation of infections every 3 days, a third of infections",
+        "without symptoms and much spread before symptoms. Mild for most people. Rapid tests exist."
+      ),
+      paste(
+        "An Ebola-like virus: spread through close contact with very sick people, with almost no spread",
+        "before symptoms, so isolating cases works well. Half of those infected die. At first only a",
+        "reference lab could test for it."
+      ),
+      paste(
+        "A Nipah-like virus: repeated jumps from animals into people, with little onward spread",
+        "(each case infects fewer than one other on average) but very high mortality. Most clusters",
+        "die out on their own."
+      )
+    )
   )
 }
 

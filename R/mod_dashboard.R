@@ -1,55 +1,30 @@
-# Dashboard module -----------------------------------------------------------
+# Surveillance module ----------------------------------------------------------
 #
-# Everything a player can see: what happened last turn, this turn's numbers,
-# and the history of positives, tests and hospital reports. Only returned
-# test results and public reports are used (never the hidden truth).
-
-kpi_card <- function(label, output_id, colour = "text-dark") {
-  shiny::div(
-    class = "col-6 col-xl-3",
-    shiny::div(
-      class = "p-2 bg-light rounded text-center h-100",
-      shiny::tags$small(class = "text-muted d-block", label),
-      shiny::div(class = paste("fs-5 fw-bold", colour), shiny::textOutput(output_id, inline = TRUE))
-    )
-  )
-}
+# Everything the response team can see: warnings, the latest report, and one
+# chart of the surveillance signals over time. Only returned test results and
+# public reports are used (never the hidden truth).
 
 mod_dashboard_ui <- function(id) {
   ns <- shiny::NS(id)
   bslib::card(
     style = "height: 100%; overflow-y: auto;",
-    bslib::card_header("What you can see"),
+    bslib::card_header("Surveillance"),
     bslib::card_body(
       class = "p-2",
 
-      # what happened last turn (stays until the next turn)
+      # warnings
+      shiny::htmlOutput(ns("warnings")),
+
+      # the latest report (stays until the next one)
       shiny::div(
         class = "p-2 mb-2 rounded small",
-        style = "background: #fff8e1; border-left: 4px solid #f0ad4e;",
+        style = "background: #f4f6f8; border-left: 4px solid #6c757d;",
         shiny::htmlOutput(ns("turn_log"))
       ),
 
-      # this turn's numbers
-      shiny::div(
-        class = "row g-2 mb-2",
-        kpi_card("Positives back this turn", ns("positives_now"), "text-danger"),
-        kpi_card("Share positive this turn", ns("positivity_now")),
-        kpi_card("Hospital admissions this turn", ns("admissions_now")),
-        kpi_card("Tests still waiting", ns("pending_count"), "text-primary")
-      ),
-      shiny::div(
-        class = "small text-muted mb-2",
-        shiny::textOutput(ns("totals_text"), inline = TRUE)
-      ),
-
-      shiny::tags$strong(class = "small", "Positives (bars) and hospital admissions (line) per turn"),
-      shiny::div(style = "height: 170px;", shiny::plotOutput(ns("incidence_plot"), height = "100%")),
-      shiny::tags$strong(class = "small", "Tests with results back per turn"),
-      shiny::div(style = "height: 110px;", shiny::plotOutput(ns("tests_plot"), height = "100%")),
-      shiny::hr(class = "my-2"),
-      shiny::tags$strong(class = "small", "Estimated Rt from your positives (1 = flat)"),
-      shiny::div(style = "height: 140px;", shiny::plotOutput(ns("rt_plot"), height = "100%"))
+      # one chart: every signal over time, latest value and change at the end
+      shiny::div(style = "height: 430px;", shiny::plotOutput(ns("signals_plot"), height = "100%")),
+      shiny::div(class = "small text-muted", shiny::textOutput(ns("totals_text"), inline = TRUE))
     )
   )
 }
@@ -63,186 +38,220 @@ mod_dashboard_server <- function(
     reports,
     turn_log = shiny::reactive(character()),
     system_status = shiny::reactive(NULL),
+    date_label = function(turn) turn,
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
     ready <- shiny::reactive({
       isTRUE(app_ready())
     })
 
-    # positives and tests per turn, every turn present (0 if nothing back)
-    observed_series <- shiny::reactive({
+    # every signal per report (turn), every turn present -----------------------
+    signals <- shiny::reactive({
       hist <- observed_history()
-      if (is.null(hist) || nrow(hist) == 0) {
-        return(tibble::tibble(turn = integer(), positives = numeric(), tests = numeric()))
-      }
-      last_turn <- max(hist$turn_available)
-      positives <- numeric(last_turn + 1)
-      tests <- numeric(last_turn + 1)
-      by_turn <- hist |>
-        dplyr::group_by(turn_available) |>
-        dplyr::summarise(positives = sum(positives), tests = sum(n), .groups = "drop")
-      positives[by_turn$turn_available + 1] <- by_turn$positives
-      tests[by_turn$turn_available + 1] <- by_turn$tests
-      tibble::tibble(turn = 0:last_turn, positives = positives, tests = tests)
-    })
-
-    # hospital admissions reported per turn
-    admissions_series <- shiny::reactive({
       rep <- reports()
-      if (is.null(rep) || nrow(rep) == 0) {
-        return(tibble::tibble(turn = integer(), admissions = integer()))
+
+      last_turn <- max(c(0, hist$turn_available, rep$turn))
+      turns <- 0:last_turn
+      confirmed <- numeric(length(turns))
+      tests <- numeric(length(turns))
+      suspected <- numeric(length(turns))
+      deaths <- numeric(length(turns))
+
+      if (!is.null(hist) && nrow(hist) > 0) {
+        by_turn <- hist |>
+          dplyr::group_by(turn_available) |>
+          dplyr::summarise(positives = sum(positives), tests = sum(n), .groups = "drop")
+        confirmed[by_turn$turn_available + 1] <- by_turn$positives
+        tests[by_turn$turn_available + 1] <- by_turn$tests
       }
-      rep |>
-        dplyr::group_by(turn) |>
-        dplyr::summarise(admissions = sum(admissions), .groups = "drop")
+      if (!is.null(rep) && nrow(rep) > 0) {
+        by_turn <- rep |>
+          dplyr::group_by(turn) |>
+          dplyr::summarise(admissions = sum(admissions), deaths = sum(deaths), .groups = "drop")
+        suspected[by_turn$turn + 1] <- by_turn$admissions
+        deaths[by_turn$turn + 1] <- by_turn$deaths
+      }
+
+      # Rt from confirmed cases (1-turn serial interval)
+      rt <- rep(NA_real_, length(turns))
+      rt_tbl <- estimate_rt_table(confirmed)
+      if (nrow(rt_tbl) > 0) {
+        rt[rt_tbl$t_end] <- rt_tbl$mean
+      }
+
+      tibble::tibble(
+        turn = turns,
+        confirmed = confirmed,
+        tests = tests,
+        share_positive = ifelse(tests > 0, 100 * confirmed / tests, NA_real_),
+        suspected = suspected,
+        deaths = deaths,
+        rt = rt
+      )
     })
 
     output$turn_log <- shiny::renderUI({
       req(ready())
       log <- turn_log()
       if (length(log) == 0) {
-        return(shiny::HTML("Set your plan, then press <b>Advance turn</b>."))
+        return(shiny::HTML("Set your response, then press <b>Advance to next report</b>."))
       }
-      shiny::HTML(paste(log, collapse = "<br>"))
+      shiny::HTML(paste0("<b>", log[1], "</b><br>", paste(log[-1], collapse = "<br>")))
     })
 
-    # this turn's numbers ------------------------------------------------------
+    # warnings -----------------------------------------------------------------
 
-    output$positives_now <- shiny::renderText({
+    output$warnings <- shiny::renderUI({
       req(ready())
-      now <- available_now()
-      positives <- if (is.null(now) || nrow(now) == 0) 0 else sum(now$positives)
+      s <- signals()
+      status <- system_status()
+      n <- nrow(s)
+      found <- list()
 
-      # change from the turn before, from the per-turn series
-      series <- observed_series()
-      change <- ""
-      if (nrow(series) >= 2) {
-        diff <- series$positives[nrow(series)] - series$positives[nrow(series) - 1]
-        change <- if (diff > 0) paste0(" (+", diff, ")") else if (diff < 0) paste0(" (", diff, ")") else " (same)"
+      add <- function(level, text) {
+        found[[length(found) + 1]] <<- list(level = level, text = text)
       }
-      paste0(format(positives, big.mark = ","), change)
+
+      # rising fast: up by half since the last report, from a meaningful base
+      rising <- function(now, before, minimum) {
+        !is.na(now) && !is.na(before) && now >= minimum && now >= 1.5 * max(before, 1)
+      }
+
+      if (!is.null(status)) {
+        if (status$bed_pressure >= 1) {
+          add("danger", "Hospitals are full: patients without a bed are dying.")
+        } else if (status$bed_pressure >= 0.8) {
+          add("danger", sprintf("Hospital beds %d%% full.", round(100 * status$bed_pressure)))
+        } else if (status$bed_pressure >= 0.5) {
+          add("warning", sprintf("Hospital beds over half full (%d%%).", round(100 * status$bed_pressure)))
+        }
+        if (status$lab_backlog > 0) {
+          add("warning", "Labs are behind: PCR results are delayed.")
+        }
+        if (!is.null(status$pot_share) && status$pot_share < 0.1) {
+          add("danger", "Budget almost spent.")
+        } else if (!is.null(status$pot_share) && status$pot_share < 0.25) {
+          add("warning", "Budget running low.")
+        }
+      }
+
+      if (n >= 2) {
+        now <- s[n, ]
+        before <- s[n - 1, ]
+        if (rising(now$confirmed, before$confirmed, 10)) {
+          add("warning", sprintf("Confirmed cases rising fast (%s to %s).", before$confirmed, now$confirmed))
+        }
+        if (rising(now$suspected, before$suspected, 5)) {
+          add("warning", sprintf("Hospital admissions rising fast (%s to %s).", before$suspected, now$suspected))
+        }
+        if (now$deaths >= 3 && now$deaths > before$deaths) {
+          add("danger", sprintf("Deaths rising (%s to %s).", before$deaths, now$deaths))
+        }
+        if (rising(now$share_positive, before$share_positive, 2)) {
+          add("warning", sprintf("Share of tests positive rising (%.1f%% to %.1f%%).", before$share_positive, now$share_positive))
+        }
+        if (!is.na(now$rt) && now$rt > 1 && !is.na(before$rt) && now$rt > before$rt) {
+          add(if (now$rt > 1.5) "danger" else "warning", sprintf("Rt above 1 and rising (%.2f).", now$rt))
+        }
+      }
+
+      if (length(found) == 0) {
+        return(shiny::div(class = "small text-success mb-2", "No warnings."))
+      }
+      shiny::div(
+        class = "mb-2",
+        lapply(found, function(w) {
+          shiny::div(class = paste0("alert alert-", w$level, " py-1 px-2 mb-1 small"), w$text)
+        })
+      )
     })
 
-    output$positivity_now <- shiny::renderText({
-      req(ready())
-      now <- available_now()
-      if (is.null(now) || sum(now$n) == 0) return("-")
-      paste0(round(100 * sum(now$positives) / sum(now$n), 1), "%")
-    })
+    # one chart of every signal -----------------------------------------------
 
-    output$admissions_now <- shiny::renderText({
+    output$signals_plot <- shiny::renderPlot({
       req(ready())
-      adm <- admissions_series()
-      if (nrow(adm) == 0) return("0")
-      format(adm$admissions[nrow(adm)], big.mark = ",")
-    })
+      s <- signals()
 
-    output$pending_count <- shiny::renderText({
-      req(ready())
-      queue <- queue_state()
-      if (is.null(queue) || nrow(queue) == 0) return("0")
-      format(sum(queue$n), big.mark = ",")
+      panels <- c(
+        confirmed = "Confirmed cases (positive tests)",
+        share_positive = "Share of tests positive (%)",
+        suspected = "Suspected cases (hospital admissions)",
+        deaths = "Deaths reported",
+        rt = "Rt from confirmed cases (1 = flat)"
+      )
+      long <- dplyr::bind_rows(lapply(names(panels), function(m) {
+        tibble::tibble(turn = s$turn, value = s[[m]], panel = panels[[m]])
+      }))
+      long$panel <- factor(long$panel, levels = panels)
+
+      # latest value and change since the report before, at the end of each line
+      fmt <- function(x, panel) {
+        if (grepl("Rt", panel)) sprintf("%.2f", x) else if (grepl("%", panel)) sprintf("%.1f", x) else format(round(x), big.mark = ",")
+      }
+      ends <- long |>
+        dplyr::filter(!is.na(value)) |>
+        dplyr::group_by(panel) |>
+        dplyr::arrange(turn, .by_group = TRUE) |>
+        dplyr::summarise(
+          turn = dplyr::last(turn),
+          value = dplyr::last(value),
+          change = if (dplyr::n() >= 2) dplyr::last(value) - dplyr::nth(value, -2) else NA_real_,
+          .groups = "drop"
+        )
+      ends$label <- vapply(seq_len(nrow(ends)), function(i) {
+        p <- as.character(ends$panel[i])
+        change <- ends$change[i]
+        change_txt <- if (is.na(change)) "" else paste0(" (", if (change >= 0) "+" else "", fmt(change, p), ")")
+        paste0(fmt(ends$value[i], p), change_txt)
+      }, character(1))
+
+      max_turn <- max(4, max(s$turn))
+      rt_line <- tibble::tibble(panel = factor(panels[["rt"]], levels = panels), y = 1)
+
+      ggplot2::ggplot(long, ggplot2::aes(x = turn, y = value)) +
+        ggplot2::geom_hline(data = rt_line, ggplot2::aes(yintercept = y), linetype = "dashed", colour = "grey60") +
+        ggplot2::geom_line(colour = "#2c3e50", linewidth = 0.8, na.rm = TRUE) +
+        ggplot2::geom_point(colour = "#2c3e50", size = 1.4, na.rm = TRUE) +
+        ggplot2::geom_text(
+          data = ends, ggplot2::aes(label = label),
+          hjust = -0.1, size = 3.2, colour = "#c0392b", fontface = "bold"
+        ) +
+        ggplot2::facet_wrap(~panel, ncol = 1, scales = "free_y") +
+        ggplot2::scale_x_continuous(
+          limits = c(0, max_turn + 1.6),
+          breaks = function(lim) {
+            b <- scales::breaks_pretty(n = 5)(c(0, max_turn))
+            b[b >= 0 & b <= max_turn & b == round(b)]
+          },
+          labels = date_label
+        ) +
+        ggplot2::scale_y_continuous(labels = scales::label_comma(), expand = ggplot2::expansion(mult = c(0.05, 0.25))) +
+        ggplot2::labs(x = NULL, y = NULL) +
+        ggplot2::theme_minimal(base_size = 10) +
+        ggplot2::theme(
+          strip.text = ggplot2::element_text(hjust = 0, face = "bold", size = 9),
+          panel.grid.minor = ggplot2::element_blank(),
+          plot.margin = ggplot2::margin(2, 5, 2, 5)
+        )
     })
 
     output$totals_text <- shiny::renderText({
       req(ready())
       hist <- observed_history()
       rep <- reports()
+      queue <- queue_state()
       total_pos <- if (is.null(hist) || nrow(hist) == 0) 0 else sum(hist$positives)
       total_tests <- if (is.null(hist) || nrow(hist) == 0) 0 else sum(hist$n)
       total_adm <- if (is.null(rep) || nrow(rep) == 0) 0 else sum(rep$admissions)
       total_deaths <- if (is.null(rep) || nrow(rep) == 0) 0 else sum(rep$deaths)
+      waiting <- if (is.null(queue) || nrow(queue) == 0) 0 else sum(queue$n)
       paste0(
-        "So far: ", format(total_pos, big.mark = ","), " positives from ",
+        "Totals so far: ", format(total_pos, big.mark = ","), " confirmed from ",
         format(total_tests, big.mark = ","), " tests · ",
         format(total_adm, big.mark = ","), " admissions · ",
-        format(total_deaths, big.mark = ","), " deaths reported"
+        format(total_deaths, big.mark = ","), " deaths · ",
+        format(waiting, big.mark = ","), " tests awaiting results"
       )
-    })
-
-    # charts -----------------------------------------------------------------
-
-    # x axis always shows at least a few turns, so one bar is not a wall
-    turn_axis <- function(max_turn) {
-      ggplot2::scale_x_continuous(limits = c(-0.5, max(4, max_turn) + 0.5), breaks = scales::breaks_pretty(n = 5))
-    }
-
-    output$incidence_plot <- shiny::renderPlot({
-      req(ready())
-      series <- observed_series()
-      admissions <- admissions_series()
-
-      if (nrow(series) == 0 && nrow(admissions) == 0) {
-        return(ggplot2::ggplot() +
-                 ggplot2::annotate("text", x = 0.5, y = 0.5, label = "No results yet", color = "grey50") +
-                 ggplot2::theme_void())
-      }
-
-      max_turn <- max(c(series$turn, admissions$turn, 0))
-      ggplot2::ggplot() +
-        ggplot2::geom_col(data = series, ggplot2::aes(x = turn, y = positives), fill = "#d95f02", alpha = 0.8, width = 0.8) +
-        ggplot2::geom_line(data = admissions, ggplot2::aes(x = turn, y = admissions), color = "grey20", linewidth = 0.8) +
-        ggplot2::geom_point(data = admissions, ggplot2::aes(x = turn, y = admissions), color = "grey20", size = 1.5) +
-        turn_axis(max_turn) +
-        ggplot2::labs(x = "Turn", y = NULL) +
-        ggplot2::theme_minimal(base_size = 11) +
-        ggplot2::theme(panel.grid.minor = ggplot2::element_blank(), plot.margin = ggplot2::margin(5, 5, 5, 5))
-    })
-
-    # more tests means more positives: show the tests alongside
-    output$tests_plot <- shiny::renderPlot({
-      req(ready())
-      series <- observed_series()
-      if (nrow(series) == 0) {
-        return(ggplot2::ggplot() + ggplot2::theme_void())
-      }
-      ggplot2::ggplot(series, ggplot2::aes(x = turn, y = tests)) +
-        ggplot2::geom_col(fill = "#7f8c8d", alpha = 0.7, width = 0.8) +
-        turn_axis(max(series$turn)) +
-        ggplot2::scale_y_continuous(labels = scales::label_comma()) +
-        ggplot2::labs(x = NULL, y = NULL) +
-        ggplot2::theme_minimal(base_size = 10) +
-        ggplot2::theme(panel.grid.minor = ggplot2::element_blank(), plot.margin = ggplot2::margin(2, 5, 2, 5))
-    })
-
-    output$rt_plot <- shiny::renderPlot({
-      req(ready())
-      series <- observed_series()
-      if (nrow(series) < 4) {
-        return(ggplot2::ggplot() +
-                 ggplot2::annotate("text", x = 0.5, y = 0.5, label = "Needs a few turns of results", color = "grey50", size = 3) +
-                 ggplot2::theme_void())
-      }
-
-      # Rt with a 1-turn serial interval (one turn = one generation)
-      rt <- estimate_rt_table(series$positives)
-      rt <- rt[!is.na(rt$mean), ]
-      if (nrow(rt) == 0) {
-        return(ggplot2::ggplot() +
-                 ggplot2::annotate("text", x = 0.5, y = 0.5, label = "Not enough positives yet", color = "grey50", size = 3) +
-                 ggplot2::theme_void())
-      }
-
-      df <- tibble::tibble(
-        turn = series$turn[rt$t_end],
-        mean_R = rt$mean,
-        lower = rt$lower,
-        upper = rt$upper
-      )
-
-      p <- ggplot2::ggplot(df, ggplot2::aes(x = turn, y = mean_R)) +
-        ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper), fill = "#7570b3", alpha = 0.2) +
-        ggplot2::geom_hline(yintercept = 1, linetype = "dashed", colour = "grey60", linewidth = 0.5) +
-        turn_axis(max(series$turn)) +
-        ggplot2::labs(x = NULL, y = NULL) +
-        ggplot2::theme_minimal(base_size = 10) +
-        ggplot2::theme(panel.grid.minor = ggplot2::element_blank(), plot.margin = ggplot2::margin(2, 5, 2, 5))
-
-      if (nrow(df) < 2) {
-        p + ggplot2::geom_point(color = "#7570b3", size = 3)
-      } else {
-        p + ggplot2::geom_line(color = "#7570b3", linewidth = 1)
-      }
     })
   })
 }

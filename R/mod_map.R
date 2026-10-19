@@ -1,104 +1,99 @@
 # Map module -----------------------------------------------------------------
 #
-# The testing plan (who, where, which test, how much to spend) sits above the
-# map and carries over from turn to turn until changed. Map clicks either
-# choose boroughs to test or put local restrictions on a borough.
+# Two pieces of UI share one server:
+#   mod_map_ui()      - the situation map (results, chosen and restricted areas)
+#   mod_response_ui() - the response: who/where/which test/how much, control
+#                       measures, and what clicking the map does
+# The plan carries over from turn to turn until changed.
 
 mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
   ns <- shiny::NS(id)
-  tp <- teaching_params()
-  intervention_choices <- stats::setNames(
-    intervention_defs$id,
-    intervention_defs$label  # prices are added once the place is known (see measure labels below)
-  )
   bslib::card(
     full_screen = TRUE,
-    bslib::card_header("Your plan: testing and control measures"),
-
-    # testing plan: who, where, which test, how much
-    shiny::div(
-      class = "mb-2 p-2 bg-light rounded small",
-      shiny::fluidRow(
-        shiny::column(
-          width = 6,
-          shiny::radioButtons(
-            ns("who"),
-            label = "Who to test",
-            choices = c("People with symptoms" = "symptomatic", "Random sample of residents" = "random"),
-            selected = "symptomatic",
-            inline = TRUE
-          ),
-          shiny::radioButtons(
-            ns("where"),
-            label = "Where",
-            choices = c(
-              "Everywhere (by population)" = "everywhere",
-              "Boroughs with positive results so far" = "positives",
-              "Boroughs I choose on the map" = "chosen"
-            ),
-            selected = "everywhere"
-          )
-        ),
-        shiny::column(
-          width = 6,
-          shiny::radioButtons(
-            ns("test_type"),
-            label = "Test",
-            choices = c("Antigen" = "ag", "PCR" = "pcr"),
-            selected = "pcr",
-            inline = TRUE
-          ),
-          shiny::sliderInput(
-            ns("spend"),
-            label = paste0("Spend on tests per turn (", tp$currency, ")"),
-            min = 0,
-            max = tp$tests$budget,
-            value = 0,
-            step = 5000,
-            ticks = FALSE,
-            sep = ","
-          ),
-          shiny::radioButtons(
-            ns("click_mode"),
-            label = "Clicking the map will",
-            choices = c("Choose boroughs to test" = "choose", "Restrict a borough" = "restrict"),
-            selected = "choose",
-            inline = TRUE
-          )
-        )
-      ),
-      shiny::div(class = "text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
-    ),
-
-    # control measures, with what each will do next turn
-    shiny::div(
-      class = "mb-2 p-2 bg-light rounded small",
-      shiny::tags$strong("Control measures"),
-      shiny::div(
-        class = "d-flex flex-wrap gap-3",
-          shiny::checkboxGroupInput(
-            ns("interventions"),
-            label = NULL,
-            choices = intervention_choices,
-            selected = character(),
-            inline = TRUE
-          ),
-          shiny::checkboxInput(
-            ns("tracing"),
-            "Contact tracing",
-            value = FALSE
-          ),
-          shiny::checkboxInput(
-            ns("build_testing"),
-            "Build better testing",
-            value = FALSE
-          )
-      ),
-      shiny::div(class = "text-muted", shiny::htmlOutput(ns("measure_status")))
-    ),
-
+    bslib::card_header("Situation map"),
     leaflet::leafletOutput(ns("map"), height = "400px"),
     shiny::div(class = "small text-muted mt-1", shiny::textOutput(ns("turn_positivity"), inline = TRUE))
+  )
+}
+
+mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
+  ns <- shiny::NS(id)
+  tp <- teaching_params()
+  bslib::card(
+    bslib::card_header("Response"),
+    bslib::layout_columns(
+      col_widths = bslib::breakpoints(sm = c(12, 12, 12, 12), lg = c(3, 3, 4, 2)),
+      fill = FALSE,
+
+      # testing: who and where
+      shiny::div(
+        class = "small",
+        shiny::radioButtons(
+          ns("who"),
+          label = "Test who",
+          choices = c("People with symptoms" = "symptomatic", "Random sample of residents" = "random"),
+          selected = "symptomatic"
+        ),
+        shiny::radioButtons(
+          ns("where"),
+          label = "Where",
+          choices = c(
+            "Everywhere (by population)" = "everywhere",
+            "Areas with positive results so far" = "positives",
+            "Areas I choose on the map" = "chosen"
+          ),
+          selected = "everywhere"
+        )
+      ),
+
+      # testing: which test and how much
+      shiny::div(
+        class = "small",
+        shiny::radioButtons(
+          ns("test_type"),
+          label = "Test",
+          choices = c("Antigen" = "ag", "PCR" = "pcr"),
+          selected = "pcr"
+        ),
+        shiny::sliderInput(
+          ns("spend"),
+          label = paste0("Spend on tests per report (", tp$currency, ")"),
+          min = 0,
+          max = tp$tests$budget,
+          value = 0,
+          step = 5000,
+          ticks = FALSE,
+          sep = ","
+        ),
+        shiny::div(class = "text-muted", shiny::textOutput(ns("allocation_summary"), inline = TRUE))
+      ),
+
+      # control measures and what they will do next
+      shiny::div(
+        class = "small",
+        shiny::tags$label(class = "form-label", "Control measures"),
+        shiny::checkboxGroupInput(
+          ns("interventions"),
+          label = NULL,
+          choices = stats::setNames(intervention_defs$id, intervention_defs$label),
+          selected = character()
+        ),
+        shiny::checkboxInput(ns("tracing"), "Contact tracing", value = FALSE),
+        shiny::checkboxInput(ns("build_testing"), "Build better testing", value = FALSE),
+        shiny::div(class = "text-muted", shiny::htmlOutput(ns("measure_status")))
+      ),
+
+      # what clicking the map does
+      shiny::div(
+        class = "small",
+        shiny::radioButtons(
+          ns("click_mode"),
+          label = "Clicking the map will",
+          choices = c("Choose areas to test" = "choose", "Restrict an area" = "restrict"),
+          selected = "choose"
+        )
+      )
+    )
   )
 }
 
@@ -251,14 +246,8 @@ mod_map_server <- function(
           )
         ) |>
         # colour = share of tests positive among results back this turn
-        leaflet::addLegend(
-          position = "bottomright",
-          pal = leaflet::colorNumeric("YlOrRd", domain = c(0, 1)),
-          values = c(0, 1),
-          title = "Positive<br>(results back<br>this turn)",
-          labFormat = leaflet::labelFormat(suffix = "%", transform = function(x) 100 * x),
-          opacity = 0.8
-        ) |>
+        # (the positivity legend is added with each update, so its scale can
+        # follow this turn's results)
         leaflet::addControl(
           html = paste0(
             "<div style='font-size:11px;line-height:1.4'>",
@@ -317,8 +306,7 @@ mod_map_server <- function(
         session, "interventions",
         choiceNames = sprintf("%s (%s/turn)", defs$label, format_money(defs$cost)),
         choiceValues = defs$id,
-        selected = shiny::isolate(input$interventions),
-        inline = TRUE
+        selected = shiny::isolate(input$interventions)
       )
       shiny::updateCheckboxInput(session, "tracing",
                                  label = sprintf("Contact tracing (%s/turn)", format_money(budget$tracing_cost)))
@@ -466,9 +454,12 @@ mod_map_server <- function(
       values[idx] <- agg$positives / agg$tests
 
       # Color palette: grey for no results, green to red for positivity
+      # colour scale runs up to the highest positivity this turn (at least
+      # 1%), so differences between areas show even when positivity is low
+      top <- if (all(is.na(values))) 0.01 else max(0.01, max(values, na.rm = TRUE))
       palette <- leaflet::colorNumeric(
         palette = "YlOrRd",
-        domain = c(0, 1),
+        domain = c(0, top),
         na.color = "#e0e0e0"
       )
 
@@ -501,6 +492,16 @@ mod_map_server <- function(
       outline_weight <- ifelse(is_restricted | is_chosen, 4, 1)
 
       proxy <- leaflet::leafletProxy(ns("map"), data = boros) |>
+        leaflet::removeControl("positivity_legend") |>
+        leaflet::addLegend(
+          layerId = "positivity_legend",
+          position = "bottomright",
+          pal = palette,
+          values = c(0, top),
+          title = "Tests positive<br>(results back<br>this report)",
+          labFormat = leaflet::labelFormat(suffix = "%", digits = 1, transform = function(x) 100 * x),
+          opacity = 0.8
+        ) |>
         leaflet::clearGroup("boroughs") |>
         leaflet::clearGroup("alloc_markers") |>
         leaflet::addPolygons(
@@ -514,29 +515,8 @@ mod_map_server <- function(
           highlight = leaflet::highlightOptions(weight = 2, bringToFront = TRUE)
         )
 
-      # planned tests as circles (only when testing a few boroughs, so the
-      # map stays readable when testing everywhere)
-      allocs_with_coords <- allocs |>
-        dplyr::filter(n_ag > 0 | n_pcr > 0) |>
-        dplyr::left_join(centroid_tbl, by = "borough_name")
-
-      if (nrow(allocs_with_coords) > 0 && nrow(allocs_with_coords) < nrow(boros)) {
-        total_tests <- allocs_with_coords$n_ag + allocs_with_coords$n_pcr
-        radius <- 4 + sqrt(total_tests) / 4
-
-        proxy <- proxy |>
-          leaflet::addCircleMarkers(
-            lng = allocs_with_coords$lng,
-            lat = allocs_with_coords$lat,
-            radius = radius,
-            color = "#2166ac",
-            fillColor = "#2166ac",
-            fillOpacity = 0.5,
-            stroke = TRUE,
-            weight = 2,
-            group = "alloc_markers"
-          )
-      }
+      # (no circles for planned tests: they covered the map; chosen areas
+      # have a blue outline instead)
     })
 
     list(

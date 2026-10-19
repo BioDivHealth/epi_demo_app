@@ -54,6 +54,12 @@ Each intervention is charged every turn it is on, has no effect for `lag` turns 
 ## Engine
 One turn of the game is `play_turn()` in [game_engine.R](../../../../R/game_engine.R): tests are drawn, found cases are isolated (and traced), then the truth steps with `I_transmit = (I - isolated) * local_multiplier`. Players and bots only see `player_view()`.
 
+## Hidden start, first patient and calendar
+- `new_game()` starts the outbreak from one infected person and runs it unseen for a random 1-10 generations, whatever the disease, so fast growers are bigger by the first report. An outbreak that dies out unseen is redrawn (it would never have been reported). The scenario's `seed_cases` is no longer used.
+- The first patient is reported from an area chosen in proportion to current infections (a real case, not necessarily where it began). There are no free tests.
+- Scoring counts infections and deaths during the response only (`start_infections`, `start_deaths_eventual`).
+- One turn is one generation of infection: `gen_days` per disease (scenarios.R). Day 0 is `teaching_params()$start_date`; see `turn_day()` / `turn_date()`.
+
 ## Health-system strain
 - **Hospitals:** admissions = Binomial(infections `hosp_delay` turns ago, `hosp_frac`). Beds are a London-wide pool (`teaching_params()$hospital$beds`), patients stay `stay_turns`. When occupancy exceeds beds, patients admitted without a bed die at `death_if_no_bed`, and reported admissions fall. Bed use is public.
 - **Labs:** PCR beyond the testing level's capacity joins a backlog; results come back `floor((backlog + today - 1) / capacity)` turns late. Antigen is capped by kit supply. The backlog is public.

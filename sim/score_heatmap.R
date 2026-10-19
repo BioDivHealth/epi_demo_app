@@ -29,7 +29,12 @@ score_games <- function(results, budget_total) {
     dplyr::filter(bot != "Do nothing") |>
     dplyr::left_join(do_nothing, by = c("disease", "seed")) |>
     dplyr::mutate(
-      relative = cumulative_infections / reference,
+      # infections and deaths are counted from the first report, so either
+      # can be 0 (or, for deaths, a touch below 0: expected deaths at the
+      # start vs actual deaths later). Add 1 to infections; floor deaths at 0.
+      deaths_eventual = pmax(deaths_eventual, 0),
+      reference_deaths = pmax(reference_deaths, 0),
+      relative = (cumulative_infections + 1) / (reference + 1),
       relative_deaths = ifelse(reference_deaths > 0, deaths_eventual / reference_deaths, NA),
       deaths_ok = reference_deaths < FEW_DEATHS | deaths_eventual <= WIN_FRACTION * reference_deaths,
       fizzled = reference < FIZZLE_LINE,
@@ -56,7 +61,7 @@ plot_heatmap <- function(scored, label, disease_labels, bot_names, n_turns) {
       disease_label = disease_labels[disease],
       bot = factor(bot, levels = bot_names),
       cell_text = sprintf(
-        "%d%%\ninf x%.2f | deaths x%s\n£%sk",
+        "%d%%\ninf x%.2f | deaths x%s\n%sk credits",
         round(100 * win_rate), median_relative,
         ifelse(is.na(median_relative_deaths), "-", sprintf("%.2f", median_relative_deaths)),
         format(round(median_spend / 1000), big.mark = ",")

@@ -299,12 +299,12 @@ play_bot_game <- function(config, bot, seed, n_turns = 20L) {
 
   history <- state$truth$history
 
-  # deaths so far plus deaths still to come from people already infected
-  in_pipeline <- sum(unlist(state$truth$death_queue))
-  deaths_eventual <- sum(state$truth$cumulative_deaths) + in_pipeline * config$mort$death_ifr
+  # infections and deaths during the response (what happened before the
+  # first report is the same whatever the player does)
+  deaths_eventual <- eventual_deaths(state$truth, config) - (state$start_deaths_eventual %||% 0)
 
   list(
-    cumulative_infections = sum(state$truth$cumulative),
+    cumulative_infections = sum(state$truth$cumulative) - (state$start_infections %||% 0),
     final_incidence = sum(history[[length(history)]]),
     deaths = sum(state$truth$cumulative_deaths),
     deaths_eventual = deaths_eventual,

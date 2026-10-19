@@ -72,11 +72,13 @@ test_that("no antigen tests exist at the lowest testing level", {
   expect_equal(sum(result$allocations$n_ag), 0)
 })
 
-test_that("isolating found cases slows the outbreak", {
+test_that("isolating found cases slows the outbreak (over several outbreaks)", {
+  # one outbreak alone is too noisy: once anything differs, the random draws
+  # split, so compare the total over ten outbreaks
   config <- scenario_config("ebola_like", inputs)
-  quiet <- play_bot_game(config, bot_do_nothing, seed = 8, n_turns = 12)
-  chase <- play_bot_game(config, bot_build, seed = 8, n_turns = 12)
-  expect_lt(chase$cumulative_infections, quiet$cumulative_infections)
+  quiet <- sum(vapply(1:10, function(s) play_bot_game(config, bot_do_nothing, seed = s, n_turns = 12)$cumulative_infections, numeric(1)))
+  build <- sum(vapply(1:10, function(s) play_bot_game(config, bot_build, seed = s, n_turns = 12)$cumulative_infections, numeric(1)))
+  expect_lt(build, 0.9 * quiet)
 })
 
 test_that("PCR beyond lab capacity queues and comes back late, not lost", {
@@ -115,4 +117,24 @@ test_that("isolation works less well when there are many positives to support", 
   few_load <- isolated_from_results(one, 33, tp)[1]
   high_load <- isolated_from_results(many, 33, tp)[1]
   expect_lt(high_load, few_load * 0.55)
+})
+
+test_that("the unseen start ends at the first death (deaths are always noticed)", {
+  for (disease in c("ebola_like", "nipah_like", "covid_early")) {
+    config <- scenario_config(disease, inputs)
+    for (seed in 1:15) {
+      state <- new_game(config, seed = seed)
+      deaths_per_turn <- vapply(state$truth$death_history, sum, numeric(1))
+
+      if (identical(state$alert$trigger, "death")) {
+        # deaths only in the last hidden turn, when the report was made
+        expect_gt(utils::tail(deaths_per_turn, 1), 0)
+        expect_true(all(utils::head(deaths_per_turn, -1) == 0))
+      } else {
+        expect_equal(sum(deaths_per_turn), 0)
+      }
+      expect_lte(state$truth_offset, config$tp$head_start$max_turns)
+      expect_gt(sum(state$truth$incidence) + sum(state$truth$cumulative_deaths), 0)
+    }
+  }
 })

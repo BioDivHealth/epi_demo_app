@@ -7,6 +7,22 @@
 # What a player is allowed to see is built by player_view(). Bots only ever
 # get that view, never the hidden truth.
 
+# Calendar ----------------------------------------------------------------------
+#
+# Day 0 is the day the first patient is reported; each turn is one generation
+# of infection (gen_days days, set per disease in scenarios.R).
+turn_day <- function(turn, config) {
+  1L + as.integer(turn) * (config$bio$gen_days %||% 5L)
+}
+
+turn_date <- function(turn, config) {
+  as.Date(config$tp$start_date) + turn_day(turn, config)
+}
+
+format_date <- function(date) {
+  trimws(format(as.Date(date), "%e %B %Y"))
+}
+
 # Scale London's money and capacity to another place ---------------------------
 #
 # Prices per test stay the same; the budget, per-turn cap, measure costs,
@@ -99,7 +115,9 @@ scenario_config <- function(scenario_id, inputs, tp = teaching_params()) {
       asymptomatic = sc$asymptomatic[[1]],
       presymptomatic = sc$presymptomatic[[1]],
       delay_decay = sc$delay_decay[[1]],
-      hosp_frac = sc$hosp_frac[[1]]
+      hosp_frac = sc$hosp_frac[[1]],
+      gen_days = sc$gen_days[[1]],
+      hosp_delay = sc$hosp_delay[[1]]
     ),
     tp = tp
   )
@@ -320,7 +338,7 @@ hospital_step <- function(truth, hospital, config) {
   n_b <- nrow(config$pop_tbl)
 
   # infections that are now sick enough for hospital
-  source_turn <- truth$turn - config$tp$reports$hosp_delay
+  source_turn <- truth$turn - (config$bio$hosp_delay %||% config$tp$reports$hosp_delay)
   admitted <- integer(n_b)
   if (source_turn >= 0) {
     infected <- truth$history[[source_turn + 1]]
@@ -356,10 +374,10 @@ hospital_step <- function(truth, hospital, config) {
 # Hospitals report the admissions they record (fewer when they are full);
 # most are reported in the patient's own borough, the rest at a neighbouring
 # borough's hospital. They also publish how full they are.
-draw_reports <- function(truth, config, admitted, overload = 0) {
+draw_reports <- function(truth, config, admitted, overload = 0, offset = 0) {
   rep_par <- config$tp$reports
   n_b <- nrow(config$pop_tbl)
-  turn_now <- truth$turn
+  turn_now <- truth$turn - offset
 
   ascertainment <- rep_par$hosp_ascertainment * (1 - config$tp$hospital$reporting_drop_when_full * overload)
   admissions_home <- stats::rbinom(n_b, size = admitted, prob = ascertainment)
@@ -402,29 +420,84 @@ empty_allocations <- function(config) {
 
 # Start a new game -------------------------------------------------------------
 
-new_game <- function(config, seed = NULL, starter = "alert", sampling_mode = "symptomatic") {
+new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
   if (is.null(seed)) {
     seed <- sample.int(1e6, 1)
   }
   set.seed(seed)
 
   n_b <- nrow(config$pop_tbl)
+  epi <- config$epi
 
   # where the outbreak starts
-  seed_borough <- config$epi$seed_borough
-  if (is.null(seed_borough) || is.na(seed_borough)) {
-    seed_borough <- sample.int(n_b, 1L)
+  origin <- epi$seed_borough
+  if (is.null(origin) || is.na(origin)) {
+    origin <- sample.int(n_b, 1L)
   }
 
-  truth <- init_truth(
-    n_boroughs = n_b,
-    seed_boroughs = seed_borough,
-    seed_cases = as.integer(config$epi$seed_cases)
-  )
+  # how long it runs unseen: 1-10 generations, whatever the disease
+  hs <- config$tp$head_start
+
+  # the hidden outbreak's own random stream
+  truth_rng <- new_stream(seed + 7919L)
+
+  # run the hidden turns from one infected person (an outbreak that dies out
+  # before anyone notices is never reported, so draw again)
+  for (attempt in 1:50) {
+    hidden_turns <- sample(seq(hs$min_turns, hs$max_turns), 1)
+    truth <- init_truth(n_boroughs = n_b, seed_boroughs = origin, seed_cases = hs$index_cases)
+
+    trigger <- "patient"
+    for (i in seq_len(hidden_turns)) {
+      stepped <- with_stream(truth_rng, step_truth(
+        state = truth,
+        K = config$K,
+        Rt_global = epi$Rt,
+        k_overdisp = epi$k,
+        imports_prob = epi$imports_prob,
+        lambda_import = epi$lambda_import,
+        pop = config$pop_tbl$pop,
+        susceptible_frac = config$susceptible_frac,
+        death_ifr = config$mort$death_ifr,
+        death_delay = config$mort$death_delay
+      ))
+      truth <- stepped$value
+      truth_rng <- stepped$rng
+
+      # a death is always noticed: the outbreak is reported now
+      if (sum(truth$cumulative_deaths) > 0) {
+        trigger <- "death"
+        hidden_turns <- i
+        break
+      }
+    }
+
+    if (sum(truth$incidence) > 0 || trigger == "death") {
+      break
+    }
+  }
+
+  # if it kept dying out (spread below 1), the reported patient is a fresh
+  # spillover case where it began
+  if (sum(truth$incidence) == 0) {
+    truth$incidence[origin] <- 1L
+    truth$cumulative[origin] <- truth$cumulative[origin] + 1L
+    truth$history[[length(truth$history)]] <- truth$incidence
+  }
+
+  # the first report: where someone died, or else a real current case,
+  # wherever the infections are (not necessarily where it began)
+  report_weights <- if (trigger == "death") truth$cumulative_deaths else truth$incidence
+  first_patient <- sample.int(n_b, 1L, prob = report_weights / sum(report_weights))
 
   state <- list(
     turn = 0L,
     truth = truth,
+    # turns of hidden history before the game's turn 0
+    truth_offset = hidden_turns,
+    # infections and deaths already set in motion before the game began
+    start_infections = sum(truth$cumulative),
+    start_deaths_eventual = eventual_deaths(truth, config),
     obs = init_observation_state(),
     available = init_observation_state()$history,
     biases = draw_game_biases(n_b, config$tp),
@@ -436,44 +509,25 @@ new_game <- function(config, seed = NULL, starter = "alert", sampling_mode = "sy
     reports = tibble::tibble(turn = integer(), borough_index = integer(), admissions = integer(), deaths = integer()),
     hospital = list(admissions = list(), occupancy = numeric(), extra_deaths = numeric()),
     spend_total = 0,
-    alert = NULL,
+    alert = list(
+      alerted = first_patient,
+      true_start = origin,
+      hidden_turns = hidden_turns,
+      trigger = trigger
+    ),
     seed = seed,
-    # the hidden outbreak's own random stream
-    truth_rng = new_stream(seed + 7919L)
+    truth_rng = truth_rng
   )
 
-  # starter intel: free tests sent where an early alert points
-  starter_alloc <- starter_intel_allocations(starter, truth_state = truth, pop_tbl = config$pop_tbl)
-  if (!test_setup(state, config)$ag_available) {
-    # no antigen tests yet: the alert sends PCR instead
-    starter_alloc$n_pcr <- starter_alloc$n_pcr + starter_alloc$n_ag
-    starter_alloc$n_ag <- 0L
-  }
-  alerted <- which(starter_alloc$n_ag + starter_alloc$n_pcr > 0)
-
-  if (length(alerted) > 0) {
-    if (identical(starter, "alert") && length(alerted) == 1) {
-      state$alert <- list(
-        alerted = alerted,
-        true_start = which.max(truth$incidence)
-      )
-    }
-
-    obs <- observe_tests(
-      state = state$obs,
-      turn = 0L,
-      allocations = starter_alloc,
-      truth_incidence = truth$incidence,
-      pop_tbl = config$pop_tbl,
-      params = c(testing_for_turn(state, config, sampling_mode), list(source = "starter"))
-    )
-    state$obs <- list(queue = obs$queue, history = obs$history)
-    state$available <- obs$available
-    state$carry_isolated <- isolated_from_results(obs$available, n_b, config$tp, bio = config$bio)
-  }
-
-  state$starter_alloc <- starter_alloc
+  # no free tests: the first report is one patient, nothing more
+  state$starter_alloc <- empty_allocations(config)
   state
+}
+
+# Deaths so far plus deaths still to come from people already infected
+eventual_deaths <- function(truth, config) {
+  in_pipeline <- sum(unlist(truth$death_queue))
+  sum(truth$cumulative_deaths) + in_pipeline * config$mort$death_ifr
 }
 
 # Play one turn ----------------------------------------------------------------
@@ -597,7 +651,8 @@ play_turn <- function(state, actions, config) {
   # what hospitals and death registrations report this turn
   new_state$reports <- dplyr::bind_rows(
     state$reports,
-    draw_reports(next_truth, config, hospital_now$value$admitted, hospital_now$value$overload)
+    draw_reports(next_truth, config, hospital_now$value$admitted, hospital_now$value$overload,
+                 offset = state$truth_offset %||% 0)
   )
   new_state$carry_isolated <- NULL
   new_state$obs <- list(queue = obs$queue, history = obs$history)
