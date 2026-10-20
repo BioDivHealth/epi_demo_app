@@ -1,7 +1,7 @@
 # How big is the outbreak when the first patient is reported? ----------------
 #
-# The outbreak starts from one infected person and runs unseen for 1-10
-# generations, or until the first death (always noticed). Count everyone
+# The outbreak starts from one infected person and runs unseen until 3
+# hospital admissions or the first death. Count everyone
 # infected by the first report, per disease, and what triggered the report.
 #
 #   Rscript --vanilla sim/checks/check_start_size.R
@@ -49,7 +49,7 @@ p <- ggplot(res, aes(x = infected_by_report, y = disease)) +
   scale_x_log10(labels = scales::label_comma()) +
   labs(
     title = "People infected by the time the first patient is reported",
-    subtitle = "One infected person at the true start, 1-10 unseen generations or until the first death. 200 outbreaks per disease.",
+    subtitle = "One infected person at the true start; unseen until 3 hospital admissions or the first death. 200 outbreaks per disease.",
     x = "Infected by the first report (log scale)", y = NULL
   ) +
   theme_minimal(base_size = 11)

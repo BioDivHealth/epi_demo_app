@@ -175,6 +175,7 @@ score_run <- function(truth_history, observed_history, pop_tbl, total_spend = 0)
     time_to_detection = time_to_detection,
     real_cases_found = real_cases_found,
     share_of_infections_found = if (total_true_infections > 0) real_cases_found / total_true_infections else NA_real_,
+    total_true_infections = total_true_infections,
     own_positives = own_positives,
     false_positives = false_positives,
     peak_true_incidence = peak_true,

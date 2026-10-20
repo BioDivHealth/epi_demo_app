@@ -23,14 +23,15 @@ teaching_params <- function() {
     # beds), and imports by its number of areas. See scale_to_place().
     reference_pop = 9089736,
 
-    # The outbreak starts unseen, from one infected person, and runs for a
-    # random 1-10 generations before the first patient is reported, whatever
-    # the disease (a fast-growing one is simply bigger by then), or until
-    # the first death, which is always noticed. The first patient is a real
-    # case, wherever the infections happen to be, not necessarily where it
-    # started.
+    # The outbreak starts unseen, from one infected person, and is noticed
+    # when a cluster of severe illness turns up: `admissions` hospital
+    # admissions in total, or the first death. An outbreak that dies out
+    # before that is never noticed, so a new one is drawn. Mild, fast
+    # spreaders are bigger by the time anyone notices; deadly ones are
+    # noticed early. The report comes from where the patients are, not
+    # necessarily where it started.
     # Trap: the first case found is not the first case.
-    head_start = list(min_turns = 1L, max_turns = 10L, index_cases = 1L),
+    head_start = list(admissions = 3L, index_cases = 1L, max_reports = 104L),
 
     # Days between reports (one turn). Every disease is played at this
     # cadence: 7 = a weekly report, 1 = daily. Spread, hospital and death
@@ -123,10 +124,12 @@ teaching_params <- function() {
     ),
 
     # Testing levels.
-    # Each disease starts at a level (set in scenarios.R). "Build testing"
-    # moves up one level: it costs a lump sum, takes a few turns, and halves
-    # testing capacity while staff are diverted. The outbreak carries on
-    # meanwhile.
+    # Each disease starts at a level (set in scenarios.R); none starts with
+    # rapid antigen tests, as most health systems would not have them for a
+    # new disease. "Build testing" moves up one level: it costs a lump sum,
+    # takes a few turns, and halves testing capacity while staff are
+    # diverted. The outbreak carries on meanwhile. PCR results always come
+    # back with the next report.
     # capacity = PCR tests the labs can process per turn across London, and
     # also the antigen kits that can be supplied per turn. PCR ordered beyond
     # lab capacity is not lost: it joins a backlog and comes back later.
@@ -134,13 +137,13 @@ teaching_params <- function() {
     # Trap: ordering more tests than labs can process makes every result late.
     # Trap: better tests later vs seeing anything at all now.
     test_levels = tibble::tibble(
-      level = 1:4,
-      label = c("Reference lab only", "Hospital labs", "Established testing", "Rapid testing everywhere"),
-      ag_cost = c(NA, NA, 2, 2),
-      pcr_cost = c(40, 20, 10, 8),
-      ag_delay = c(NA, NA, 0L, 0L),
-      pcr_delay = c(3L, 2L, 1L, 0L),
-      capacity = c(3000, 20000, 60000, 150000)
+      level = 1:3,
+      label = c("Reference lab only", "Hospital labs", "Rapid antigen tests"),
+      ag_cost = c(NA, NA, 2),
+      pcr_cost = c(40, 20, 10),
+      ag_delay = c(NA, NA, 0L),
+      pcr_delay = c(1L, 1L, 1L),
+      capacity = c(3000, 20000, 60000)
     ),
     build_testing = list(
       cost = 150000,

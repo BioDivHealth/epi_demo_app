@@ -292,6 +292,7 @@ app_ui <- page_fluid(
     div(class = "top-stat", span(class = "label", "Date"), span(class = "value", textOutput("turn_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Budget"), span(class = "value", uiOutput("money_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "This report"), span(class = "value", uiOutput("plan_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Tests positive · Rt"), span(class = "value", textOutput("signal_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Testing and hospitals"), span(class = "value", textOutput("system_display", inline = TRUE))),
     div(
       class = "ms-auto d-flex flex-wrap gap-2",
@@ -444,7 +445,8 @@ server <- function(input, output, session) {
   }
 
   # Situation report shown when each new outbreak starts
-  show_sitrep <- function(patient_area, report_date, first_event = "presented with") {
+  show_sitrep <- function(patient_area, report_date, event_txt = "a patient presented with an unidentified illness",
+                          place_txt = "in") {
     place_name <- if (is.null(place_meta)) {
       "London"
     } else if (identical(place_meta$type[[1]], "city")) {
@@ -455,7 +457,7 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = paste("Situation report:", format_date(report_date)),
       tags$p(
-        "On ", tags$strong(format_date(report_date)), ", a patient ", first_event, " an unidentified illness in ",
+        "On ", tags$strong(format_date(report_date)), ", ", event_txt, " ", place_txt, " ",
         tags$strong(patient_area), ". We know nothing about where they caught it or where it came from."
       ),
       tags$p(
@@ -533,6 +535,29 @@ server <- function(input, output, session) {
       "Day ", turn_day(turn(), config), " of ", response_days(config), " · ",
       format_date(turn_date(turn(), config))
     )
+  })
+
+  # share of tests positive and Rt from the latest report, with the change
+  # since the report before (both from returned results only)
+  output$signal_display <- renderText({
+    s <- dashboard_module$signals()
+    req(nrow(s) > 0)
+    latest_two <- function(x) {
+      x <- x[!is.na(x)]
+      if (length(x) == 0) return(c(NA, NA))
+      c(utils::tail(x, 1), if (length(x) >= 2) utils::tail(x, 2)[1] else NA)
+    }
+    with_change <- function(x, digits, suffix = "") {
+      v <- latest_two(x)
+      if (is.na(v[1])) return("not yet")
+      txt <- paste0(formatC(v[1], format = "f", digits = digits), suffix)
+      if (!is.na(v[2])) {
+        d <- v[1] - v[2]
+        txt <- paste0(txt, " (", if (d >= 0) "+" else "", formatC(d, format = "f", digits = digits), ")")
+      }
+      txt
+    }
+    paste0(with_change(s$share_positive, 1, "%"), " · Rt ", with_change(s$rt, 2))
   })
 
   # money left this turn (after the current plan) and in total
@@ -775,7 +800,7 @@ server <- function(input, output, session) {
       if (is.null(info)) return(NULL)
       list(
         index = match(info$alerted, inputs$pop_tbl$borough_name),
-        label = sprintf("First patient %s here, %s", info$first_event, info$report_date_txt)
+        label = sprintf("%s here, %s", info$first_event, info$report_date_txt)
       )
     })
   )
@@ -840,14 +865,26 @@ server <- function(input, output, session) {
       hidden_days = state$alert$hidden_turns * report_days(config),
       began = report_date - state$alert$hidden_turns * report_days(config),
       infected_by_report = state$start_infections,
-      first_event = if (identical(state$alert$trigger, "death")) "died" else "reported",
+      first_event = if (identical(state$alert$trigger, "death")) "First death" else "First patients admitted",
       report_date_txt = format_date(report_date)
     ))
 
-    first_event <- if (identical(state$alert$trigger, "death")) "died of" else "presented with"
+    # what got the outbreak noticed: a death, or a cluster of admissions
+    # what was noticed, and the words that lead into the area's name
+    n_admitted <- state$alert$admissions %||% 1
+    if (identical(state$alert$trigger, "death")) {
+      event_txt <- "a patient died of an unidentified illness"
+      place_txt <- "in"
+    } else if (n_admitted == 1) {
+      event_txt <- "a patient was admitted to hospital with an unidentified severe illness"
+      place_txt <- "in"
+    } else {
+      event_txt <- sprintf("%d patients were admitted to hospital with an unidentified severe illness.", n_admitted)
+      place_txt <- "The cluster was reported from"
+    }
     turn_log(sprintf(
-      "%s: a patient %s an unidentified illness in %s. Nothing else is known yet.",
-      format_date(report_date), first_event, patient_area
+      "%s: %s %s %s. Nothing else is known yet.",
+      format_date(report_date), event_txt, place_txt, patient_area
     ))
 
     blank_logs <- init_turn_logs(inputs$pop_tbl)
@@ -916,7 +953,7 @@ server <- function(input, output, session) {
       max_spend = config$tp$tests$budget
     )
 
-    starter_note <- paste("First patient reported in", patient_area)
+    starter_note <- paste("First reported in", patient_area)
     starter_queue <- sum(state$obs$queue$n)
     run_log(tibble(
       turn = 0L,
@@ -938,7 +975,7 @@ server <- function(input, output, session) {
     run_report(NULL)
 
     # situation report: the brief for this outbreak
-    show_sitrep(patient_area, report_date, first_event)
+    show_sitrep(patient_area, report_date, event_txt, place_txt)
   }
 
   observeEvent(shared_reset_signal(), {
@@ -1195,7 +1232,7 @@ server <- function(input, output, session) {
       ggplot2::annotate("text", x = true_start, y = Inf, label = "Unseen spread",
                         hjust = -0.05, vjust = 1.5, size = 3.5, colour = col$muted) +
       ggplot2::geom_vline(xintercept = report_date, linetype = "dashed", colour = col$muted) +
-      ggplot2::annotate("text", x = report_date, y = Inf, label = "First patient reported",
+      ggplot2::annotate("text", x = report_date, y = Inf, label = "First reported",
                         hjust = -0.05, vjust = 3.2, size = 3.5, colour = col$muted) +
       ggplot2::geom_line(linewidth = 1) +
       ggplot2::geom_point(size = 1.6) +
@@ -1236,7 +1273,7 @@ server <- function(input, output, session) {
     began_txt <- if (is.null(alert)) "" else sprintf(
       paste(
         "The true start date was %s, with one infected person in %s.",
-        "By the time the first patient was reported (%s, in %s, %d days later),",
+        "By the time it was first reported (%s, in %s, %d days later),",
         "%s people had been infected."
       ),
       format_date(alert$began), alert$true_start,
@@ -1281,12 +1318,12 @@ server <- function(input, output, session) {
       ""
     } else if (identical(alert$alerted, alert$true_start)) {
       sprintf(
-        "The first patient was reported in %s, where the outbreak had begun %d days earlier.",
+        "The outbreak was first reported in %s, where it had begun %d days earlier.",
         alert$true_start, alert$hidden_days
       )
     } else {
       sprintf(
-        "The first patient was reported in %s, but the outbreak had begun in %s %d days earlier.",
+        "The outbreak was first reported in %s, but it had begun in %s %d days earlier.",
         alert$alerted, alert$true_start, alert$hidden_days
       )
     }
@@ -1373,22 +1410,25 @@ server <- function(input, output, session) {
       }
     }
 
-    true_prev_pct <- if (is.na(metrics$true_prevalence_rate)) {
-      "N/A"
-    } else {
-      sprintf("%.2f%%", 100 * metrics$true_prevalence_rate)
-    }
-
+    # Rt per generation (as on the dashboard): a report spans g generations
+    config <- current_config()
+    per_gen <- function(x) x^(1 / (config$gens_per_turn %||% 1))
     observed_rt_txt <- format_rt(
-      metrics$rt_observed_mean,
-      metrics$rt_observed_lower,
-      metrics$rt_observed_upper
+      per_gen(metrics$rt_observed_mean),
+      per_gen(metrics$rt_observed_lower),
+      per_gen(metrics$rt_observed_upper)
     )
     truth_rt_txt <- format_rt(
-      metrics$rt_truth_mean,
-      metrics$rt_truth_lower,
-      metrics$rt_truth_upper
+      per_gen(metrics$rt_truth_mean),
+      per_gen(metrics$rt_truth_lower),
+      per_gen(metrics$rt_truth_upper)
     )
+
+    # deaths: reported by hospitals and registrations, against everyone who
+    # really died during the response
+    state <- game_state()
+    deaths_reported <- if (is.null(state$reports)) 0 else sum(state$reports$deaths)
+    deaths_real <- sum(state$truth$cumulative_deaths) - (state$start_deaths %||% 0)
 
     showModal(modalDialog(
       title = "After-action review: what really happened",
@@ -1400,83 +1440,50 @@ server <- function(input, output, session) {
         "Black: real new infections each report (including the unseen start). Red: confirmed cases you saw.",
         "The scale is logarithmic, so each gridline is ten times the one below."
       ),
-      fluidRow(
-        column(6,
-          tags$div(
-            class = "card bg-light mb-3",
-            tags$div(class = "card-header", tags$strong("Your Results")),
-            tags$div(
-              class = "card-body",
-              tags$p(
-                tags$strong("First real case found by your testing: "),
-                if (!is.na(metrics$time_to_detection)) {
-                  paste("turn", metrics$time_to_detection)
-                } else if (isTRUE(metrics$own_positives > 0)) {
-                  sprintf("never. All %s of your positives were false positives: not one real case was found.",
-                          format(metrics$own_positives, big.mark = ","))
-                } else {
-                  "never"
-                }
-              ),
-              tags$p(
-                tags$strong("Peak observed: "),
-                metrics$peak_observed_positives, " positives"
-              ),
-              tags$p(
-                tags$strong("Total spend: "),
-                format_money(metrics$total_spend)
-              ),
-              tags$p(
-                tags$strong("Real cases your tests found: "),
-                format(metrics$real_cases_found, big.mark = ",", scientific = FALSE),
-                ifelse(is.na(found_pct), "", paste0(" (", found_pct, "% of all infections)"))
-              ),
-              tags$p(
-                tags$strong("False positives: "),
-                ifelse(
-                  is.na(false_pct), "none",
-                  paste0(format(metrics$false_positives, big.mark = ",", scientific = FALSE),
-                         " of your ", format(metrics$own_positives, big.mark = ",", scientific = FALSE),
-                         " positives (", false_pct, "%)")
-                )
-              ),
-              tags$p(
-                tags$strong("Estimated Rt (observed): "),
-                observed_rt_txt
-              )
-            )
-          )
-        ),
-        column(6,
-          tags$div(
-            class = "card bg-warning-subtle mb-3",
-            tags$div(class = "card-header", tags$strong("True Data")),
-            tags$div(
-              class = "card-body",
-              tags$p(
-                tags$strong("Peak true incidence: "),
-                metrics$peak_true_incidence, " cases"
-              ),
-              tags$p(
-                tags$strong("Calibration gap: "),
-                sprintf("%.3f RMSE", metrics$calibration_gap)
-              ),
-              tags$p(
-                tags$strong("True cumulative prevalence (final turn): "),
-                true_prev_pct
-              ),
-              tags$p(
-                tags$strong("Rt from truth incidence: "),
-                truth_rt_txt
-              ),
-              tags$p(
-                class = "text-muted small",
-                "The calibration gap measures how far your inferred prevalence was from the truth."
-              )
-            )
+      tags$h5("What you saw, and what was really happening"),
+      tags$p(
+        tags$strong("First real case found by your testing: "),
+        if (!is.na(metrics$time_to_detection)) {
+          # results from tests on turn t are shown in the report after
+          format_date(turn_date(metrics$time_to_detection + 1, config))
+        } else if (isTRUE(metrics$own_positives > 0)) {
+          sprintf("never. All %s of your positives were false positives: not one real case was found.",
+                  format(metrics$own_positives, big.mark = ","))
+        } else {
+          "never"
+        }
+      ),
+      tags$table(
+        class = "table table-sm mb-3",
+        tags$thead(tags$tr(tags$th(""), tags$th("You saw"), tags$th("Really"))),
+        tags$tbody(
+          tags$tr(
+            tags$td("Cases"),
+            tags$td(sprintf(
+              "%s positive tests%s",
+              format(metrics$own_positives, big.mark = ","),
+              if (is.na(false_pct)) "" else sprintf(" (%d%% false)", false_pct)
+            )),
+            tags$td(sprintf(
+              "%s infections; your tests found %s (%s%%)",
+              format(metrics$total_true_infections, big.mark = ","),
+              format(metrics$real_cases_found, big.mark = ","),
+              ifelse(is.na(found_pct), "0", found_pct)
+            ))
+          ),
+          tags$tr(
+            tags$td("Deaths"),
+            tags$td(format(deaths_reported, big.mark = ","), " reported"),
+            tags$td(format(deaths_real, big.mark = ","))
+          ),
+          tags$tr(
+            tags$td("Rt at the end"),
+            tags$td(observed_rt_txt),
+            tags$td(truth_rt_txt)
           )
         )
       ),
+      tags$p(tags$strong("You spent: "), format_money(metrics$total_spend)),
       hidden_distortions_ui(),
       tags$hr(),
       tags$h5("Turn-by-Turn Comparison"),

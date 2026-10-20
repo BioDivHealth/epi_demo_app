@@ -119,12 +119,13 @@ test_that("isolation works less well when there are many positives to support", 
   expect_lt(high_load, few_load * 0.55)
 })
 
-test_that("the unseen start ends at the first death (deaths are always noticed)", {
-  for (disease in c("ebola_like", "nipah_like", "covid_early")) {
+test_that("the unseen start ends when a death or a cluster of admissions is noticed", {
+  for (disease in c("ebola_like", "nipah_like", "covid_early", "measles_low_vax")) {
     config <- scenario_config(disease, inputs)
     for (seed in 1:15) {
       state <- new_game(config, seed = seed)
       deaths_per_turn <- vapply(state$truth$death_history, sum, numeric(1))
+      expect_true(state$alert$trigger %in% c("death", "admissions"))
 
       if (identical(state$alert$trigger, "death")) {
         # deaths only in the last hidden turn, when the report was made
@@ -133,10 +134,18 @@ test_that("the unseen start ends at the first death (deaths are always noticed)"
       } else {
         expect_equal(sum(deaths_per_turn), 0)
       }
-      # at most 10 generations unseen, counted in weekly reports
-      max_reports <- max(1, round(config$tp$head_start$max_turns / config$gens_per_turn))
-      expect_lte(state$truth_offset, max_reports)
-      expect_gt(sum(state$truth$incidence) + sum(state$truth$cumulative_deaths), 0)
+      expect_gte(state$truth_offset, 1)
+      expect_lte(state$truth_offset, config$tp$head_start$max_reports)
     }
   }
+})
+
+test_that("an outbreak noticed through admissions has more than one infection behind it", {
+  # COVID-like: 3% of infections go to hospital, so 3 admissions means a real cluster
+  config <- scenario_config("covid_early", inputs)
+  sizes <- vapply(1:20, function(seed) {
+    state <- new_game(config, seed = seed)
+    if (identical(state$alert$trigger, "admissions")) state$start_infections else NA_real_
+  }, numeric(1))
+  expect_gt(stats::median(sizes, na.rm = TRUE), 20)
 })

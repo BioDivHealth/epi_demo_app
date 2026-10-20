@@ -490,10 +490,12 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
     origin <- sample.int(n_b, 1L)
   }
 
-  # how long it runs unseen: 1-10 generations, whatever the disease, counted
-  # in reports (at least one)
+  # it runs unseen until a cluster of severe illness is noticed: enough
+  # hospital admissions in total, or the first death
   hs <- config$tp$head_start
   gens_per_turn <- config$gens_per_turn %||% 1
+  hosp_delay <- config$bio$hosp_delay %||% config$tp$reports$hosp_delay
+  hosp_frac <- config$bio$hosp_frac %||% 0
 
   # the hidden outbreak's own random stream
   truth_rng <- new_stream(seed + 7919L)
@@ -501,12 +503,12 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
   # run the hidden turns from one infected person (an outbreak that dies out
   # before anyone notices is never reported, so draw again)
   for (attempt in 1:50) {
-    hidden_generations <- sample(seq(hs$min_turns, hs$max_turns), 1)
-    hidden_turns <- max(1L, as.integer(round(hidden_generations / gens_per_turn)))
     truth <- init_truth(n_boroughs = n_b, seed_boroughs = origin, seed_cases = hs$index_cases)
+    admitted <- numeric(n_b)
+    hidden_turns <- 0L
 
-    trigger <- "patient"
-    for (i in seq_len(hidden_turns)) {
+    trigger <- "none"
+    for (i in seq_len(hs$max_reports)) {
       stepped <- with_stream(truth_rng, step_truth(
         state = truth,
         K = config$K,
@@ -522,32 +524,54 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
       ))
       truth <- stepped$value
       truth_rng <- stepped$rng
+      hidden_turns <- i
 
-      # a death is always noticed: the outbreak is reported now
+      # people infected hosp_delay reports ago who are now in hospital
+      source_turn <- length(truth$history) - hosp_delay
+      if (source_turn >= 1) {
+        infected <- truth$history[[source_turn]]
+        drawn <- with_stream(truth_rng, stats::rbinom(n_b, size = infected, prob = hosp_frac))
+        admitted <- admitted + drawn$value
+        truth_rng <- drawn$rng
+      }
+
+      # a death, or a cluster of admissions, is noticed: reported now
       if (sum(truth$cumulative_deaths) > 0) {
         trigger <- "death"
-        hidden_turns <- i
+        break
+      }
+      if (sum(admitted) >= hs$admissions) {
+        trigger <- "admissions"
+        break
+      }
+
+      # died out unseen (nothing infectious, no deaths still to come)
+      if (sum(truth$incidence) == 0 && sum(unlist(truth$death_queue)) == 0) {
         break
       }
     }
 
-    if (sum(truth$incidence) > 0 || trigger == "death") {
+    if (trigger != "none") {
       break
     }
   }
 
-  # if it kept dying out (spread below 1), the reported patient is a fresh
-  # spillover case where it began
-  if (sum(truth$incidence) == 0) {
+  # if it kept dying out unseen (spread far below 1), the first report is a
+  # single fresh spillover patient where it began
+  if (trigger == "none") {
+    trigger <- "admissions"
+    admitted[origin] <- 1
     truth$incidence[origin] <- 1L
     truth$cumulative[origin] <- truth$cumulative[origin] + 1L
     truth$history[[length(truth$history)]] <- truth$incidence
   }
 
-  # the first report: where someone died, or else a real current case,
-  # wherever the infections are (not necessarily where it began)
-  report_weights <- if (trigger == "death") truth$cumulative_deaths else truth$incidence
-  first_patient <- sample.int(n_b, 1L, prob = report_weights / sum(report_weights))
+  # the first report comes from one area: where someone died, or the area
+  # with the most admissions (ties broken at random). Not necessarily where
+  # it began.
+  report_counts <- if (trigger == "death") truth$cumulative_deaths else admitted
+  top <- which(report_counts == max(report_counts))
+  first_patient <- if (length(top) == 1) top else sample(top, 1L)
 
   state <- list(
     turn = 0L,
@@ -557,6 +581,7 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
     # infections and deaths already set in motion before the game began
     start_infections = sum(truth$cumulative),
     start_deaths_eventual = eventual_deaths(truth, config),
+    start_deaths = sum(truth$cumulative_deaths),
     obs = init_observation_state(),
     available = init_observation_state()$history,
     biases = draw_game_biases(n_b, config$tp),
@@ -572,7 +597,8 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
       alerted = first_patient,
       true_start = origin,
       hidden_turns = hidden_turns,
-      trigger = trigger
+      trigger = trigger,
+      admissions = sum(admitted)
     ),
     seed = seed,
     truth_rng = truth_rng

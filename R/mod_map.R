@@ -260,8 +260,8 @@ mod_map_server <- function(
             "<span style='display:inline-block;width:10px;height:10px;background:#3d4f61'></span> no results this report<br>",
             "<span style='display:inline-block;width:10px;height:10px;border:3px solid #ff4d4d'></span> restricted<br>",
             "<span style='display:inline-block;width:10px;height:10px;border:3px solid #4fc3f7'></span> chosen for testing<br>",
-            "<span style='display:inline-block;width:10px;height:10px;background:#b56cf0;border:2px solid #e0b3ff'></span> first patient's area (lit until tested)",
-            "<br><span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4d;border:2px solid #fff'></span> first patient reported",
+            "<span style='display:inline-block;width:10px;height:10px;background:#b56cf0;border:2px solid #e0b3ff'></span> first report's area (lit until tested)",
+            "<br><span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4d;border:2px solid #fff'></span> first report",
             "</div>"
           ),
           position = "bottomleft"

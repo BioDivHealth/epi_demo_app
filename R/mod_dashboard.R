@@ -1,8 +1,10 @@
 # Surveillance module ----------------------------------------------------------
 #
 # Everything the response team can see: warnings, the latest report, and one
-# chart of the surveillance signals over time. Only returned test results and
-# public reports are used (never the hidden truth).
+# chart of three signals over time (positive tests, hospital admissions,
+# deaths). Share positive and Rt are shown as numbers in the top bar, from
+# signals() returned here. Only returned test results and public reports are
+# used (never the hidden truth).
 
 mod_dashboard_ui <- function(id) {
   ns <- shiny::NS(id)
@@ -21,8 +23,9 @@ mod_dashboard_ui <- function(id) {
         shiny::htmlOutput(ns("turn_log"))
       ),
 
-      # one chart: every signal over time, latest value and change at the end
-      shiny::div(style = "height: 500px;", shiny::plotOutput(ns("signals_plot"), height = "100%")),
+      # one chart: three signals on one log scale, so lines that run parallel
+      # tell the same story and lines that pull apart disagree
+      shiny::div(style = "height: 280px;", shiny::plotOutput(ns("signals_plot"), height = "100%")),
       shiny::div(class = "small text-muted", shiny::textOutput(ns("totals_text"), inline = TRUE))
     )
   )
@@ -58,8 +61,6 @@ mod_dashboard_server <- function(
       turns <- 0:last_turn
       confirmed <- numeric(length(turns))
       tests <- numeric(length(turns))
-      tests_ag <- numeric(length(turns))
-      tests_pcr <- numeric(length(turns))
       suspected <- numeric(length(turns))
       deaths <- numeric(length(turns))
 
@@ -69,15 +70,6 @@ mod_dashboard_server <- function(
           dplyr::summarise(positives = sum(positives), tests = sum(n), .groups = "drop")
         confirmed[by_turn$turn_available + 2] <- by_turn$positives
         tests[by_turn$turn_available + 2] <- by_turn$tests
-
-        # tests back per type (antigen / PCR)
-        by_type <- hist |>
-          dplyr::group_by(turn_available, type) |>
-          dplyr::summarise(tests = sum(n), .groups = "drop")
-        ag <- by_type[by_type$type == "ag", ]
-        pcr <- by_type[by_type$type == "pcr", ]
-        tests_ag[ag$turn_available + 2] <- ag$tests
-        tests_pcr[pcr$turn_available + 2] <- pcr$tests
       }
       if (!is.null(rep) && nrow(rep) > 0) {
         by_turn <- rep |>
@@ -100,8 +92,6 @@ mod_dashboard_server <- function(
         turn = turns,
         confirmed = confirmed,
         tests = tests,
-        tests_ag = tests_ag,
-        tests_pcr = tests_pcr,
         share_positive = ifelse(tests > 0, 100 * confirmed / tests, NA_real_),
         suspected = suspected,
         deaths = deaths,
@@ -185,43 +175,30 @@ mod_dashboard_server <- function(
       )
     })
 
-    # one chart of every signal -----------------------------------------------
+    # one chart of three signals ----------------------------------------------
 
     output$signals_plot <- shiny::renderPlot({
       req(ready())
       s <- signals()
 
-      panels <- c(
-        tests = "Tests with results back (orange antigen, blue PCR)",
-        confirmed = "Confirmed cases (positive tests)",
-        share_positive = "Share of tests positive (%)",
-        suspected = "Suspected cases (hospital admissions)",
-        deaths = "Deaths reported",
-        rt = "Rt from confirmed cases (1 = flat)"
+      series <- c(
+        confirmed = "positive tests",
+        suspected = "hospital admissions",
+        deaths = "deaths"
       )
-      # each panel is one line ("signal"), except tests: antigen and PCR
-      series_of <- list(
-        tests = c(Antigen = "tests_ag", PCR = "tests_pcr"),
-        confirmed = c(signal = "confirmed"),
-        share_positive = c(signal = "share_positive"),
-        suspected = c(signal = "suspected"),
-        deaths = c(signal = "deaths"),
-        rt = c(signal = "rt")
+      series_colours <- c(
+        "positive tests" = "#4fc3f7",
+        "hospital admissions" = "#f6d55c",
+        "deaths" = "#e15759"
       )
-      long <- dplyr::bind_rows(lapply(names(panels), function(m) {
-        dplyr::bind_rows(lapply(names(series_of[[m]]), function(series) {
-          tibble::tibble(turn = s$turn, value = s[[series_of[[m]][[series]]]], panel = panels[[m]], series = series)
-        }))
+      long <- dplyr::bind_rows(lapply(names(series), function(m) {
+        tibble::tibble(turn = s$turn, value = s[[m]], series = series[[m]])
       }))
-      long$panel <- factor(long$panel, levels = panels)
+      long$series <- factor(long$series, levels = series)
 
       # latest value and change since the report before, at the end of each line
-      fmt <- function(x, panel) {
-        if (grepl("Rt", panel)) sprintf("%.2f", x) else if (grepl("%", panel)) sprintf("%.1f", x) else format(round(x), big.mark = ",")
-      }
       ends <- long |>
-        dplyr::filter(!is.na(value)) |>
-        dplyr::group_by(panel, series) |>
+        dplyr::group_by(series) |>
         dplyr::arrange(turn, .by_group = TRUE) |>
         dplyr::summarise(
           turn = dplyr::last(turn),
@@ -229,45 +206,50 @@ mod_dashboard_server <- function(
           change = if (dplyr::n() >= 2) dplyr::last(value) - dplyr::nth(value, -2) else NA_real_,
           .groups = "drop"
         )
-      ends$label <- vapply(seq_len(nrow(ends)), function(i) {
-        p <- as.character(ends$panel[i])
-        change <- ends$change[i]
-        change_txt <- if (is.na(change)) "" else paste0(" (", if (change >= 0) "+" else "", fmt(change, p), ")")
-        prefix <- if (ends$series[i] == "signal") "" else paste0(substr(ends$series[i], 1, 3), " ")
-        paste0(prefix, fmt(ends$value[i], p), change_txt)
-      }, character(1))
-      # antigen and PCR labels sit one above the other
-      ends$vjust <- ifelse(ends$series == "PCR", 1.4, ifelse(ends$series == "Antigen", -0.4, 0.5))
+      ends$label <- sprintf(
+        "%s %s%s",
+        format(round(ends$value), big.mark = ","), ends$series,
+        ifelse(is.na(ends$change), "", sprintf(" (%s%s)", ifelse(ends$change >= 0, "+", ""), format(round(ends$change), big.mark = ",")))
+      )
 
       max_turn <- max(4, max(s$turn))
-      rt_line <- tibble::tibble(panel = factor(panels[["rt"]], levels = panels), y = 1)
       col <- chart_colours(dark_mode())
 
-      series_colours <- c(signal = col$line, Antigen = "#f28e2b", PCR = "#4fc3f7")
+      # log scale that still shows zero: 0, 1, 10, 100, ...
+      log_breaks <- function(lim) {
+        b <- c(0, 10^(0:8))
+        b[b <= max(lim)]
+      }
 
-      ggplot2::ggplot(long, ggplot2::aes(x = turn, y = value, colour = series, group = series)) +
-        ggplot2::geom_hline(data = rt_line, ggplot2::aes(yintercept = y), linetype = "dashed", colour = col$muted) +
-        ggplot2::geom_line(linewidth = 0.8, na.rm = TRUE) +
-        ggplot2::geom_point(size = 1.4, na.rm = TRUE) +
+      ggplot2::ggplot(long, ggplot2::aes(x = turn, y = value, colour = series)) +
+        ggplot2::geom_line(linewidth = 0.9) +
+        ggplot2::geom_point(size = 1.4) +
         ggplot2::geom_text(
-          data = ends, ggplot2::aes(label = label, vjust = vjust),
-          hjust = -0.1, size = 3.2, colour = col$accent, fontface = "bold"
+          data = ends, ggplot2::aes(label = label),
+          hjust = -0.05, size = 3.2, fontface = "bold", show.legend = FALSE
         ) +
         ggplot2::scale_colour_manual(values = series_colours, guide = "none") +
-        ggplot2::facet_wrap(~panel, ncol = 1, scales = "free_y") +
         ggplot2::scale_x_continuous(
-          limits = c(0, max_turn + 1.6),
+          limits = c(0, max_turn + 3.5),
           breaks = function(lim) {
             b <- scales::breaks_pretty(n = 5)(c(0, max_turn))
             b[b >= 0 & b <= max_turn & b == round(b)]
           },
           labels = date_label
         ) +
-        ggplot2::scale_y_continuous(labels = scales::label_comma(), expand = ggplot2::expansion(mult = c(0.05, 0.25))) +
-        ggplot2::labs(x = NULL, y = NULL) +
+        ggplot2::scale_y_continuous(
+          trans = scales::pseudo_log_trans(sigma = 1, base = 10),
+          breaks = log_breaks,
+          labels = scales::label_comma(),
+          expand = ggplot2::expansion(mult = c(0.02, 0.1))
+        ) +
+        ggplot2::labs(
+          x = NULL, y = NULL,
+          title = "Each report (log scale: parallel lines are growing at the same rate)"
+        ) +
         chart_theme(dark_mode(), base_size = 10) +
         ggplot2::theme(
-          strip.text = ggplot2::element_text(hjust = 0, face = "bold", size = 9),
+          plot.title = ggplot2::element_text(size = 9, face = "plain", colour = col$muted),
           plot.margin = ggplot2::margin(2, 5, 2, 5)
         )
     }, bg = "transparent")
@@ -290,5 +272,8 @@ mod_dashboard_server <- function(
         format(waiting, big.mark = ","), " tests awaiting results"
       )
     })
+
+    # share positive and Rt are shown in the top bar
+    list(signals = signals)
   })
 }

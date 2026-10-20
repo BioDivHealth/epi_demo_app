@@ -37,6 +37,10 @@ score_run_file <- function(label) {
 
 scored <- bind_rows(score_run_file(before_label), score_run_file(after_label))
 
+# only diseases played in both runs (one may have been added or removed)
+in_both <- intersect(scored$disease[scored$run == before_label], scored$disease[scored$run == after_label])
+scored <- scored[scored$disease %in% in_both, ]
+
 win_rates <- scored |>
   group_by(run, disease, bot) |>
   summarise(win_rate = mean(win), .groups = "drop") |>

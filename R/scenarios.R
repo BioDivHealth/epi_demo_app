@@ -45,8 +45,8 @@ scenario_catalog <- function() {
     # days from infection to death (rounded to whole reports in the game)
     death_delay_days = c(20, 24, 24, 20, 15, 20),
     # testing level at the start (see teaching_params()$test_levels):
-    # 1 reference lab only, 2 hospital labs, 3 established, 4 rapid everywhere
-    test_level = c(3L, 3L, 3L, 2L, 1L, 1L),
+    # 1 reference lab only, 2 hospital labs, 3 rapid antigen tests (built)
+    test_level = c(2L, 2L, 2L, 2L, 1L, 1L),
     # share of infections with no symptoms (never come forward for a test)
     asymptomatic = c(0.2, 0.05, 0.05, 0.45, 0.05, 0.1),
     # share of a case's spread that happens before symptoms, so a case found
