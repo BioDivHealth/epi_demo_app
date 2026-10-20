@@ -615,6 +615,40 @@ eventual_deaths <- function(truth, config) {
   sum(truth$cumulative_deaths) + in_pipeline * config$mort$death_ifr
 }
 
+# Compare a finished game with doing nothing ------------------------------------
+#
+# Replays the same outbreak (same seed, so the same hidden start and the same
+# random spread until actions change it) for the same number of reports with
+# no response, and counts infections and deaths during the response in both.
+# Deaths include those already set in motion (eventual deaths).
+compare_with_doing_nothing <- function(state, config) {
+  nothing <- new_game(config, seed = state$seed)
+  for (i in seq_len(state$turn)) {
+    nothing <- play_turn(nothing, list(), config)$state
+  }
+
+  during <- function(s) {
+    list(
+      infections = sum(s$truth$cumulative) - (s$start_infections %||% 0),
+      deaths = max(0, eventual_deaths(s$truth, config) - (s$start_deaths_eventual %||% 0))
+    )
+  }
+  you <- during(state)
+  none <- during(nothing)
+
+  # share prevented (negative = worse than doing nothing)
+  prevented <- function(a, b) if (b > 0) 1 - a / b else NA_real_
+
+  list(
+    infections = you$infections,
+    infections_doing_nothing = none$infections,
+    deaths = you$deaths,
+    deaths_doing_nothing = none$deaths,
+    infections_prevented = prevented(you$infections, none$infections),
+    deaths_prevented = prevented(you$deaths, none$deaths)
+  )
+}
+
 # Play one turn ----------------------------------------------------------------
 #
 # actions: list with

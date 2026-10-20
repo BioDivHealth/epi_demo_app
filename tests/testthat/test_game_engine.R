@@ -149,3 +149,21 @@ test_that("an outbreak noticed through admissions has more than one infection be
   }, numeric(1))
   expect_gt(stats::median(sizes, na.rm = TRUE), 20)
 })
+
+test_that("the review compares a game with doing nothing on the same outbreak", {
+  config <- scenario_config("covid_early", inputs)
+
+  # doing nothing compared with doing nothing: nothing prevented
+  idle <- new_game(config, seed = 21)
+  for (i in 1:6) idle <- play_turn(idle, list(), config)$state
+  same <- compare_with_doing_nothing(idle, config)
+  expect_equal(same$infections, same$infections_doing_nothing)
+  expect_equal(same$infections_prevented, 0)
+
+  # distancing from the start prevents some infections
+  busy <- new_game(config, seed = 21)
+  for (i in 1:6) busy <- play_turn(busy, list(interventions = "distancing"), config)$state
+  cmp <- compare_with_doing_nothing(busy, config)
+  expect_equal(cmp$infections_doing_nothing, same$infections_doing_nothing)
+  expect_gt(cmp$infections_prevented, 0)
+})

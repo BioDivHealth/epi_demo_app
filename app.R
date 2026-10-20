@@ -1383,7 +1383,7 @@ server <- function(input, output, session) {
 
     format_rt <- function(mean_rt, lower_rt, upper_rt) {
       if (is.na(mean_rt) || is.na(lower_rt) || is.na(upper_rt)) {
-        "Rt unavailable"
+        "too few cases"
       } else {
         sprintf("%.2f (%.2f–%.2f)", mean_rt, lower_rt, upper_rt)
       }
@@ -1401,6 +1401,20 @@ server <- function(input, output, session) {
       per_gen(metrics$rt_truth_mean),
       per_gen(metrics$rt_truth_lower),
       per_gen(metrics$rt_truth_upper)
+    )
+
+    # the same outbreak replayed with no response, for the same reports
+    vs_nothing <- compare_with_doing_nothing(game_state(), config)
+    share_txt <- function(p, what) {
+      if (is.na(p)) return(NULL)
+      sprintf("%d%% %s %s", round(100 * abs(p)), if (p >= 0) "fewer" else "more", what)
+    }
+    prevented_txt <- paste0(
+      paste(c(share_txt(vs_nothing$infections_prevented, "infections"),
+              share_txt(vs_nothing$deaths_prevented, "deaths")), collapse = ", "),
+      sprintf(" (doing nothing: %s infections, %s deaths).",
+              format(round(vs_nothing$infections_doing_nothing), big.mark = ","),
+              format(round(vs_nothing$deaths_doing_nothing), big.mark = ","))
     )
 
     # deaths: reported by hospitals and registrations, against everyone who
@@ -1463,6 +1477,7 @@ server <- function(input, output, session) {
         )
       ),
       tags$p(tags$strong("You spent: "), format_money(metrics$total_spend)),
+      tags$p(tags$strong("Compared with doing nothing: "), prevented_txt),
       hidden_distortions_ui(),
       tags$hr(),
       tags$h5("Turn-by-Turn Comparison"),
