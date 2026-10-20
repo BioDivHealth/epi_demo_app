@@ -46,8 +46,8 @@ Implementation: `observe_tests()` in [mod observation.R](../../../../R/mod_obser
 
 ## Interventions
 Defined in [interventions.R](../../../../R/interventions.R), values in `teaching_params()`:
-- **Social distancing**: Rt × 0.8
-- **Targeted quarantine**: imports × 0.5
+- **Social distancing**: Rt × 0.5 (fades by `fatigue` each week it runs)
+- **Contact tracing**: follows up test positives and reported hospital admissions, up to `capacity` a week; an admission's contacts are discounted by `delay_decay^(hosp_delay × g)`
 - **Rapid labs**: PCR delay −1 turn
 
 Each intervention is charged every turn it is on, has no effect for `lag` turns after switching on, then its effect is scaled by `fatigue^(turns_effective - 1)`.

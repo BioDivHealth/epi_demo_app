@@ -149,12 +149,15 @@ teaching_params <- function() {
     ),
 
     # Contact tracing.
-    # A team that follows up confirmed cases and quarantines their contacts,
-    # removing some of the people each case has already infected.
-    # Limited capacity per turn, and like isolation it loses value when
-    # results come back late.
-    # Trap: tracing looks great when cases are few, then silently fails when
-    # cases outnumber tracers (and you cannot see the ones you never found).
+    # A team that follows up known cases and quarantines their contacts,
+    # removing some of the people each case has already infected. Known
+    # cases are your positive tests and the admissions hospitals report
+    # (which cost nothing to find, but are found late: an admission was
+    # infected hosp_delay ago, so for a fast disease its contacts have long
+    # moved on). Limited capacity per turn.
+    # Trap: tracing looks great when cases are few (an early Ebola-like
+    # outbreak), then silently fails when cases outnumber tracers (and you
+    # cannot see the ones you never found).
     tracing = list(
       cost = 40000,          # per turn while switched on
       capacity = 400,        # confirmed cases followed up per turn
@@ -201,15 +204,15 @@ teaching_params <- function() {
     # Traps: you cannot judge an intervention on the turn you start it, and
     # money spent on control is money not spent on seeing the outbreak.
     interventions = tibble::tibble(
-      id = c("distancing", "quarantine"),
-      label = c("Social distancing", "Targeted quarantine"),
-      cost = c(60000, 25000),
-      Rt_multiplier = c(0.8, 1),
-      imports_multiplier = c(1, 0.5),
-      ag_delay_adjust = c(0, 0),
-      pcr_delay_adjust = c(0, 0),
-      lag = c(1L, 1L),
-      fatigue = c(0.85, 0.9)
+      id = "distancing",
+      label = "Social distancing",
+      cost = 150000,
+      Rt_multiplier = 0.5,
+      imports_multiplier = 1,
+      ag_delay_adjust = 0,
+      pcr_delay_adjust = 0,
+      lag = 1L,
+      fatigue = 0.85
     )
   )
 }

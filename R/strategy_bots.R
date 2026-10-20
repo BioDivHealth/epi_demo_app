@@ -196,7 +196,7 @@ bot_build <- function(view, memory) {
 
 # 5. Hit hard early: London-wide measures from turn 0, spend little on tests.
 bot_hit_hard <- function(view, memory) {
-  interventions <- c("distancing", "quarantine")
+  interventions <- "distancing"
 
   list(
     actions = list(
@@ -212,7 +212,7 @@ bot_hit_hard <- function(view, memory) {
 #     from turn 0 (London-wide measures plus wide symptomatic testing) with no
 #     pacing, until the money runs out.
 bot_all_in <- function(view, memory) {
-  interventions <- c("distancing", "quarantine")
+  interventions <- "distancing"
 
   # spend everything allowed this turn, not a fair share of what is left
   money <- view$budget - sum(view$interventions$cost[view$interventions$id %in% interventions])

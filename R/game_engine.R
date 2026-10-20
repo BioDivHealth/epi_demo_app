@@ -286,8 +286,22 @@ testing_for_turn <- function(state, config, sampling_mode = "symptomatic") {
 # people it has already infected (about Rt of them), up to the tracers'
 # capacity. Tracers follow up every positive, real or false.
 isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt = 1, bio = list(),
-                                  gens_per_turn = 1) {
+                                  gens_per_turn = 1, admissions = NULL) {
   isolated <- numeric(n_boroughs)
+
+  # with tracing on, hospital-reported cases are followed up too: tracers
+  # share their capacity between positives and admissions
+  n_admissions <- if (is.null(admissions)) 0 else sum(admissions)
+  n_positives <- if (is.null(results)) 0 else sum(results$positives)
+  traced_share <- min(1, tp$tracing$capacity / max(1, n_positives + n_admissions))
+
+  if (isTRUE(tracing) && n_admissions > 0) {
+    # an admission was infected hosp_delay reports ago: its contacts are
+    # worth less the more generations have passed since
+    late <- (bio$delay_decay %||% 0.5)^((bio$hosp_delay %||% 1) * gens_per_turn)
+    isolated <- isolated + admissions * traced_share * tp$tracing$effectiveness * Rt * late
+  }
+
   if (is.null(results) || nrow(results) == 0) {
     return(isolated)
   }
@@ -306,8 +320,6 @@ isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt =
   per_case <- iso$effectiveness * strain
 
   if (isTRUE(tracing)) {
-    # share of positives the tracers can get to this turn
-    traced_share <- min(1, tp$tracing$capacity / max(1, sum(results$positives)))
     per_case <- per_case + traced_share * tp$tracing$effectiveness * Rt
   }
 
@@ -321,8 +333,25 @@ isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt =
   effective <- still_infectious * per_case * timeliness
 
   by_boro <- tapply(effective, results$borough_index, sum)
-  isolated[as.integer(names(by_boro))] <- by_boro
+  idx <- as.integer(names(by_boro))
+  isolated[idx] <- isolated[idx] + by_boro
   isolated
+}
+
+# Admissions per borough in the latest hospital report
+reported_admissions <- function(state, n_boroughs) {
+  out <- numeric(n_boroughs)
+  rep <- state$reports
+  if (is.null(rep) || nrow(rep) == 0) {
+    return(out)
+  }
+  latest <- rep[rep$turn == state$turn, , drop = FALSE]
+  if (nrow(latest) == 0) {
+    return(out)
+  }
+  by_boro <- tapply(latest$admissions, latest$borough_index, sum)
+  out[as.integer(names(by_boro))] <- by_boro
+  out
 }
 
 # How many people come forward for a test in each borough this turn
@@ -639,7 +668,9 @@ play_turn <- function(state, actions, config) {
     # (immunity included, not R0), compounded over the report's generations
     Rt = (config$epi$Rt * effects$Rt_multiplier * config$susceptible_frac)^(config$gens_per_turn %||% 1),
     bio = config$bio,
-    gens_per_turn = config$gens_per_turn %||% 1
+    gens_per_turn = config$gens_per_turn %||% 1,
+    # admissions hospitals reported in the latest report (where the hospital is)
+    admissions = reported_admissions(state, n_b)
   )
   if (!is.null(state$carry_isolated)) {
     isolated <- isolated + state$carry_isolated

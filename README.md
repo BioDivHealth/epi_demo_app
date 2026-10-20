@@ -99,9 +99,9 @@ Notes:
 - Allocate antigen vs. PCR tests per borough each turn under a shared budget.
 - Observe only results that have returned; unsampled or pending boroughs remain grey on the map (fog of war).
 - Dashboards summarise observed incidence, quick Rt estimates (parametric serial interval), pending queues, spend, and positivity.
-- Toggle from the default setup into a custom scenario to tweak hidden dynamics, starter intel, and per-turn interventions (distancing, quarantine, rapid labs).
+- Toggle from the default setup into a custom scenario to tweak hidden dynamics, starter intel, and per-turn interventions (distancing, contact tracing, better testing).
 - Choose **starter intel** options to begin with some initial testing allocation (alert or sweep).
-- Activate **interventions** per turn: social distancing (reduces Rt), targeted quarantine (reduces imports), and rapid labs (shortens PCR delay). They take a turn to start working and distancing/quarantine fade over time.
+- Activate **interventions** per turn: social distancing (reduces Rt), contact tracing (follows up positives and hospital-reported cases) and building better testing. Measures take a turn to start working and distancing fades over time.
 - The data is built to mislead in realistic ways: the starter alert can be a false alarm, antigen tests give false positives at low prevalence, and symptomatic testing is biased by borough care-seeking and a hidden wave of other respiratory illness. The end-of-run reveal explains what was distorting each game.
 - All balance values live in `R/teaching_params.R`; disease biology (asymptomatic share, pre-symptom spread, how much a slow result hurts, hospitalisation, starting test level) lives in `R/scenarios.R`.
 

@@ -49,12 +49,9 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
       # testing: which test and how much
       shiny::div(
         class = "small",
-        shiny::radioButtons(
-          ns("test_type"),
-          label = "Test",
-          choices = c("Antigen" = "ag", "PCR" = "pcr"),
-          selected = "pcr"
-        ),
+        # built by the server each report (prices, waits, antigen greyed
+        # out until it exists)
+        shiny::uiOutput(ns("test_type_ui")),
         shiny::sliderInput(
           ns("spend"),
           label = paste0("Spend on tests per report (", tp$currency, ")"),
@@ -315,12 +312,12 @@ mod_map_server <- function(
       defs <- budget$interventions
       shiny::updateCheckboxGroupInput(
         session, "interventions",
-        choiceNames = sprintf("%s (%s/turn)", defs$label, format_money(defs$cost)),
+        choiceNames = sprintf("%s (%s per report)", defs$label, format_money(defs$cost)),
         choiceValues = defs$id,
         selected = shiny::isolate(input$interventions)
       )
       shiny::updateCheckboxInput(session, "tracing",
-                                 label = sprintf("Contact tracing (%s/turn)", format_money(budget$tracing_cost)))
+                                 label = sprintf("Contact tracing (%s per report)", format_money(budget$tracing_cost)))
       shiny::updateCheckboxInput(
         session, "build_testing",
         label = sprintf("Build better testing (%s once, %d turns, half capacity meanwhile)",
@@ -370,20 +367,42 @@ mod_map_server <- function(
       shiny::HTML(paste(lines, collapse = "<br>"))
     })
 
-    # test choices show today's price and wait (antigen only once it exists)
-    observe({
+    # test choices show today's price and wait; antigen is always listed but
+    # greyed out until testing has been built up to a level that has it
+    output$test_type_ui <- shiny::renderUI({
       req(ready())
       budget <- budget_info()
       testing <- budget$testing
-      pcr_label <- sprintf("PCR %s, %d-turn wait", format_money(budget$costs[["pcr"]]), testing$delays$pcr)
-      if (isTRUE(testing$ag_available)) {
-        choices <- stats::setNames(c("ag", "pcr"), c(sprintf("Antigen %s, instant", format_money(budget$costs[["ag"]])), pcr_label))
-        selected <- shiny::isolate(input$test_type) %||% "pcr"
+      ag_available <- isTRUE(testing$ag_available)
+
+      wait_days <- testing$delays$pcr * teaching_params()$report_days
+      pcr_label <- if (wait_days == 0) {
+        sprintf("PCR %s, instant", format_money(budget$costs[["pcr"]]))
       } else {
-        choices <- stats::setNames("pcr", pcr_label)
-        selected <- "pcr"
+        sprintf("PCR %s, %d-day wait", format_money(budget$costs[["pcr"]]), wait_days)
       }
-      shiny::updateRadioButtons(session, "test_type", choices = choices, selected = selected)
+      ag_label <- if (ag_available) {
+        sprintf("Antigen %s, instant", format_money(budget$costs[["ag"]]))
+      } else {
+        "Antigen: not available yet (Build better testing)"
+      }
+
+      selected <- if (ag_available) shiny::isolate(input$test_type) %||% "pcr" else "pcr"
+      buttons <- shiny::radioButtons(
+        session$ns("test_type"),
+        label = "Test",
+        choiceNames = list(ag_label, pcr_label),
+        choiceValues = list("ag", "pcr"),
+        selected = selected
+      )
+      if (!ag_available) {
+        buttons <- htmltools::tagQuery(buttons)$
+          find("input")$filter(function(x, i) identical(x$attribs$value, "ag"))$
+          addAttrs(disabled = NA)$
+          parent()$addAttrs(style = "opacity: 0.5;")$
+          allTags()
+      }
+      buttons
     })
 
     # one line saying what this plan will do
