@@ -14,7 +14,7 @@ test_that("the same seed gives the same outbreak whatever the player does", {
 })
 
 test_that("the player view never contains the hidden truth", {
-  config <- scenario_config("influenza_seasonal", inputs)
+  config <- scenario_config("covid_early", inputs)
   state <- new_game(config, seed = 3)
   view <- player_view(state, config)
 
@@ -25,7 +25,7 @@ test_that("the player view never contains the hidden truth", {
 })
 
 test_that("one budget is shared across the whole game", {
-  config <- scenario_config("influenza_seasonal", inputs)
+  config <- scenario_config("covid_early", inputs)
   state <- new_game(config, seed = 4)
 
   # spend almost all of the pot, then a big turn must be refused
@@ -37,7 +37,7 @@ test_that("one budget is shared across the whole game", {
 })
 
 test_that("symptomatic tests are capped at the people who come forward", {
-  config <- scenario_config("influenza_seasonal", inputs)
+  config <- scenario_config("covid_early", inputs)
   state <- new_game(config, seed = 5)
   pool <- symptomatic_pool_size(state, config)
 

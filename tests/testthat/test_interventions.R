@@ -54,7 +54,7 @@ test_that("tracing follows up reported admissions, worth more for a slow disease
   admissions <- c(10, 0, 0)
 
   slow <- list(delay_decay = 0.85, hosp_delay = 2)   # Ebola-like
-  fast <- list(delay_decay = 0.35, hosp_delay = 1)   # flu-like
+  fast <- list(delay_decay = 0.35, hosp_delay = 1)   # fast spreader
 
   off <- isolated_from_results(NULL, 3, tp, tracing = FALSE, bio = slow, admissions = admissions)
   slow_on <- isolated_from_results(NULL, 3, tp, tracing = TRUE, Rt = 1.2, bio = slow,

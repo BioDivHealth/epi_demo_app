@@ -39,7 +39,7 @@ test_that("every per-borough table and matrix uses the map's borough order", {
   expect_true(all(inputs$K[off_diag & !touches] == 0))
 
   # allocation tables (what map clicks write into) follow the same order
-  config <- scenario_config("influenza_seasonal", inputs)
+  config <- scenario_config("covid_early", inputs)
   expect_equal(empty_allocations(config)$borough_name, inputs$boros$borough_name)
 })
 
