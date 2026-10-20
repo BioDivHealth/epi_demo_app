@@ -22,7 +22,7 @@ mod_dashboard_ui <- function(id) {
       ),
 
       # one chart: every signal over time, latest value and change at the end
-      shiny::div(style = "height: 430px;", shiny::plotOutput(ns("signals_plot"), height = "100%")),
+      shiny::div(style = "height: 500px;", shiny::plotOutput(ns("signals_plot"), height = "100%")),
       shiny::div(class = "small text-muted", shiny::textOutput(ns("totals_text"), inline = TRUE))
     )
   )
@@ -50,10 +50,15 @@ mod_dashboard_server <- function(
       hist <- observed_history()
       rep <- reports()
 
-      last_turn <- max(c(0, hist$turn_available, rep$turn))
+      # test results taken on turn t come back with the report for turn t + 1,
+      # alongside that report's hospital numbers, so they are plotted there
+      # (plotting them at t left every chart ending on an empty report)
+      last_turn <- max(c(0, hist$turn_available + 1, rep$turn))
       turns <- 0:last_turn
       confirmed <- numeric(length(turns))
       tests <- numeric(length(turns))
+      tests_ag <- numeric(length(turns))
+      tests_pcr <- numeric(length(turns))
       suspected <- numeric(length(turns))
       deaths <- numeric(length(turns))
 
@@ -61,8 +66,17 @@ mod_dashboard_server <- function(
         by_turn <- hist |>
           dplyr::group_by(turn_available) |>
           dplyr::summarise(positives = sum(positives), tests = sum(n), .groups = "drop")
-        confirmed[by_turn$turn_available + 1] <- by_turn$positives
-        tests[by_turn$turn_available + 1] <- by_turn$tests
+        confirmed[by_turn$turn_available + 2] <- by_turn$positives
+        tests[by_turn$turn_available + 2] <- by_turn$tests
+
+        # tests back per type (antigen / PCR)
+        by_type <- hist |>
+          dplyr::group_by(turn_available, type) |>
+          dplyr::summarise(tests = sum(n), .groups = "drop")
+        ag <- by_type[by_type$type == "ag", ]
+        pcr <- by_type[by_type$type == "pcr", ]
+        tests_ag[ag$turn_available + 2] <- ag$tests
+        tests_pcr[pcr$turn_available + 2] <- pcr$tests
       }
       if (!is.null(rep) && nrow(rep) > 0) {
         by_turn <- rep |>
@@ -83,6 +97,8 @@ mod_dashboard_server <- function(
         turn = turns,
         confirmed = confirmed,
         tests = tests,
+        tests_ag = tests_ag,
+        tests_pcr = tests_pcr,
         share_positive = ifelse(tests > 0, 100 * confirmed / tests, NA_real_),
         suspected = suspected,
         deaths = deaths,
@@ -173,14 +189,26 @@ mod_dashboard_server <- function(
       s <- signals()
 
       panels <- c(
+        tests = "Tests with results back (orange antigen, blue PCR)",
         confirmed = "Confirmed cases (positive tests)",
         share_positive = "Share of tests positive (%)",
         suspected = "Suspected cases (hospital admissions)",
         deaths = "Deaths reported",
         rt = "Rt from confirmed cases (1 = flat)"
       )
+      # each panel is one line ("signal"), except tests: antigen and PCR
+      series_of <- list(
+        tests = c(Antigen = "tests_ag", PCR = "tests_pcr"),
+        confirmed = c(signal = "confirmed"),
+        share_positive = c(signal = "share_positive"),
+        suspected = c(signal = "suspected"),
+        deaths = c(signal = "deaths"),
+        rt = c(signal = "rt")
+      )
       long <- dplyr::bind_rows(lapply(names(panels), function(m) {
-        tibble::tibble(turn = s$turn, value = s[[m]], panel = panels[[m]])
+        dplyr::bind_rows(lapply(names(series_of[[m]]), function(series) {
+          tibble::tibble(turn = s$turn, value = s[[series_of[[m]][[series]]]], panel = panels[[m]], series = series)
+        }))
       }))
       long$panel <- factor(long$panel, levels = panels)
 
@@ -190,7 +218,7 @@ mod_dashboard_server <- function(
       }
       ends <- long |>
         dplyr::filter(!is.na(value)) |>
-        dplyr::group_by(panel) |>
+        dplyr::group_by(panel, series) |>
         dplyr::arrange(turn, .by_group = TRUE) |>
         dplyr::summarise(
           turn = dplyr::last(turn),
@@ -202,21 +230,27 @@ mod_dashboard_server <- function(
         p <- as.character(ends$panel[i])
         change <- ends$change[i]
         change_txt <- if (is.na(change)) "" else paste0(" (", if (change >= 0) "+" else "", fmt(change, p), ")")
-        paste0(fmt(ends$value[i], p), change_txt)
+        prefix <- if (ends$series[i] == "signal") "" else paste0(substr(ends$series[i], 1, 3), " ")
+        paste0(prefix, fmt(ends$value[i], p), change_txt)
       }, character(1))
+      # antigen and PCR labels sit one above the other
+      ends$vjust <- ifelse(ends$series == "PCR", 1.4, ifelse(ends$series == "Antigen", -0.4, 0.5))
 
       max_turn <- max(4, max(s$turn))
       rt_line <- tibble::tibble(panel = factor(panels[["rt"]], levels = panels), y = 1)
       col <- chart_colours(dark_mode())
 
-      ggplot2::ggplot(long, ggplot2::aes(x = turn, y = value)) +
+      series_colours <- c(signal = col$line, Antigen = "#f28e2b", PCR = "#4fc3f7")
+
+      ggplot2::ggplot(long, ggplot2::aes(x = turn, y = value, colour = series, group = series)) +
         ggplot2::geom_hline(data = rt_line, ggplot2::aes(yintercept = y), linetype = "dashed", colour = col$muted) +
-        ggplot2::geom_line(colour = col$line, linewidth = 0.8, na.rm = TRUE) +
-        ggplot2::geom_point(colour = col$line, size = 1.4, na.rm = TRUE) +
+        ggplot2::geom_line(linewidth = 0.8, na.rm = TRUE) +
+        ggplot2::geom_point(size = 1.4, na.rm = TRUE) +
         ggplot2::geom_text(
-          data = ends, ggplot2::aes(label = label),
+          data = ends, ggplot2::aes(label = label, vjust = vjust),
           hjust = -0.1, size = 3.2, colour = col$accent, fontface = "bold"
         ) +
+        ggplot2::scale_colour_manual(values = series_colours, guide = "none") +
         ggplot2::facet_wrap(~panel, ncol = 1, scales = "free_y") +
         ggplot2::scale_x_continuous(
           limits = c(0, max_turn + 1.6),

@@ -122,6 +122,11 @@ mod_map_server <- function(
     })
 
     chosen <- shiny::reactiveVal(integer())
+
+    # top of the map's colour scale: the highest positivity seen so far this
+    # game (at least 1%). It never shrinks, so a falling outbreak shows as
+    # fading colours rather than a rescaled map.
+    scale_top <- shiny::reactiveVal(0.01)
     restricted <- shiny::reactiveVal(integer())
     selected_interventions <- shiny::reactive({
       sel <- input$interventions
@@ -463,10 +468,10 @@ mod_map_server <- function(
       idx <- match(agg$borough_name, boros$borough_name)
       values[idx] <- agg$positives / agg$tests
 
-      # Color palette: grey for no results, green to red for positivity
-      # colour scale runs up to the highest positivity this turn (at least
-      # 1%), so differences between areas show even when positivity is low
-      top <- if (all(is.na(values))) 0.01 else max(0.01, max(values, na.rm = TRUE))
+      # colour scale: 0 to the highest positivity seen so far this game
+      this_report_top <- if (all(is.na(values))) 0 else max(values, na.rm = TRUE)
+      top <- max(shiny::isolate(scale_top()), this_report_top)
+      scale_top(top)
       # cool light blue (low) to deep red (high): reads well on the dark map
       # and stays distinct from the slate used for "no results"
       palette <- leaflet::colorNumeric(
@@ -594,6 +599,7 @@ mod_map_server <- function(
         }
         restricted(integer())
         chosen(integer())
+        scale_top(0.01)
       },
       interventions = selected_interventions,
       restricted = restricted,

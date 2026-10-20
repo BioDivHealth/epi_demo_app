@@ -150,9 +150,14 @@ app_ui <- page_fluid(
         padding: 0.5rem 0.75rem; margin: 0 -0.75rem 0.75rem -0.75rem; z-index: 1000;
       }
       .top-bar h4 { margin: 0; color: var(--bs-emphasis-color); }
+      /* the bar stays on screen only when there is room for it; on a narrow
+         screen it wraps to half the height and would hide the page. Above the
+         map's zoom buttons (z-index 1000). */
+      @media (min-width: 992px) { .top-bar { position: sticky; top: 0; z-index: 1030; } }
       .top-stat { font-size: 0.9rem; line-height: 1.2; }
       .top-stat .label { display: block; font-size: 0.7rem; color: var(--bs-secondary-color); text-transform: uppercase; }
       .top-stat .value { font-weight: 600; }
+      .budget-bar { height: 6px; margin-top: 4px; min-width: 220px; }
       /* no basemap tiles (the old tile service now needs an API key):
          boroughs are drawn on a plain light background */
       .leaflet-container, .leaflet-container.leaflet-touch { background: #1b2631 !important; }
@@ -279,13 +284,13 @@ app_ui <- page_fluid(
   ),
   # top bar: always visible, holds where you are and the main buttons
   div(
-    class = "top-bar sticky-top d-flex flex-wrap align-items-center gap-3",
+    class = "top-bar d-flex flex-wrap align-items-center gap-3",
     div(
       h4(textOutput("place_title", inline = TRUE)),
       div(class = "scenario-label", textOutput("scenario_display", inline = TRUE))
     ),
     div(class = "top-stat", span(class = "label", "Date"), span(class = "value", textOutput("turn_display", inline = TRUE))),
-    div(class = "top-stat", span(class = "label", "Budget"), span(class = "value", textOutput("money_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Budget"), span(class = "value", uiOutput("money_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "This report"), span(class = "value", uiOutput("plan_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Testing and hospitals"), span(class = "value", textOutput("system_display", inline = TRUE))),
     div(
@@ -531,13 +536,31 @@ server <- function(input, output, session) {
   })
 
   # money left this turn (after the current plan) and in total
-  output$money_display <- renderText({
+  # plus a bar of the whole budget: solid = left after this plan, striped =
+  # what this plan will spend; green, then amber below half, red below a fifth
+  output$money_display <- renderUI({
     req(game_state())
     budget <- turn_budget_info()
     planned <- allocations_module$planned_total()
-    paste0(
-      format_money(budget$budget - planned), " left this turn · ",
-      format_money(budget$pot_left), " left in total"
+    total <- current_config()$tp$budget_total
+
+    left_after_plan <- max(0, budget$pot_left - planned)
+    left_pct <- 100 * left_after_plan / total
+    planned_pct <- 100 * min(planned, budget$pot_left) / total
+
+    bar_colour <- if (left_pct > 50) "bg-success" else if (left_pct > 20) "bg-warning" else "bg-danger"
+
+    tagList(
+      paste0(
+        format_money(budget$budget - planned), " left this turn · ",
+        format_money(budget$pot_left), " left in total"
+      ),
+      div(
+        class = "progress budget-bar",
+        title = paste0(round(left_pct), "% of the budget left after this plan"),
+        div(class = paste("progress-bar", bar_colour), style = paste0("width: ", left_pct, "%;")),
+        div(class = paste("progress-bar progress-bar-striped", bar_colour), style = paste0("width: ", planned_pct, "%; opacity: 0.45;"))
+      )
     )
   })
 
@@ -1145,14 +1168,18 @@ server <- function(input, output, session) {
     )
 
     hist <- state$obs$history
+    # the real line runs to the latest infections; the confirmed line stops
+    # at the last report that had results (no test is ever done on the
+    # final turn's infections, so plotting it as 0 would be a fake drop)
     last_turn <- max(real$turn)
-    seen <- numeric(last_turn + 1)
+    last_report <- max(0, state$turn - 1)
+    seen <- numeric(last_report + 1)
     if (nrow(hist) > 0) {
       by_turn <- tapply(hist$positives, hist$turn_available, sum)
-      keep <- as.integer(names(by_turn)) <= last_turn
+      keep <- as.integer(names(by_turn)) <= last_report
       seen[as.integer(names(by_turn))[keep] + 1] <- by_turn[keep]
     }
-    observed <- tibble(turn = 0:last_turn, cases = seen, series = "Confirmed cases you saw")
+    observed <- tibble(turn = 0:last_report, cases = seen, series = "Confirmed cases you saw")
 
     both <- bind_rows(real, observed)
     both$date <- turn_date(both$turn, config)
@@ -1381,7 +1408,14 @@ server <- function(input, output, session) {
               class = "card-body",
               tags$p(
                 tags$strong("First real case found by your testing: "),
-                ifelse(is.na(metrics$time_to_detection), "never", paste("turn", metrics$time_to_detection))
+                if (!is.na(metrics$time_to_detection)) {
+                  paste("turn", metrics$time_to_detection)
+                } else if (isTRUE(metrics$own_positives > 0)) {
+                  sprintf("never. All %s of your positives were false positives: not one real case was found.",
+                          format(metrics$own_positives, big.mark = ","))
+                } else {
+                  "never"
+                }
               ),
               tags$p(
                 tags$strong("Peak observed: "),
