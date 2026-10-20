@@ -8,7 +8,7 @@
 State per borough *i*, turn *t*:
 
 ```
-I_{i,t+1} ~ NegBin(mean = mu_{i,t}, size = k)
+I_{i,t+1} ~ NegBin(mean = mu_{i,t}, size = k * n_{i,t}),  n_{i,t} = sum_j K[j, i] * I_{j,t}
 mu_{i,t} = Rt^g * sum_j K[j, i] * I_{j,t}   (in R: crossprod(K, I) * Rt^g)
 ```
 

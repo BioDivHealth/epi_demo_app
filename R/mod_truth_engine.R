@@ -136,8 +136,9 @@ step_truth <- function(
 
   # each borough's cases spread along its row of K:
   # mu[i] = Rt^g * sum_j K[j, i] * I_transmit[j]
-  mu <- as.numeric(crossprod(K, I_transmit)) * Rt_global^g
-  mu[mu < 0] <- 0
+  infectors <- as.numeric(crossprod(K, I_transmit))
+  infectors[infectors < 0] <- 0
+  mu <- infectors * Rt_global^g
 
   # Only susceptible people can be infected: the share still susceptible
   # starts at susceptible_frac (e.g. after vaccination) and falls as people
@@ -152,10 +153,17 @@ step_truth <- function(
     mu <- mu * S_frac^g
   }
 
+  # superspreading is per person: each infected person's onward infections
+  # are NegBin(size = k), so the total from n people is NegBin(size = k * n).
+  # (A single size = k for a whole area would make even a large outbreak
+  # wobble and often vanish.)
   offspring <- if (is.infinite(k_overdisp)) {
     stats::rpois(length(mu), lambda = mu)
   } else {
-    stats::rnbinom(length(mu), size = k_overdisp, mu = mu)
+    out <- integer(length(mu))
+    live <- mu > 0
+    out[live] <- stats::rnbinom(sum(live), size = k_overdisp * infectors[live], mu = mu[live])
+    out
   }
 
   gates <- stats::rbinom(length(mu), size = 1L, prob = imports_prob)

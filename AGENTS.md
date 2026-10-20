@@ -78,8 +78,10 @@ devtools::test()
 
 - State per borough *i*, turn *t*:
   Use a branching process with overdispersion:
-  - I_{i,t+1} ~ NegBin(mean = mu_{i,t}, size = k)
-  - mu_{i,t} = R_t * sum_j K[j, i] * I_{j,t}   (crossprod(K, I) * R_t)
+  - I_{i,t+1} ~ NegBin(mean = mu_{i,t}, size = k * n_{i,t})
+  - mu_{i,t} = R_t^g * n_{i,t},  n_{i,t} = sum_j K[j, i] * I_{j,t}   (crossprod(K, I))
+  - n is the number of infected people whose spread lands in borough i; size k per
+    person (superspreading is individual), g = generations per weekly report
   where:
   - Row j of K = where borough j's onward infections land; rows sum to 1, so each case causes R_t new cases wherever it is. Built in load_inputs() from data/kernel_K.rds plus a within-borough share.
   - k controls overdispersion (superspreading).

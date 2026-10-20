@@ -31,16 +31,16 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
         shiny::radioButtons(
           ns("who"),
           label = "Test who",
-          choices = c("People with symptoms" = "symptomatic", "Random sample of residents" = "random"),
+          choices = c("People with symptoms" = "symptomatic", "A random sample" = "random"),
           selected = "symptomatic"
         ),
         shiny::radioButtons(
           ns("where"),
           label = "Where",
           choices = c(
-            "Everywhere (by population)" = "everywhere",
-            "Areas with positive results so far" = "positives",
-            "Areas I choose on the map" = "chosen"
+            "Everywhere" = "everywhere",
+            "Where positives were found" = "positives",
+            "Areas I pick on the map" = "chosen"
           ),
           selected = "everywhere"
         )
@@ -54,7 +54,7 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
         shiny::uiOutput(ns("test_type_ui")),
         shiny::sliderInput(
           ns("spend"),
-          label = paste0("Spend on tests per report (", tp$currency, ")"),
+          label = paste0("Spend on tests (", tp$currency, " per report)"),
           min = 0,
           max = tp$tests$budget,
           value = 0,
@@ -68,7 +68,7 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
       # control measures and what they will do next
       shiny::div(
         class = "small",
-        shiny::tags$label(class = "form-label", "Control measures"),
+        shiny::tags$label(class = "form-label", paste0("Measures (", tp$currency, " per report)")),
         shiny::checkboxGroupInput(
           ns("interventions"),
           label = NULL,
@@ -85,8 +85,8 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
         class = "small",
         shiny::radioButtons(
           ns("click_mode"),
-          label = "Clicking the map will",
-          choices = c("Choose areas to test" = "choose", "Restrict an area" = "restrict"),
+          label = "Map click",
+          choices = c("Pick test areas" = "choose", "Restrict an area" = "restrict"),
           selected = "choose"
         )
       )
@@ -312,16 +312,16 @@ mod_map_server <- function(
       defs <- budget$interventions
       shiny::updateCheckboxGroupInput(
         session, "interventions",
-        choiceNames = sprintf("%s (%s per report)", defs$label, format_money(defs$cost)),
+        choiceNames = sprintf("%s · %s", defs$label, format(round(defs$cost), big.mark = ",")),
         choiceValues = defs$id,
         selected = shiny::isolate(input$interventions)
       )
       shiny::updateCheckboxInput(session, "tracing",
-                                 label = sprintf("Contact tracing (%s per report)", format_money(budget$tracing_cost)))
+                                 label = sprintf("Contact tracing · %s", format(round(budget$tracing_cost), big.mark = ",")))
       shiny::updateCheckboxInput(
         session, "build_testing",
-        label = sprintf("Build better testing (%s once, %d turns, half capacity meanwhile)",
-                        format_money(budget$testing$build_cost), budget$testing$build_turns)
+        label = sprintf("Build better testing · %s once, takes %d reports",
+                        format(round(budget$testing$build_cost), big.mark = ","), budget$testing$build_turns)
       )
     })
 
@@ -336,9 +336,9 @@ mod_map_server <- function(
         next_streak <- get_streak(budget$streaks, id) + 1L
         strength <- intervention_strength(next_streak, def$lag, def$fatigue)
         lines <- c(lines, if (strength == 0) {
-          sprintf("%s: no effect next turn (takes a turn to start).", def$label)
+          sprintf("%s starts working the report after next.", def$label)
         } else {
-          sprintf("%s: %d%% strength next turn.", def$label, round(100 * strength))
+          sprintf("%s: %d%% strength.", def$label, round(100 * strength))
         })
       }
 
@@ -347,22 +347,23 @@ mod_map_server <- function(
         next_streaks <- budget$local_streaks[restricted()] + 1L
         strengths <- vapply(next_streaks, intervention_strength, numeric(1), lag = lr$lag, fatigue = lr$fatigue)
         lines <- c(lines, sprintf(
-          "Local restrictions on %d borough(s): %s.",
-          length(restricted()),
-          if (all(strengths == 0)) "no effect next turn (takes a turn to start)" else
-            paste0("up to ", round(100 * max(strengths)), "% strength next turn")
+          "Restrictions on %d area%s: %s.",
+          length(restricted()), if (length(restricted()) == 1) "" else "s",
+          if (all(strengths == 0)) "start working the report after next" else
+            paste0(round(100 * max(strengths)), "% strength")
         ))
       }
 
       if (isTRUE(input$tracing)) {
-        lines <- c(lines, sprintf("Contact tracing: follows up to %d positives a turn.", teaching_params()$tracing$capacity))
+        lines <- c(lines, sprintf("Tracing: up to %d cases a report.", teaching_params()$tracing$capacity))
       }
       if (isTRUE(budget$testing$building)) {
-        lines <- c(lines, sprintf("Building better testing: %d turn(s) left, capacity halved meanwhile.", budget$testing$build_left))
+        lines <- c(lines, sprintf("Building testing: %d report%s left, half capacity meanwhile.",
+                                  budget$testing$build_left, if (budget$testing$build_left == 1) "" else "s"))
       }
 
       if (length(lines) == 0) {
-        return(shiny::HTML("No control measures on."))
+        return(NULL)
       }
       shiny::HTML(paste(lines, collapse = "<br>"))
     })
@@ -376,15 +377,12 @@ mod_map_server <- function(
       ag_available <- isTRUE(testing$ag_available)
 
       wait_days <- testing$delays$pcr * teaching_params()$report_days
-      pcr_label <- if (wait_days == 0) {
-        sprintf("PCR %s, instant", format_money(budget$costs[["pcr"]]))
-      } else {
-        sprintf("PCR %s, %d-day wait", format_money(budget$costs[["pcr"]]), wait_days)
-      }
+      pcr_label <- sprintf("PCR · %s each · %s", budget$costs[["pcr"]],
+                           if (wait_days == 0) "instant" else paste(wait_days, "days"))
       ag_label <- if (ag_available) {
-        sprintf("Antigen %s, instant", format_money(budget$costs[["ag"]]))
+        sprintf("Antigen · %s each · instant", budget$costs[["ag"]])
       } else {
-        "Antigen: not available yet (Build better testing)"
+        "Antigen · build better testing first"
       }
 
       selected <- if (ag_available) shiny::isolate(input$test_type) %||% "pcr" else "pcr"
@@ -412,35 +410,28 @@ mod_map_server <- function(
       budget <- budget_info()
       n_tests <- sum(p$allocations$n_ag + p$allocations$n_pcr)
       test_name <- if (p$test == "ag") "antigen" else "PCR"
-      who_name <- if (identical(input$who, "random")) "a random sample of residents" else "people with symptoms"
 
       if (p$asked <= 0) {
-        return("No tests planned yet: move the spend slider to start testing.")
+        return("No tests planned.")
       }
 
       if (length(p$targets) == 0) {
-        where_txt <- if (p$where == "positives") "no borough has had a positive result yet" else "no boroughs chosen yet (click the map)"
-        return(paste0("No tests this turn: ", where_txt, "."))
+        return(if (p$where == "positives") "No positives yet, so no tests." else "Pick areas on the map.")
       }
 
-      where_txt <- if (p$where == "everywhere") paste("all", nrow(pop_tbl), "areas") else paste(length(p$targets), "area(s)")
-      txt <- paste0(
-        format(n_tests, big.mark = ",", scientific = FALSE), " ", test_name, " tests of ", who_name,
-        " in ", where_txt, " (", format_money(p$money), ")."
-      )
+      where_txt <- if (p$where == "everywhere") paste("all", nrow(pop_tbl), "areas") else
+        paste(length(p$targets), if (length(p$targets) == 1) "area" else "areas")
+      txt <- paste0(format(n_tests, big.mark = ",", scientific = FALSE), " ", test_name, " tests in ", where_txt, ".")
 
       # symptomatic testing can only reach the people who come forward
       if (identical(input$who, "symptomatic") && !is.null(budget$pool_size)) {
         reachable <- sum(pmin(p$allocations$n_ag + p$allocations$n_pcr, budget$pool_size))
         if (reachable < n_tests) {
-          txt <- paste0(
-            txt, " Only about ", format(reachable, big.mark = ",", scientific = FALSE),
-            " people come forward there, so only that many will be tested (and paid for)."
-          )
+          txt <- paste0(txt, " Only about ", format(reachable, big.mark = ",", scientific = FALSE), " people come forward.")
         }
       }
       if (p$cut_down) {
-        txt <- paste0(txt, " Cut down to fit the money left this turn.")
+        txt <- paste0(txt, " Cut to fit the money left.")
       }
       txt
     })

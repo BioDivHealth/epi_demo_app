@@ -1,10 +1,9 @@
 # Surveillance module ----------------------------------------------------------
 #
-# Everything the response team can see: warnings, the latest report, and one
-# chart of three signals over time (positive tests, hospital admissions,
-# deaths). Share positive and Rt are shown as numbers in the top bar, from
-# signals() returned here. Only returned test results and public reports are
-# used (never the hidden truth).
+# Everything the response team can see: the latest report (with share
+# positive, Rt and any warnings in it) and one chart of three signals over
+# time (positive tests, hospital admissions, deaths). Only returned test
+# results and public reports are used (never the hidden truth).
 
 mod_dashboard_ui <- function(id) {
   ns <- shiny::NS(id)
@@ -13,10 +12,7 @@ mod_dashboard_ui <- function(id) {
     bslib::card_body(
       class = "p-2",
 
-      # warnings
-      shiny::htmlOutput(ns("warnings")),
-
-      # the latest report (stays until the next one)
+      # the latest report, with any warnings (stays until the next one)
       shiny::div(
         class = "p-2 mb-2 rounded small",
         style = "background: var(--bs-tertiary-bg); border-left: 4px solid var(--bs-secondary-color);",
@@ -99,18 +95,46 @@ mod_dashboard_server <- function(
       )
     })
 
+    # latest value and change since the report before, e.g. "0.9% (+0.7)"
+    with_change <- function(x, digits, suffix = "") {
+      x <- x[!is.na(x)]
+      if (length(x) == 0) return(NA_character_)
+      txt <- paste0(formatC(utils::tail(x, 1), format = "f", digits = digits), suffix)
+      if (length(x) >= 2) {
+        d <- diff(utils::tail(x, 2))
+        txt <- paste0(txt, " (", if (d >= 0) "+" else "", formatC(d, format = "f", digits = digits), ")")
+      }
+      txt
+    }
+
     output$turn_log <- shiny::renderUI({
       req(ready())
       log <- turn_log()
       if (length(log) == 0) {
-        return(shiny::HTML("Set your response, then press <b>Advance to next report</b>."))
+        return(shiny::HTML("Set your response, then press <b>Next report</b>."))
       }
-      shiny::HTML(paste0("<b>", log[1], "</b><br>", paste(log[-1], collapse = "<br>")))
+
+      s <- signals()
+      positive_txt <- with_change(s$share_positive, 1, "%")
+      rt_txt <- with_change(s$rt, 2)
+      signal_txt <- paste(c(
+        if (!is.na(positive_txt)) paste("Share positive", positive_txt),
+        if (!is.na(rt_txt)) paste("Rt", rt_txt)
+      ), collapse = " · ")
+
+      shiny::tagList(
+        shiny::tags$b(log[1]),
+        lapply(log[-1], shiny::div),
+        if (nzchar(signal_txt)) shiny::div(signal_txt),
+        lapply(warning_list(), function(w) {
+          shiny::div(class = paste0("text-", w$level, " fw-semibold"), w$text)
+        })
+      )
     })
 
     # warnings -----------------------------------------------------------------
 
-    output$warnings <- shiny::renderUI({
+    warning_list <- shiny::reactive({
       req(ready())
       s <- signals()
       status <- system_status()
@@ -148,31 +172,23 @@ mod_dashboard_server <- function(
         now <- s[n, ]
         before <- s[n - 1, ]
         if (rising(now$confirmed, before$confirmed, 10)) {
-          add("warning", sprintf("Confirmed cases rising fast (%s to %s).", before$confirmed, now$confirmed))
+          add("warning", "Positive tests rising fast.")
         }
         if (rising(now$suspected, before$suspected, 5)) {
-          add("warning", sprintf("Hospital admissions rising fast (%s to %s).", before$suspected, now$suspected))
+          add("warning", "Admissions rising fast.")
         }
         if (now$deaths >= 3 && now$deaths > before$deaths) {
-          add("danger", sprintf("Deaths rising (%s to %s).", before$deaths, now$deaths))
+          add("danger", "Deaths rising.")
         }
         if (rising(now$share_positive, before$share_positive, 2)) {
-          add("warning", sprintf("Share of tests positive rising (%.1f%% to %.1f%%).", before$share_positive, now$share_positive))
+          add("warning", "Share positive rising.")
         }
         if (!is.na(now$rt) && now$rt > 1 && !is.na(before$rt) && now$rt > before$rt) {
-          add(if (now$rt > 1.5) "danger" else "warning", sprintf("Rt above 1 and rising (%.2f).", now$rt))
+          add(if (now$rt > 1.5) "danger" else "warning", "Rt above 1 and rising.")
         }
       }
 
-      if (length(found) == 0) {
-        return(shiny::div(class = "small text-success mb-2", "No warnings."))
-      }
-      shiny::div(
-        class = "mb-2",
-        lapply(found, function(w) {
-          shiny::div(class = paste0("alert alert-", w$level, " py-1 px-2 mb-1 small"), w$text)
-        })
-      )
+      found
     })
 
     # one chart of three signals ----------------------------------------------

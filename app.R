@@ -290,19 +290,31 @@ app_ui <- page_fluid(
       div(class = "scenario-label", textOutput("scenario_display", inline = TRUE))
     ),
     div(class = "top-stat", span(class = "label", "Date"), span(class = "value", textOutput("turn_display", inline = TRUE))),
-    div(class = "top-stat", span(class = "label", "Budget"), span(class = "value", uiOutput("money_display", inline = TRUE))),
-    div(class = "top-stat", span(class = "label", "This report"), span(class = "value", uiOutput("plan_display", inline = TRUE))),
-    div(class = "top-stat", span(class = "label", "Tests positive · Rt"), span(class = "value", textOutput("signal_display", inline = TRUE))),
-    div(class = "top-stat", span(class = "label", "Testing and hospitals"), span(class = "value", textOutput("system_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Budget (credits)"), span(class = "value", uiOutput("money_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Plan"), span(class = "value", uiOutput("plan_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Labs · beds"), span(class = "value", textOutput("system_display", inline = TRUE))),
     div(
-      class = "ms-auto d-flex flex-wrap gap-2",
-      actionButton("advance_turn", "Advance to next report", class = "btn-primary"),
-      actionButton("controls-end", "End response & review", class = "btn-success"),
-      actionButton("controls-reseed", "New outbreak", class = "btn-outline-secondary btn-sm"),
-      actionButton("controls-reset", "Replay this outbreak", class = "btn-outline-secondary btn-sm"),
-      actionButton("choose_place", "Change location", class = "btn-outline-secondary btn-sm"),
-      actionButton("game_code_btn", textOutput("game_code_label", inline = TRUE), class = "btn-outline-secondary btn-sm"),
-      actionButton("help", "Briefing", class = "btn-outline-secondary btn-sm help-button")
+      class = "ms-auto d-flex align-items-center gap-2",
+      actionButton("advance_turn", "Next report", class = "btn-primary"),
+      actionButton("controls-end", "End & review", class = "btn-success"),
+      # everything else about the game, in one menu
+      tags$div(
+        class = "dropdown",
+        tags$button(
+          class = "btn btn-outline-secondary btn-sm dropdown-toggle", type = "button",
+          `data-bs-toggle` = "dropdown", `aria-expanded` = "false",
+          textOutput("game_code_label", inline = TRUE)
+        ),
+        tags$ul(
+          class = "dropdown-menu dropdown-menu-end",
+          tags$li(actionLink("controls-reset", "Replay this outbreak", class = "dropdown-item")),
+          tags$li(actionLink("controls-reseed", "New outbreak", class = "dropdown-item")),
+          tags$li(actionLink("game_code_btn", "Play a game code", class = "dropdown-item")),
+          tags$li(actionLink("choose_place", "Change location", class = "dropdown-item")),
+          tags$li(tags$hr(class = "dropdown-divider")),
+          tags$li(actionLink("help", "Briefing", class = "dropdown-item"))
+        )
+      )
     )
   ),
   uiOutput("main_layout"),
@@ -355,7 +367,7 @@ server <- function(input, output, session) {
     } else {
       place_meta$country[[1]]
     }
-    paste("Outbreaks in", place_name)
+    place_name
   })
   output$data_credit <- renderText({
     if (is.null(place_meta)) {
@@ -532,32 +544,9 @@ server <- function(input, output, session) {
   output$turn_display <- renderText({
     config <- current_config()
     paste0(
-      "Day ", turn_day(turn(), config), " of ", response_days(config), " · ",
-      format_date(turn_date(turn(), config))
+      trimws(format(turn_date(turn(), config), "%e %b %Y")), " · day ",
+      turn_day(turn(), config), "/", response_days(config)
     )
-  })
-
-  # share of tests positive and Rt from the latest report, with the change
-  # since the report before (both from returned results only)
-  output$signal_display <- renderText({
-    s <- dashboard_module$signals()
-    req(nrow(s) > 0)
-    latest_two <- function(x) {
-      x <- x[!is.na(x)]
-      if (length(x) == 0) return(c(NA, NA))
-      c(utils::tail(x, 1), if (length(x) >= 2) utils::tail(x, 2)[1] else NA)
-    }
-    with_change <- function(x, digits, suffix = "") {
-      v <- latest_two(x)
-      if (is.na(v[1])) return("not yet")
-      txt <- paste0(formatC(v[1], format = "f", digits = digits), suffix)
-      if (!is.na(v[2])) {
-        d <- v[1] - v[2]
-        txt <- paste0(txt, " (", if (d >= 0) "+" else "", formatC(d, format = "f", digits = digits), ")")
-      }
-      txt
-    }
-    paste0(with_change(s$share_positive, 1, "%"), " · Rt ", with_change(s$rt, 2))
   })
 
   # money left this turn (after the current plan) and in total
@@ -577,8 +566,8 @@ server <- function(input, output, session) {
 
     tagList(
       paste0(
-        format_money(budget$budget - planned), " left this turn · ",
-        format_money(budget$pot_left), " left in total"
+        format(round(budget$budget - planned), big.mark = ","), " left this report · ",
+        format(round(budget$pot_left), big.mark = ","), " total"
       ),
       div(
         class = "progress budget-bar",
@@ -596,9 +585,9 @@ server <- function(input, output, session) {
     n_tests <- sum(allocs$n_ag + allocs$n_pcr)
     n_measures <- length(allocations_module$interventions()) +
       length(allocations_module$restricted()) + isTRUE(allocations_module$tracing())
-    measures_txt <- if (n_measures == 0) "no measures" else paste(n_measures, "measure(s)")
+    measures_txt <- if (n_measures == 0) "no measures" else if (n_measures == 1) "1 measure" else paste(n_measures, "measures")
     if (n_tests == 0) {
-      span(class = "text-danger", paste0("no tests (spend is 0) · ", measures_txt))
+      span(class = "text-danger", paste0("no tests · ", measures_txt))
     } else {
       span(paste0(format(n_tests, big.mark = ","), " tests · ", measures_txt))
     }
@@ -611,8 +600,8 @@ server <- function(input, output, session) {
     view <- player_view(game_state(), current_config())
     paste0(
       budget$testing$label, if (isTRUE(budget$testing$building)) " (upgrading)" else "",
-      " · beds ", round(100 * view$bed_pressure), "% full",
-      " · lab backlog ", format(round(view$lab_backlog), big.mark = ",", scientific = FALSE)
+      if (view$lab_backlog > 0) paste0(", backlog ", format(round(view$lab_backlog), big.mark = ",", scientific = FALSE)) else "",
+      " · ", round(100 * view$bed_pressure), "%"
     )
   })
 
@@ -1032,7 +1021,7 @@ server <- function(input, output, session) {
 
     # the game lasts a fixed number of turns
     if (state$turn >= teaching_params()$game_turns) {
-      showNotification("Time is up. Press End response & review to see what really happened.", type = "message")
+      showNotification("Time is up. Press End & review to see what really happened.", type = "message")
       return()
     }
     config <- current_config()
@@ -1155,38 +1144,28 @@ server <- function(input, output, session) {
     n_positives <- sum(obs$available$positives)
     n_pending <- sum(obs$queue$n)
     new_reports <- new_state$reports[new_state$reports$turn == new_state$turn, ]
-    log <- c(
-      if (n_results > 0) {
-        sprintf("%s test results came back: %s positive (%.1f%%).",
-                format(n_results, big.mark = ","), format(n_positives, big.mark = ","),
-                100 * n_positives / n_results)
-      } else {
-        "No test results came back this turn."
-      },
-      if (n_pending > 0) sprintf("%s tests still waiting for results.", format(n_pending, big.mark = ",")),
-      sprintf("Hospitals reported %s new admissions and %s deaths.",
-              format(sum(new_reports$admissions), big.mark = ","), format(sum(new_reports$deaths), big.mark = ","))
-    )
-
-    # tell the player if no tests, or fewer tests than they asked for, ran
     asked <- sum(actions$allocations$n_ag + actions$allocations$n_pcr)
     ran <- sum(allocs$n_ag + allocs$n_pcr)
-    if (asked == 0) {
-      log <- c(log, "No tests were done this report: the spend on tests is 0 (set it in the Response panel).")
-    } else if (ran < asked) {
-      log <- c(log, sprintf(
-        "Only %s of the %s planned tests ran: not enough people came forward, or there were not enough kits.",
-        format(ran, big.mark = ","), format(asked, big.mark = ",")
-      ))
+    big <- function(x) format(x, big.mark = ",", scientific = FALSE)
+
+    # tests: what came back, what is still at the lab, and why if none ran
+    tests_txt <- if (n_results > 0) {
+      sprintf("Tests: %s back, %s positive.", big(n_results), big(n_positives))
+    } else if (asked == 0 && n_pending == 0) {
+      "Tests: none (spend is 0)."
+    } else {
+      "Tests: none back yet."
     }
-    if (result$pcr_extra_delay > 0) {
-      log <- c(log, sprintf("Labs are behind: this turn's PCR results will be %d turn(s) late.", result$pcr_extra_delay))
-    }
-    if (new_state$turn >= teaching_params()$game_turns) {
-      log <- c(log, sprintf("Time is up (day %d). Press End response & review.", response_days(config)))
-    }
+    if (n_pending > 0) tests_txt <- paste(tests_txt, big(n_pending), "at the lab.")
+    if (ran < asked) tests_txt <- paste(tests_txt, sprintf("Only %s of %s planned tests ran (too few people came forward, or too few kits).", big(ran), big(asked)))
+
+    log <- c(
+      tests_txt,
+      sprintf("Hospitals: %s admissions, %s deaths.", big(sum(new_reports$admissions)), big(sum(new_reports$deaths))),
+      if (new_state$turn >= teaching_params()$game_turns) "Time is up: press End & review."
+    )
     turn_log(c(sprintf(
-      "Report for %s (day %d):",
+      "%s · day %d",
       format_date(turn_date(new_state$turn, config)), turn_day(new_state$turn, config)
     ), log))
   })

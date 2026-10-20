@@ -13,9 +13,9 @@ help_modal_body <- function(scenario_id = NULL, scenario_defs = scenario_catalog
     shiny::tags$h5("How to play"),
     shiny::tags$ol(
       shiny::tags$li("Set your response below the map: who to test, where, which test and how much to spend, plus any control measures."),
-      shiny::tags$li("Press Advance to next report. Your response carries on each report until you change it."),
+      shiny::tags$li("Press Next report. Your plan carries on each report until you change it."),
       shiny::tags$li("Read what came back: positives, tests, hospital reports. Ask what they really tell you."),
-      shiny::tags$li(sprintf("When time runs out (after %d reports, or earlier) press End response & review to see what really happened, then Replay this outbreak to try another strategy.", teaching_params()$game_turns))
+      shiny::tags$li(sprintf("When time runs out (after %d reports, or earlier) press End & review to see what really happened, then Replay this outbreak (in the Game menu) to try another strategy.", teaching_params()$game_turns))
     ),
     shiny::tags$details(
       shiny::tags$summary("More detail"),

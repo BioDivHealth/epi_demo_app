@@ -79,7 +79,7 @@ teaching_params <- function() {
     # Spending big early leaves less for later.
     # Trap: you cannot both see everything and control everything.
     game_turns = 20L,
-    budget_total = 3000000,
+    budget_total = 2400000,
 
     # Isolation of confirmed cases.
     # Every true case found by a test is isolated, cutting onward spread.
