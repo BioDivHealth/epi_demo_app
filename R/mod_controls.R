@@ -98,7 +98,8 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         death_ifr <- shared_admin$death_ifr
       }
       death_ifr <- min(1, max(0, death_ifr))
-      death_delay <- scenario$death_delay[[1]]
+      # scenario delays are in days; the admin setting is in reports
+      death_delay <- scenario$death_delay_days[[1]] / teaching_params()$report_days
       if (is.null(death_delay) || is.na(death_delay)) {
         death_delay <- shared_admin$death_delay
       }

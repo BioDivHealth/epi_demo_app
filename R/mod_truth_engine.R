@@ -60,6 +60,10 @@ init_truth <- function(n_boroughs, seed_boroughs = 1L, seed_cases = 10L) {
 #'   cases in that borough (local restrictions).
 #' @param susceptible_frac Share of the population susceptible at the start
 #'   (1 = nobody immune). Rt_global is the R in a fully susceptible population.
+#' @param gens_per_step Generations of infection in one step (report interval
+#'   in days / generation time in days). Each case's onward spread per step
+#'   is (R per generation)^gens_per_step, so a weekly step keeps the same
+#'   growth per day as stepping one generation at a time. 1 = one generation.
 #' @return An updated state list with the next turn's incidence and cumulative totals.
 #' @export
 step_truth <- function(
@@ -74,7 +78,8 @@ step_truth <- function(
     death_delay = 0,
     isolated = 0,
     local_multiplier = 1,
-    susceptible_frac = 1) {
+    susceptible_frac = 1,
+    gens_per_step = 1) {
   if (is.null(state) || !is.list(state)) {
     stop("state must be a list created by init_truth()")
   }
@@ -125,11 +130,13 @@ step_truth <- function(
 
   # isolated cases (found by testing) do not pass the infection on, and
   # cases in boroughs under local restrictions pass it on less
-  I_transmit <- pmax(I_t - isolated, 0) * local_multiplier
+  # (the per-generation multipliers compound over the generations in a step)
+  g <- gens_per_step
+  I_transmit <- pmax(I_t - isolated, 0) * local_multiplier^g
 
   # each borough's cases spread along its row of K:
-  # mu[i] = Rt * sum_j K[j, i] * I_transmit[j]
-  mu <- as.numeric(crossprod(K, I_transmit)) * Rt_global
+  # mu[i] = Rt^g * sum_j K[j, i] * I_transmit[j]
+  mu <- as.numeric(crossprod(K, I_transmit)) * Rt_global^g
   mu[mu < 0] <- 0
 
   # Only susceptible people can be infected: the share still susceptible
@@ -142,7 +149,7 @@ step_truth <- function(
     S_frac <- susceptible_frac - (state$cumulative / pop)
     S_frac[!is.finite(S_frac)] <- 0
     S_frac <- pmax(0, pmin(1, S_frac))
-    mu <- mu * S_frac
+    mu <- mu * S_frac^g
   }
 
   offspring <- if (is.infinite(k_overdisp)) {

@@ -133,7 +133,9 @@ test_that("the unseen start ends at the first death (deaths are always noticed)"
       } else {
         expect_equal(sum(deaths_per_turn), 0)
       }
-      expect_lte(state$truth_offset, config$tp$head_start$max_turns)
+      # at most 10 generations unseen, counted in weekly reports
+      max_reports <- max(1, round(config$tp$head_start$max_turns / config$gens_per_turn))
+      expect_lte(state$truth_offset, max_reports)
       expect_gt(sum(state$truth$incidence) + sum(state$truth$cumulative_deaths), 0)
     }
   }

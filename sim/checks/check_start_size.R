@@ -20,7 +20,7 @@ for (d in diseases) {
     state <- new_game(config, seed = seed)
     rows[[length(rows) + 1]] <- tibble(
       disease = labels[[d]],
-      hidden_days = state$truth_offset * config$bio$gen_days,
+      hidden_days = state$truth_offset * report_days(config),
       infected_by_report = state$start_infections,
       current_cases = sum(state$truth$incidence),
       deaths_by_report = sum(state$truth$cumulative_deaths),

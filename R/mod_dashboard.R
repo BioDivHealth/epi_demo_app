@@ -38,6 +38,7 @@ mod_dashboard_server <- function(
     turn_log = shiny::reactive(character()),
     system_status = shiny::reactive(NULL),
     date_label = function(turn) turn,
+    gens_per_turn = shiny::reactive(1),
     dark_mode = shiny::reactive(FALSE),
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
@@ -86,11 +87,13 @@ mod_dashboard_server <- function(
         deaths[by_turn$turn + 1] <- by_turn$deaths
       }
 
-      # Rt from confirmed cases (1-turn serial interval)
+      # Rt from confirmed cases: growth from one report to the next, turned
+      # into growth per generation of infection (a report spans
+      # gens_per_turn generations), so 1 still means flat
       rt <- rep(NA_real_, length(turns))
       rt_tbl <- estimate_rt_table(confirmed)
       if (nrow(rt_tbl) > 0) {
-        rt[rt_tbl$t_end] <- rt_tbl$mean
+        rt[rt_tbl$t_end] <- rt_tbl$mean^(1 / gens_per_turn())
       }
 
       tibble::tibble(

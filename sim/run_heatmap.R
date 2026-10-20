@@ -24,6 +24,10 @@ suppressMessages({
 args <- commandArgs(trailingOnly = TRUE)
 label <- if (length(args) >= 1) args[1] else "latest"
 n_seeds <- if (length(args) >= 2) as.integer(args[2]) else 50L
+# "same_days": each disease plays as many days as 20 generations (the old
+# game length) instead of game_turns reports, to separate the effect of the
+# report cadence from the effect of the game's length
+same_days <- length(args) >= 3 && identical(args[3], "same_days")
 
 
 # load the game code and inputs
@@ -51,7 +55,12 @@ run_job <- function(i) {
   config <- scenario_config(job$disease, inputs)
   bot <- c(strategy_bots(), "Do nothing" = bot_do_nothing)[[job$bot]]
 
-  game <- play_bot_game(config, bot, seed = job$seed, n_turns = N_TURNS)
+  n_turns <- N_TURNS
+  if (SAME_DAYS) {
+    n_turns <- max(1L, as.integer(round(N_TURNS * config$bio$gen_days / report_days(config))))
+    config$tp$game_turns <- n_turns   # bots pace their budget over this
+  }
+  game <- play_bot_game(config, bot, seed = job$seed, n_turns = n_turns)
 
   tibble(
     disease = job$disease,
@@ -75,7 +84,8 @@ clusterEvalQ(cl, {
   inputs <- load_inputs("data")
   NULL
 })
-clusterExport(cl, c("jobs", "N_TURNS"))
+SAME_DAYS <- same_days
+clusterExport(cl, c("jobs", "N_TURNS", "SAME_DAYS"))
 
 t0 <- Sys.time()
 results <- bind_rows(parLapply(cl, seq_len(nrow(jobs)), run_job))

@@ -9,10 +9,11 @@ State per borough *i*, turn *t*:
 
 ```
 I_{i,t+1} ~ NegBin(mean = mu_{i,t}, size = k)
-mu_{i,t} = Rt * sum_j K[j, i] * I_{j,t}     (in R: crossprod(K, I) * Rt)
+mu_{i,t} = Rt^g * sum_j K[j, i] * I_{j,t}   (in R: crossprod(K, I) * Rt^g)
 ```
 
 Where:
+- **g** = generations per turn = `report_days / gen_days` (`config$gens_per_turn`). One turn is one report (7 days by default) for every disease, so a turn spans g generations and every per-generation multiplier (Rt, susceptible share, local restrictions, intervention effects) is raised to g. Growth per day is unchanged: log(Rt^g) / report_days = log(Rt) / gen_days. g = 1 is the old one-generation step.
 - **K** = spatial kernel. **Row j = where borough j's onward infections land**; each row sums to 1, so every case causes Rt new cases wherever it is. Built in `load_inputs()` as `within_share * I + (1 - within_share) * kernel_K.rds` (default 0.7; measles 0.8). Any replacement kernel (e.g. gravity) must use the same convention.
 - **k** = overdispersion parameter (superspreading)
 - **Rt** = effective reproduction number
@@ -58,7 +59,7 @@ One turn of the game is `play_turn()` in [game_engine.R](../../../../R/game_engi
 - `new_game()` starts the outbreak from one infected person and runs it unseen for a random 1-10 generations, whatever the disease, so fast growers are bigger by the first report. An outbreak that dies out unseen is redrawn (it would never have been reported). The scenario's `seed_cases` is no longer used.
 - The first patient is reported from an area chosen in proportion to current infections (a real case, not necessarily where it began). There are no free tests.
 - Scoring counts infections and deaths during the response only (`start_infections`, `start_deaths_eventual`).
-- One turn is one generation of infection: `gen_days` per disease (scenarios.R). Day 0 is `teaching_params()$start_date`; see `turn_day()` / `turn_date()`.
+- One turn is one report, `teaching_params()$report_days` apart (7 = weekly) for every disease. Hospital and death delays are set in days per disease (`hosp_delay_days`, `death_delay_days` in scenarios.R) and rounded to whole reports. Isolation value lost per turn of result delay is `delay_decay^(delay * g)` (delay_decay is per generation). The unseen start (1-10 generations) is converted to reports. The dashboard's Rt is the per-report growth estimate raised to 1/g, i.e. per generation. Day 0 is `teaching_params()$start_date`; see `turn_day()` / `turn_date()`.
 
 ## Health-system strain
 - **Hospitals:** admissions = Binomial(infections `hosp_delay` turns ago, `hosp_frac`). Beds are a London-wide pool (`teaching_params()$hospital$beds`), patients stay `stay_turns`. When occupancy exceeds beds, patients admitted without a bed die at `death_if_no_bed`, and reported admissions fall. Bed use is public.

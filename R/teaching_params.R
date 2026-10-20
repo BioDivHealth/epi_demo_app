@@ -32,6 +32,12 @@ teaching_params <- function() {
     # Trap: the first case found is not the first case.
     head_start = list(min_turns = 1L, max_turns = 10L, index_cases = 1L),
 
+    # Days between reports (one turn). Every disease is played at this
+    # cadence: 7 = a weekly report, 1 = daily. Spread, hospital and death
+    # delays are converted from the disease's own timescale (scenarios.R).
+    # Money, lab capacity, test delays and measure lags below are per report.
+    report_days = 7L,
+
     # Date the first patient is reported (day 0). Day 1 is the first turn.
     start_date = "2027-10-04",
     reference_units = 33L,

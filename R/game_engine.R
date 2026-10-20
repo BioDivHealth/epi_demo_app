@@ -9,10 +9,19 @@
 
 # Calendar ----------------------------------------------------------------------
 #
-# Day 0 is the day the first patient is reported; each turn is one generation
-# of infection (gen_days days, set per disease in scenarios.R).
+# Day 0 is the day the first patient is reported; each turn is one report,
+# report_days apart (teaching_params.R), whatever the disease.
+report_days <- function(config) {
+  config$tp$report_days %||% 7L
+}
+
 turn_day <- function(turn, config) {
-  1L + as.integer(turn) * (config$bio$gen_days %||% 5L)
+  1L + as.integer(turn) * report_days(config)
+}
+
+# Days of the disease's timescale to whole reports (at least `min_turns`)
+days_to_turns <- function(days, config, min_turns = 0L) {
+  max(as.integer(min_turns), as.integer(round(days / report_days(config))))
 }
 
 turn_date <- function(turn, config) {
@@ -21,7 +30,7 @@ turn_date <- function(turn, config) {
 
 # Length of the response in days, and the day it ends
 response_days <- function(config) {
-  config$tp$game_turns * (config$bio$gen_days %||% 5L)
+  config$tp$game_turns * report_days(config)
 }
 
 response_end_date <- function(config) {
@@ -79,9 +88,13 @@ game_config <- function(
     K <- inputs$K_measles
   }
 
+  # generations of infection per report: a fast disease goes through several
+  # generations between weekly reports, a slow one less than one
+  gens_per_turn <- (tp$report_days %||% 7L) / (bio$gen_days %||% (tp$report_days %||% 7L))
 
   list(
     K = K,
+    gens_per_turn = gens_per_turn,
     A = inputs$A,
     pop_tbl = inputs$pop_tbl,
     # share of people susceptible at the start (vaccination, past infection)
@@ -108,9 +121,11 @@ scenario_config <- function(scenario_id, inputs, tp = teaching_params()) {
     seed_cases = sc$seed_cases[[1]]
   )
 
+  # delays are given in days; the game counts them in reports
+  report_every <- tp$report_days %||% 7L
   mort <- list(
     death_ifr = ifelse(is.na(sc$death_ifr[[1]]), 0.002, sc$death_ifr[[1]]),
-    death_delay = ifelse(is.na(sc$death_delay[[1]]), 6L, sc$death_delay[[1]])
+    death_delay = as.integer(round(sc$death_delay_days[[1]] / report_every))
   )
 
   game_config(
@@ -126,7 +141,7 @@ scenario_config <- function(scenario_id, inputs, tp = teaching_params()) {
       delay_decay = sc$delay_decay[[1]],
       hosp_frac = sc$hosp_frac[[1]],
       gen_days = sc$gen_days[[1]],
-      hosp_delay = sc$hosp_delay[[1]]
+      hosp_delay = max(1L, as.integer(round(sc$hosp_delay_days[[1]] / report_every)))
     ),
     tp = tp
   )
@@ -270,7 +285,8 @@ testing_for_turn <- function(state, config, sampling_mode = "symptomatic") {
 # With contact tracing on, each traced case also takes out some of the
 # people it has already infected (about Rt of them), up to the tracers'
 # capacity. Tracers follow up every positive, real or false.
-isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt = 1, bio = list()) {
+isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt = 1, bio = list(),
+                                  gens_per_turn = 1) {
   isolated <- numeric(n_boroughs)
   if (is.null(results) || nrow(results) == 0) {
     return(isolated)
@@ -278,7 +294,8 @@ isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt =
 
   iso <- tp$isolation
   delay <- results$turn_available - results$turn_sampled
-  timeliness <- (bio$delay_decay %||% 0.5)^delay
+  # delay_decay is per generation; a report's delay spans gens_per_turn of them
+  timeliness <- (bio$delay_decay %||% 0.5)^(delay * gens_per_turn)
 
   # cases found because they had symptoms have already spread pre-symptoms
   found_by_symptoms <- !is.na(results$mode) & results$mode == "symptomatic"
@@ -444,8 +461,10 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
     origin <- sample.int(n_b, 1L)
   }
 
-  # how long it runs unseen: 1-10 generations, whatever the disease
+  # how long it runs unseen: 1-10 generations, whatever the disease, counted
+  # in reports (at least one)
   hs <- config$tp$head_start
+  gens_per_turn <- config$gens_per_turn %||% 1
 
   # the hidden outbreak's own random stream
   truth_rng <- new_stream(seed + 7919L)
@@ -453,7 +472,8 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
   # run the hidden turns from one infected person (an outbreak that dies out
   # before anyone notices is never reported, so draw again)
   for (attempt in 1:50) {
-    hidden_turns <- sample(seq(hs$min_turns, hs$max_turns), 1)
+    hidden_generations <- sample(seq(hs$min_turns, hs$max_turns), 1)
+    hidden_turns <- max(1L, as.integer(round(hidden_generations / gens_per_turn)))
     truth <- init_truth(n_boroughs = n_b, seed_boroughs = origin, seed_cases = hs$index_cases)
 
     trigger <- "patient"
@@ -468,7 +488,8 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
         pop = config$pop_tbl$pop,
         susceptible_frac = config$susceptible_frac,
         death_ifr = config$mort$death_ifr,
-        death_delay = config$mort$death_delay
+        death_delay = config$mort$death_delay,
+        gens_per_step = gens_per_turn
       ))
       truth <- stepped$value
       truth_rng <- stepped$rng
@@ -614,9 +635,11 @@ play_turn <- function(state, actions, config) {
   isolated <- isolated_from_results(
     obs$available, n_b, tp,
     tracing = tracing,
-    # each case's onward infections: effective R (immunity included), not R0
-    Rt = config$epi$Rt * effects$Rt_multiplier * config$susceptible_frac,
-    bio = config$bio
+    # each case's onward infections by the next report: effective R
+    # (immunity included, not R0), compounded over the report's generations
+    Rt = (config$epi$Rt * effects$Rt_multiplier * config$susceptible_frac)^(config$gens_per_turn %||% 1),
+    bio = config$bio,
+    gens_per_turn = config$gens_per_turn %||% 1
   )
   if (!is.null(state$carry_isolated)) {
     isolated <- isolated + state$carry_isolated
@@ -636,7 +659,8 @@ play_turn <- function(state, actions, config) {
     death_ifr = config$mort$death_ifr,
     death_delay = config$mort$death_delay,
     isolated = isolated,
-    local_multiplier = local_mult
+    local_multiplier = local_mult,
+    gens_per_step = config$gens_per_turn %||% 1
   ))
   next_truth <- stepped$value
 

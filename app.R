@@ -464,9 +464,9 @@ server <- function(input, output, session) {
       ),
       tags$p(tags$strong("What will you do?")),
       tags$p(sprintf(
-        "You have %d days, until %s, to bring it under control. You will get a surveillance report every %d days, and you have one budget for the whole response.",
+        "You have %d days, until %s, to bring it under control. You will get a surveillance report %s, and you have one budget for the whole response.",
         response_days(current_config()), format_date(response_end_date(current_config())),
-        current_config()$bio$gen_days
+        if (report_days(current_config()) == 7) "every week" else if (report_days(current_config()) == 1) "every day" else sprintf("every %d days", report_days(current_config()))
       )),
       footer = tagList(
         actionButton("sitrep_help", "Read the briefing", class = "btn-outline-secondary"),
@@ -711,7 +711,7 @@ server <- function(input, output, session) {
         delay_decay = scenario$delay_decay[[1]],
         hosp_frac = scenario$hosp_frac[[1]],
         gen_days = scenario$gen_days[[1]],
-        hosp_delay = scenario$hosp_delay[[1]]
+        hosp_delay = days_to_turns(scenario$hosp_delay_days[[1]], list(tp = teaching_params()), min_turns = 1L)
       )
     )
     config$tp$start_date <- as.character(game_setup$start_date)
@@ -802,6 +802,7 @@ server <- function(input, output, session) {
       )
     }),
     date_label = function(turns) format(turn_date(turns, current_config()), "%d %b"),
+    gens_per_turn = reactive(current_config()$gens_per_turn %||% 1),
     dark_mode = reactive(isTRUE(input$dark_mode)),
     app_ready = app_ready
   )
@@ -836,8 +837,8 @@ server <- function(input, output, session) {
     starter_alert_info(list(
       alerted = patient_area,
       true_start = inputs$pop_tbl$borough_name[state$alert$true_start],
-      hidden_days = state$alert$hidden_turns * config$bio$gen_days,
-      began = report_date - state$alert$hidden_turns * config$bio$gen_days,
+      hidden_days = state$alert$hidden_turns * report_days(config),
+      began = report_date - state$alert$hidden_turns * report_days(config),
       infected_by_report = state$start_infections,
       first_event = if (identical(state$alert$trigger, "death")) "died" else "reported",
       report_date_txt = format_date(report_date)

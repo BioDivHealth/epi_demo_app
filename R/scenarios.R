@@ -29,7 +29,7 @@ scenario_catalog <- function() {
       "Sustained transmission with high mortality and moderate clustering.",
       "Low average spread with strong clustering and repeated introductions."
     ),
-    # R per turn in a fully susceptible population (R0); the effective R at
+    # R per generation in a fully susceptible population (R0); the effective R at
     # the start is Rt x susceptible_frac. Measles: R0 ~15, so 8% susceptible
     # (current coverage) sits just above 1 and 20% susceptible is explosive.
     Rt = c(1.3, 15, 15, 2.0, 1.6, 1.5, 0.8),
@@ -45,9 +45,8 @@ scenario_catalog <- function() {
     kernel_key = c("default", "measles", "measles", "default", "default", "default", "default"),
     susceptible_frac = c(1, 0.08, 0.2, 0.9, 0.8, 1.0, 1.0),
     death_ifr = c(0.002, 0.001, 0.001, 0.002, 0.001, 0.5, 0.6),
-    # turns from infection to death (one turn = gen_days days, below):
-    # about 20 days COVID-like, 12 flu, 24 measles, 15 Ebola, 20 Nipah
-    death_delay = c(4L, 2L, 2L, 4L, 4L, 1L, 2L),
+    # days from infection to death (rounded to whole reports in the game)
+    death_delay_days = c(20, 24, 24, 20, 12, 15, 20),
     # testing level at the start (see teaching_params()$test_levels):
     # 1 reference lab only, 2 hospital labs, 3 established, 4 rapid everywhere
     test_level = c(3L, 3L, 3L, 2L, 3L, 1L, 1L),
@@ -56,16 +55,15 @@ scenario_catalog <- function() {
     # share of a case's spread that happens before symptoms, so a case found
     # through symptomatic testing has already done that much damage
     presymptomatic = c(0.3, 0.3, 0.3, 0.45, 0.4, 0, 0.1),
-    # how much isolation/tracing value survives each turn of result delay
+    # how much isolation/tracing value survives each generation of result delay
     # (low = fast spreader, a slow result is nearly worthless)
     delay_decay = c(0.5, 0.6, 0.6, 0.4, 0.35, 0.85, 0.8),
     # share of infections admitted to hospital (what gets reported anyway)
     hosp_frac = c(0.02, 0.1, 0.1, 0.03, 0.01, 0.5, 0.6),
-    # days per turn: one turn is one generation of infection
+    # days per generation of infection (Rt is per generation)
     gen_days = c(5L, 12L, 12L, 5L, 3L, 15L, 10L),
-    # turns from infection to hospital admission: about 10 days COVID-like,
-    # 6 flu, 12 measles, 15 Ebola, 10 Nipah
-    hosp_delay = c(2L, 1L, 1L, 2L, 2L, 1L, 1L),
+    # days from infection to hospital admission (rounded to whole reports)
+    hosp_delay_days = c(10, 12, 12, 10, 6, 15, 10),
     # what the disease was, shown at the start of the after-action review
     blurb = c(
       "A new respiratory infection with moderate spread.",
