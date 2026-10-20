@@ -62,3 +62,24 @@ test_that("false positives do not count as finding the outbreak", {
   expect_equal(metrics$real_cases_found, 3)
   expect_equal(metrics$false_positives, 10)
 })
+
+test_that("the built-in Rt matches EpiEstim exactly (1-turn serial interval)", {
+  skip_if_not_installed("EpiEstim")
+  series <- list(
+    growing = round(50 * 1.3^(0:12)),
+    flat = rep(200, 12),
+    noisy = c(5, 12, 9, 20, 31, 25, 44, 60, 52, 80, 95, 120)
+  )
+  for (incid in series) {
+    ours <- estimate_rt_table(incid, window = 3, min_cases = 0)
+    n <- length(incid)
+    t_end <- seq(4, n)
+    config <- EpiEstim::make_config(list(si_distr = c(0, 1), t_start = t_end - 2, t_end = t_end))
+    theirs <- suppressWarnings(suppressMessages(
+      EpiEstim::estimate_R(incid = incid, method = "non_parametric_si", config = config)
+    ))$R
+    expect_equal(ours$mean, theirs$`Mean(R)`, tolerance = 1e-8)
+    expect_equal(ours$lower, theirs$`Quantile.0.025(R)`, tolerance = 1e-6)
+    expect_equal(ours$upper, theirs$`Quantile.0.975(R)`, tolerance = 1e-6)
+  }
+})

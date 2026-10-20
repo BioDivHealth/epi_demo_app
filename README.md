@@ -92,6 +92,10 @@ Notes:
 
 ## Gameplay overview
 
+- **Game codes:** every game has a 6-digit code (top bar, and `?game=<code>` in the address). The code decides the disease (one of the presets), the place (anywhere in the place library), the date (a day in 2027) and the hidden outbreak, so the same code always replays the same game. Use **Game <code>** in the top bar to load a code, e.g. a good teaching example. **New outbreak** draws a new code; **Change location** keeps the code's disease and date. A disease set in the admin panel overrides the code's disease for the whole class.
+- **Packages:** Rt is computed in base R (Cori et al. method, checked against EpiEstim in the tests), so EpiEstim is no longer needed. shinymanager is only loaded when login is switched on.
+
+
 - Allocate antigen vs. PCR tests per borough each turn under a shared budget.
 - Observe only results that have returned; unsampled or pending boroughs remain grey on the map (fog of war).
 - Dashboards summarise observed incidence, quick Rt estimates (parametric serial interval), pending queues, spend, and positivity.

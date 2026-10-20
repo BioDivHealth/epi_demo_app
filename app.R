@@ -3,8 +3,6 @@ library(bslib)
 library(leaflet)
 library(dplyr)
 library(tibble)
-library(EpiEstim)
-library(shinymanager)
 
 options(shiny.usews = TRUE)
 
@@ -43,6 +41,11 @@ place_index <- if (dir.exists(file.path("locations", "library"))) read_place_ind
 
 auth_disabled <- tolower(Sys.getenv("EPILONDON_AUTH_DISABLE", "false")) %in%
   c("true", "1", "yes")
+
+# the login package is only loaded when login is switched on
+if (!auth_disabled) {
+  library(shinymanager)
+}
 
 auth_credentials_path <- Sys.getenv(
   "EPILONDON_AUTH_FILE",
@@ -138,7 +141,7 @@ intervention_defs <- intervention_catalog()
 
 app_ui <- page_fluid(
   theme = bs_theme(bootswatch = "sandstone"),
-  title = "Outbreaks in London: simulation",
+  title = "Outbreak response",
   tags$head(
     tags$style(HTML("
       .main-header { margin-bottom: 1rem; }
@@ -283,6 +286,7 @@ app_ui <- page_fluid(
     ),
     div(class = "top-stat", span(class = "label", "Date"), span(class = "value", textOutput("turn_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Budget"), span(class = "value", textOutput("money_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "This report"), span(class = "value", uiOutput("plan_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Testing and hospitals"), span(class = "value", textOutput("system_display", inline = TRUE))),
     div(
       class = "ms-auto d-flex flex-wrap gap-2",
@@ -291,6 +295,7 @@ app_ui <- page_fluid(
       actionButton("controls-reseed", "New outbreak", class = "btn-outline-secondary btn-sm"),
       actionButton("controls-reset", "Replay this outbreak", class = "btn-outline-secondary btn-sm"),
       actionButton("choose_place", "Change location", class = "btn-outline-secondary btn-sm"),
+      actionButton("game_code_btn", textOutput("game_code_label", inline = TRUE), class = "btn-outline-secondary btn-sm"),
       actionButton("help", "Briefing", class = "btn-outline-secondary btn-sm help-button")
     )
   ),
@@ -304,13 +309,21 @@ app_ui <- page_fluid(
 ui <- if (auth_disabled) app_ui else secure_app(app_ui, enable_admin = FALSE)
 
 server <- function(input, output, session) {
-  # Which place this session plays: ?place=<id> in the address (set by the
-  # "Change location" window), London otherwise. Loaded once per session, so a
-  # new place starts a fresh page and a fresh outbreak.
-  place_meta <- NULL
+  # The game code (?game=<code> in the address) decides the disease, place,
+  # date and outbreak; a new code is drawn if there is none. ?place=<id> (set
+  # by "Change location") overrides the code's place. Loaded once per session,
+  # so a new code or place starts a fresh page and a fresh outbreak.
   query <- shiny::parseQueryString(shiny::isolate(session$clientData$url_search))
-  place_id <- query$place
-  if (!is.null(place_id) && !is.null(place_index) && place_id %in% place_index$id &&
+  game_code <- parse_game_code(query$game)
+  if (is.na(game_code)) {
+    game_code <- new_game_code()
+    updateQueryString(paste0("?game=", game_code), mode = "replace")
+  }
+  game_setup <- draw_game_setup(game_code, place_index, place_override = query$place)
+
+  place_meta <- NULL
+  place_id <- game_setup$place_id
+  if (!is.na(place_id) && !is.null(place_index) && place_id %in% place_index$id &&
       !isTRUE(place_index$use_builtin[place_index$id == place_id])) {
     place <- load_place(place_id, place_index)
     place_meta <- place$meta
@@ -370,7 +383,7 @@ server <- function(input, output, session) {
   observeEvent(input$play_place, {
     req(picked_place)
     chosen <- picked_place()$meta
-    target <- if (isTRUE(chosen$use_builtin[[1]])) "?" else paste0("?place=", chosen$id[[1]])
+    target <- paste0("?game=", game_code, "&place=", chosen$id[[1]])
     updateQueryString(target, mode = "push")
     session$reload()
   })
@@ -415,7 +428,7 @@ server <- function(input, output, session) {
   })
 
   show_help_modal <- function() {
-    scenario_id <- isolate(shared_admin$scenario_id)
+    scenario_id <- isolate(active_scenario_id())
     showModal(modalDialog(
       title = "Welcome and guidance",
       help_modal_body(scenario_id = scenario_id, show_scenario = isolate(is_admin())),
@@ -528,6 +541,21 @@ server <- function(input, output, session) {
     )
   })
 
+  # what the current plan will do when the report is advanced
+  output$plan_display <- renderUI({
+    req(game_state())
+    allocs <- allocations_module$allocations()
+    n_tests <- sum(allocs$n_ag + allocs$n_pcr)
+    n_measures <- length(allocations_module$interventions()) +
+      length(allocations_module$restricted()) + isTRUE(allocations_module$tracing())
+    measures_txt <- if (n_measures == 0) "no measures" else paste(n_measures, "measure(s)")
+    if (n_tests == 0) {
+      span(class = "text-danger", paste0("no tests (spend is 0) · ", measures_txt))
+    } else {
+      span(paste0(format(n_tests, big.mark = ","), " tests · ", measures_txt))
+    }
+  })
+
   # what testing, hospitals and labs publish
   output$system_display <- renderText({
     req(game_state())
@@ -545,7 +573,7 @@ server <- function(input, output, session) {
     if (!isTRUE(is_admin())) {
       return("")
     }
-    scenario_id <- shared_admin$scenario_id
+    scenario_id <- active_scenario_id()
     if (is.null(scenario_id) || is.na(scenario_id) || scenario_id == "custom") {
       return("")
     }
@@ -599,8 +627,29 @@ server <- function(input, output, session) {
 
   # settings for the current game, from the shared admin values and the
   # chosen scenario's disease biology
+  # the disease this game uses: the game code's, unless the admin has set one
+  # for the whole class in the admin panel
+  active_scenario_id <- reactive({
+    admin_choice <- shared_admin$scenario_id
+    if (!is.null(admin_choice) && !is.na(admin_choice) && !identical(admin_choice, "custom")) {
+      admin_choice
+    } else {
+      game_setup$scenario_id
+    }
+  })
+
   current_config <- reactive({
-    scenario <- scenario_lookup(shared_admin$scenario_id)
+    scenario_id <- active_scenario_id()
+
+    # the game code's disease, with its preset settings and the code's date
+    if (identical(scenario_id, game_setup$scenario_id) && identical(shared_admin$scenario_id, "custom")) {
+      config <- scenario_config(scenario_id, inputs)
+      config$tp$start_date <- as.character(game_setup$start_date)
+      return(config)
+    }
+
+    # otherwise the admin's class-wide disease, with the admin's settings
+    scenario <- scenario_lookup(scenario_id)
 
     seed_cases <- as.integer(shared_admin$seed_cases)
     if (length(seed_cases) != 1L || is.na(seed_cases) || seed_cases < 0L) {
@@ -616,7 +665,7 @@ server <- function(input, output, session) {
       seed_borough <- NA_integer_
     }
 
-    game_config(
+    config <- game_config(
       inputs = inputs,
       epi = list(
         Rt = shared_admin$Rt,
@@ -642,6 +691,8 @@ server <- function(input, output, session) {
         hosp_delay = scenario$hosp_delay[[1]]
       )
     )
+    config$tp$start_date <- as.character(game_setup$start_date)
+    config
   })
 
   # copy the engine state into the reactives the modules and logs read
@@ -867,25 +918,48 @@ server <- function(input, output, session) {
   }
 
   observeEvent(shared_reset_signal(), {
-    initialise_truth(seed = controls$reseed())
+    initialise_truth(seed = game_code)
     showNotification("Admin reset triggered", type = "message")
   }, ignoreInit = TRUE)
 
+  # first start: this page's game code. "New outbreak": a new code (new
+  # disease, place and date), so the page reloads with it.
   observeEvent(controls$reseed(), {
     already_initialised <- !is.null(isolate(game_state()))
-    if (!already_initialised) {
-      app_ready(FALSE)
-    }
-    initialise_truth(seed = controls$reseed())
-    if (!already_initialised) {
-      app_ready(TRUE)
-    }
     if (already_initialised) {
-      showNotification("New outbreak started", type = "message")
+      updateQueryString(paste0("?game=", new_game_code()), mode = "push")
+      session$reload()
+      return()
     }
+    app_ready(FALSE)
+    initialise_truth(seed = game_code)
+    app_ready(TRUE)
   }, ignoreNULL = FALSE)
 
-  # replay: the same hidden outbreak again, to try a different strategy
+  # "Game code": show this game's code, or load another one
+  observeEvent(input$game_code_btn, {
+    showModal(modalDialog(
+      title = "Game code",
+      tags$p("This game's code is ", tags$strong(game_code),
+             ". The same code always gives the same disease, place, date and outbreak."),
+      textInput("code_to_load", "Play a game code", placeholder = "6 digits, e.g. 482731"),
+      footer = tagList(modalButton("Cancel"), actionButton("load_code", "Play this code", class = "btn-primary")),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$load_code, {
+    code <- parse_game_code(trimws(input$code_to_load))
+    if (is.na(code)) {
+      showNotification("A game code is 6 digits, e.g. 482731.", type = "error")
+      return()
+    }
+    updateQueryString(paste0("?game=", code), mode = "push")
+    session$reload()
+  })
+
+  output$game_code_label <- renderText(paste("Game", game_code))
+
   observeEvent(controls$reset(), {
     initialise_truth(seed = game_seed())
     showNotification("Replaying the same outbreak", type = "message")
@@ -1033,10 +1107,12 @@ server <- function(input, output, session) {
               format(sum(new_reports$admissions), big.mark = ","), format(sum(new_reports$deaths), big.mark = ","))
     )
 
-    # tell the player if fewer tests ran than they asked for
+    # tell the player if no tests, or fewer tests than they asked for, ran
     asked <- sum(actions$allocations$n_ag + actions$allocations$n_pcr)
     ran <- sum(allocs$n_ag + allocs$n_pcr)
-    if (ran < asked) {
+    if (asked == 0) {
+      log <- c(log, "No tests were done this report: the spend on tests is 0 (set it in the Response panel).")
+    } else if (ran < asked) {
       log <- c(log, sprintf(
         "Only %s of the %s planned tests ran: not enough people came forward, or there were not enough kits.",
         format(ran, big.mark = ","), format(asked, big.mark = ",")
@@ -1109,7 +1185,7 @@ server <- function(input, output, session) {
   # Review card: what the disease was, and where and when it really began
   disease_card_ui <- function() {
     config <- current_config()
-    scenario <- scenario_lookup(shared_admin$scenario_id)
+    scenario <- scenario_lookup(active_scenario_id())
     alert <- starter_alert_info()
     bio <- config$bio
     pct <- function(x) paste0(round(100 * x), "%")

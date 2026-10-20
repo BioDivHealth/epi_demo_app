@@ -13,7 +13,7 @@
 # In this game one turn is one generation: each case's infections appear the
 # next turn, so the serial interval is exactly 1 turn. Rt over a window of
 # turns is then (cases in the window) / (cases one turn earlier), with
-# EpiEstim's uncertainty. (Assuming a longer serial interval, as an earlier
+# uncertainty from Cori et al.'s method. (Assuming a longer serial interval, as an earlier
 # version did, overstates Rt: 2.3 for a series growing 1.3x per turn.)
 #
 # Windows with fewer than `min_cases` cases the turn before give NA rather
@@ -29,24 +29,30 @@ estimate_rt_table <- function(incid_vector, window = 3, min_cases = 5) {
   t_end <- seq(window + 1, n)
   t_start <- t_end - window + 1
 
-  config <- EpiEstim::make_config(list(si_distr = c(0, 1), t_start = t_start, t_end = t_end))
-  res <- suppressWarnings(suppressMessages(tryCatch(
-    EpiEstim::estimate_R(incid = round(incid_vector), method = "non_parametric_si", config = config),
-    error = function(e) NULL
-  )))
-  if (is.null(res) || nrow(res$R) == 0) {
-    return(tibble::tibble(t_end = integer(), mean = numeric(), lower = numeric(), upper = numeric()))
-  }
+  # Cori et al. (2013), as in EpiEstim, with a 1-turn serial interval: the
+  # posterior for R over a window is a gamma distribution with
+  #   shape = prior shape + cases in the window
+  #   rate  = 1 / prior scale + cases one turn earlier (the infectors)
+  # and EpiEstim's default prior (mean 5, sd 5: shape 1, scale 5).
+  # Matches EpiEstim::estimate_R(method = "non_parametric_si",
+  # si_distr = c(0, 1)) exactly, without the package.
+  prior_shape <- 1
+  prior_scale <- 5
 
-  # cases one turn before each window (the infectors)
+  cases <- vapply(seq_along(t_start), function(i) sum(incid_vector[t_start[i]:t_end[i]]), numeric(1))
   infectors <- vapply(seq_along(t_start), function(i) sum(incid_vector[(t_start[i] - 1):(t_end[i] - 1)]), numeric(1))
+
+  shape <- prior_shape + cases
+  scale <- 1 / (1 / prior_scale + infectors)
+
+  # too few infectors to judge: no estimate rather than one driven by the prior
   enough <- infectors >= min_cases
 
   tibble::tibble(
-    t_end = res$R$t_end,
-    mean = ifelse(enough, res$R$`Mean(R)`, NA_real_),
-    lower = ifelse(enough, res$R$`Quantile.0.025(R)`, NA_real_),
-    upper = ifelse(enough, res$R$`Quantile.0.975(R)`, NA_real_)
+    t_end = t_end,
+    mean = ifelse(enough, shape * scale, NA_real_),
+    lower = ifelse(enough, stats::qgamma(0.025, shape = shape, scale = scale), NA_real_),
+    upper = ifelse(enough, stats::qgamma(0.975, shape = shape, scale = scale), NA_real_)
   )
 }
 
