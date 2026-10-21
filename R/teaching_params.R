@@ -164,9 +164,10 @@ teaching_params <- function() {
 
     # National public health agency: every report it tests the same number of
     # people with symptoms, spread across all areas by population, free to
-    # the player. Because its sampling never changes, its positives give a
-    # steady Rt that is not thrown about by changes in the player's testing.
-    # Its results are information only (nobody is isolated because of them).
+    # the player: a positivity figure that does not move when the player
+    # changes their own testing. The agency's Rt comes from hospital
+    # admissions (a fixed share of cases, whatever anyone tests), the
+    # steadiest signal. Information only (nobody is isolated because of it).
     sentinel = list(tests = 1000),
 
     # Contact tracing.
