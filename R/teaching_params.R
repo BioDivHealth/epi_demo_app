@@ -66,7 +66,7 @@ teaching_params <- function() {
       spec = list(ag = 0.98, pcr = 0.999),
       delays = list(ag = 0L, pcr = 1L),
       costs = list(ag = 2, pcr = 10),
-      budget = 200000,        # per-turn spending cap (credits)
+      budget = 300000,        # most that can be spent in one report (credits)
       prev_floor = 1e-6
     ),
 

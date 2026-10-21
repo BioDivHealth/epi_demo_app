@@ -405,7 +405,7 @@ mod_map_server <- function(
         label = if (isTRUE(testing$can_build)) {
           sprintf("Improve PCR · %s once, takes %d reports (cheaper, more tests)",
                   format(round(testing$build_cost), big.mark = ","), testing$build_turns)
-        } else if (isTRUE(testing$building)) "Improve PCR · under way" else "Improve PCR · done"
+        } else if (isTRUE(testing$building)) "Improve PCR · under way" else "Improve PCR · labs at their best"
       )
       shiny::updateCheckboxInput(
         session, "develop_rapid",
@@ -701,7 +701,7 @@ mod_map_server <- function(
         shiny::updateCheckboxInput(session, "develop_rapid", value = FALSE)
         shiny::updateRadioButtons(session, "who", selected = "symptomatic")
         shiny::updateRadioButtons(session, "where", selected = "everywhere")
-        # the slider's range follows this place's per-turn cap (London: 200,000)
+        # the slider's range follows this place's per-report limit (London: 300,000)
         if (!is.null(max_spend)) {
           step <- 10^floor(log10(max_spend / 40))
           shiny::updateSliderInput(

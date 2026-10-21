@@ -157,9 +157,11 @@ app_ui <- page_fluid(
       .top-stat { font-size: 0.9rem; line-height: 1.2; }
       .top-stat .label { display: block; font-size: 0.7rem; color: var(--bs-secondary-color); text-transform: uppercase; }
       .top-stat .value { font-weight: 600; }
+      .rt-value { color: #1565c0; font-weight: 700; font-size: 1.15em; }
+      [data-bs-theme='dark'] .rt-value { color: #4fc3f7; }
       .map-layer-switch .form-group { margin-bottom: 0; }
       .map-layer-switch .shiny-options-group { display: flex; gap: 0.75rem; }
-      .budget-bar { height: 6px; margin-top: 4px; min-width: 220px; }
+      .budget-bar { height: 7px; margin-top: 4px; width: 260px; }
       /* no basemap tiles (the old tile service now needs an API key):
          boroughs are drawn on a plain light background */
       .leaflet-container, .leaflet-container.leaflet-touch { background: #1b2631 !important; }
@@ -291,7 +293,7 @@ app_ui <- page_fluid(
       h4(textOutput("place_title", inline = TRUE)),
       div(class = "scenario-label", textOutput("scenario_display", inline = TRUE))
     ),
-    div(class = "top-stat", span(class = "label", "Date"), span(class = "value", textOutput("turn_display", inline = TRUE))),
+    div(class = "top-stat", span(class = "label", "Day"), span(class = "value", textOutput("turn_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Budget (credits)"), span(class = "value", uiOutput("money_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Plan"), span(class = "value", uiOutput("plan_display", inline = TRUE))),
     div(class = "top-stat", span(class = "label", "Labs · beds"), span(class = "value", textOutput("system_display", inline = TRUE))),
@@ -545,10 +547,7 @@ server <- function(input, output, session) {
 
   output$turn_display <- renderText({
     config <- current_config()
-    paste0(
-      trimws(format(turn_date(turn(), config), "%e %b %Y")), " · day ",
-      turn_day(turn(), config), "/", response_days(config)
-    )
+    paste0("Day ", turn_day(turn(), config), "/", response_days(config))
   })
 
   # money left this turn (after the current plan) and in total
@@ -568,7 +567,7 @@ server <- function(input, output, session) {
 
     tagList(
       paste0(
-        format(round(budget$budget - planned), big.mark = ","), " left this report · ",
+        format(round(budget$budget - planned), big.mark = ","), " today · ",
         format(round(budget$pot_left), big.mark = ","), " total"
       ),
       div(
@@ -600,8 +599,10 @@ server <- function(input, output, session) {
     req(game_state())
     budget <- turn_budget_info()
     view <- player_view(game_state(), current_config())
+    # the heading already says "Labs": "Hospital", not "Hospital labs"
+    lab <- sub(" lab only| labs", "", budget$testing$label)
     paste0(
-      budget$testing$label, if (isTRUE(budget$testing$building)) " (improving)" else "",
+      lab, if (isTRUE(budget$testing$building)) " (improving)" else "",
       if (isTRUE(budget$testing$developing_rapid)) sprintf(", rapid tests in %d", budget$testing$rapid_left) else "",
       if (view$lab_backlog > 0) paste0(", backlog ", format(round(view$lab_backlog), big.mark = ",", scientific = FALSE)) else "",
       " · ", round(100 * view$bed_pressure), "%"

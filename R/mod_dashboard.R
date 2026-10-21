@@ -130,17 +130,20 @@ mod_dashboard_server <- function(
       rt_txt <- with_change(s$rt, 2)
       sen <- sentinel()
       latest_agency <- if (!is.null(sen) && nrow(sen) > 0) sen[nrow(sen), ] else NULL
-      signal_txt <- paste(c(
-        if (!is.na(positive_txt)) paste("Your tests: share positive", positive_txt),
-        if (!is.null(latest_agency)) sprintf("Agency: sample of %s with symptoms, %s positive; Rt from hospital admissions %s",
-                                             format(latest_agency$tests, big.mark = ","), latest_agency$positives,
-                                             if (is.na(rt_txt)) "not yet clear" else rt_txt)
-      ), collapse = ". ")
 
       shiny::tagList(
         shiny::tags$b(log[1]),
         lapply(log[-1], shiny::div),
-        if (nzchar(signal_txt)) shiny::div(signal_txt),
+        if (!is.na(positive_txt)) shiny::div(paste("Your tests: share positive", positive_txt)),
+        if (!is.null(latest_agency)) shiny::div(sprintf("Agency: sample of %s with symptoms, %s positive.",
+                                                       format(latest_agency$tests, big.mark = ","), latest_agency$positives)),
+        # Rt stands out: the quickest read of where the outbreak is heading
+        shiny::div(
+          class = "mt-1",
+          "Rt (from hospital admissions): ",
+          shiny::span(class = "rt-value",
+                      if (is.na(rt_txt)) "not yet clear" else rt_txt)
+        ),
         lapply(warning_list(), function(w) {
           shiny::div(class = paste0("text-", w$level, " fw-semibold"), w$text)
         })
