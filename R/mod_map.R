@@ -6,11 +6,95 @@
 #                       measures, and what clicking the map does
 # The plan carries over from turn to turn until changed.
 
+# Map layers -------------------------------------------------------------------
+#
+# Three public views of the latest report, one value per map area (in the
+# map's order). Colours come in fixed steps that never rescale, so the map
+# gets deeper and redder only as things really get worse.
+
+map_palette <- c("#a9c5d6", "#d9e6a1", "#f6d55c", "#f5a742", "#f28e2b", "#e15759", "#b8333f", "#7a1426")
+
+map_layers <- function(results, reports, pop_tbl, area_names) {
+  n <- length(area_names)
+  pop <- pop_tbl$pop[match(area_names, pop_tbl$borough_name)]
+
+  # tests positive among results back this report
+  tests <- numeric(n)
+  positives <- numeric(n)
+  if (!is.null(results) && nrow(results) > 0) {
+    idx <- match(results$borough_name, area_names)
+    tests <- as.numeric(tabulate_sum(idx, results$n, n))
+    positives <- as.numeric(tabulate_sum(idx, results$positives, n))
+  }
+  positivity <- ifelse(tests > 0, positives / tests, NA_real_)
+
+  # hospital admissions and deaths in the latest report, per 100,000 people
+  admissions <- numeric(n)
+  deaths <- numeric(n)
+  if (!is.null(reports) && nrow(reports) > 0) {
+    latest <- reports[reports$turn == max(reports$turn), , drop = FALSE]
+    idx <- match(pop_tbl$borough_name[latest$borough_index], area_names)
+    admissions <- as.numeric(tabulate_sum(idx, latest$admissions, n))
+    deaths <- as.numeric(tabulate_sum(idx, latest$deaths, n))
+  }
+  per_100k <- function(x) ifelse(x > 0, 1e5 * x / pop, NA_real_)
+
+  rate_breaks <- c(0.1, 0.3, 1, 3, 10, 30, 100)
+  rate_labels <- c("under 0.1", "0.1 to 0.3", "0.3 to 1", "1 to 3", "3 to 10", "10 to 30", "30 to 100", "100 or more")
+  list(
+    positivity = list(
+      values = positivity, tests = tests,
+      breaks = c(0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2),
+      step_labels = c("under 0.1%", "0.1 to 0.5%", "0.5 to 1%", "1 to 2%", "2 to 5%", "5 to 10%", "10 to 20%", "20% or more"),
+      none_label = "no results",
+      title = "Tests positive<br>(results back<br>this report)"
+    ),
+    admissions = list(
+      values = per_100k(admissions), counts = admissions,
+      breaks = rate_breaks, step_labels = rate_labels, none_label = "none reported",
+      title = "Hospital admissions<br>per 100,000<br>(this report)"
+    ),
+    deaths = list(
+      values = per_100k(deaths), counts = deaths,
+      breaks = rate_breaks, step_labels = rate_labels, none_label = "none reported",
+      title = "Deaths<br>per 100,000<br>(this report)"
+    )
+  )
+}
+
+# sum `x` into `n` bins by index (NA indices dropped)
+tabulate_sum <- function(idx, x, n) {
+  out <- numeric(n)
+  keep <- !is.na(idx)
+  if (any(keep)) {
+    sums <- rowsum(x[keep], idx[keep])
+    out[as.integer(rownames(sums))] <- sums[, 1]
+  }
+  out
+}
+
+# colour for each value: its step on the fixed scale; NA = dark slate
+map_colours <- function(values, breaks) {
+  step <- findInterval(values, breaks) + 1L
+  ifelse(is.na(values), "#3d4f61", map_palette[pmin(step, length(map_palette))])
+}
+
 mod_map_ui <- function(id, intervention_defs = intervention_catalog()) {
   ns <- shiny::NS(id)
   bslib::card(
     full_screen = TRUE,
-    bslib::card_header("Situation map"),
+    bslib::card_header(
+      class = "d-flex align-items-center gap-3",
+      "Situation map",
+      shiny::div(
+        class = "small ms-auto map-layer-switch",
+        shiny::radioButtons(
+          ns("map_layer"), label = NULL, inline = TRUE,
+          choices = c("Tests positive" = "positivity", "Hospital admissions" = "admissions", "Deaths" = "deaths"),
+          selected = "positivity"
+        )
+      )
+    ),
     leaflet::leafletOutput(ns("map"), height = "400px"),
     shiny::div(class = "small text-muted mt-1", shiny::textOutput(ns("turn_positivity"), inline = TRUE))
   )
@@ -101,7 +185,8 @@ mod_map_server <- function(
     pop_tbl,
     app_ready = shiny::reactive(TRUE),
     intervention_defs = intervention_catalog(),
-    first_report = shiny::reactive(NULL)) {
+    first_report = shiny::reactive(NULL),
+    reports = shiny::reactive(NULL)) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     ready <- shiny::reactive({
@@ -117,10 +202,6 @@ mod_map_server <- function(
 
     chosen <- shiny::reactiveVal(integer())
 
-    # top of the map's colour scale: the highest positivity seen so far this
-    # game (at least 1%). It never shrinks, so a falling outbreak shows as
-    # fading colours rather than a rescaled map.
-    scale_top <- shiny::reactiveVal(0.01)
     restricted <- shiny::reactiveVal(integer())
     selected_interventions <- shiny::reactive({
       sel <- input$interventions
@@ -487,53 +568,27 @@ mod_map_server <- function(
       }
       res <- observed_this_turn()
       allocs <- plan()$allocations
+      layers <- map_layers(res, reports(), pop_tbl, boros$borough_name)
+      layer <- layers[[input$map_layer %||% "positivity"]]
 
-      # Aggregate observed results
-      agg <- res |>
-        dplyr::group_by(borough_name) |>
-        dplyr::summarise(
-          positives = sum(positives),
-          tests = sum(n),
-          .groups = "drop"
-        )
+      # fixed steps, pale blue to deep red: the map only ever gets deeper as
+      # things get worse, never rescaled. Nothing reported: dark slate.
+      fill_cols <- map_colours(layer$values, layer$breaks)
 
-      values <- rep(NA_real_, nrow(boros))
-      idx <- match(agg$borough_name, boros$borough_name)
-      values[idx] <- agg$positives / agg$tests
-
-      # colour scale: 0 to the highest positivity seen so far this game
-      this_report_top <- if (all(is.na(values))) 0 else max(values, na.rm = TRUE)
-      top <- max(shiny::isolate(scale_top()), this_report_top)
-      scale_top(top)
-      # cool light blue (low) to deep red (high): reads well on the dark map
-      # and stays distinct from the slate used for "no results"
-      palette <- leaflet::colorNumeric(
-        palette = c("#a9c5d6", "#f6d55c", "#f28e2b", "#e15759", "#9c1f2e"),
-        domain = c(0, top),
-        na.color = "#3d4f61"
-      )
-
-      # areas with no results this report stay dark slate
-      fill_cols <- ifelse(is.na(values), "#3d4f61", palette(values))
-
-      # Build labels including planned tests
+      # hover: every layer's number for the area, plus the plan
       labels <- lapply(seq_len(nrow(boros)), function(i) {
         name <- boros$borough_name[i]
-        val <- values[i]
-
-        result_txt <- if (is.na(val)) {
-          "<em>No results yet</em>"
-        } else if (val == 0) {
-          "<span style='color:green'>0% positive</span>"
-        } else {
-          sprintf("<span style='color:#d95f02'>%.1f%% positive</span>", 100 * val)
-        }
+        pos <- layers$positivity$values[i]
+        result_txt <- if (is.na(pos)) "No test results this report" else
+          sprintf("%.1f%% of %s tests positive", 100 * pos, format(layers$positivity$tests[i], big.mark = ","))
+        hosp_txt <- sprintf("%s admissions, %s deaths reported",
+                            layers$admissions$counts[i], layers$deaths$counts[i])
 
         planned <- allocs$n_ag[i] + allocs$n_pcr[i]
         alloc_txt <- if (planned > 0) sprintf("<br><small>Planned: %d tests</small>", planned) else ""
         restrict_txt <- if (i %in% restricted()) "<br><small><b>Restricted</b></small>" else ""
 
-        htmltools::HTML(paste0("<strong>", name, "</strong><br>", result_txt, alloc_txt, restrict_txt))
+        htmltools::HTML(paste0("<strong>", name, "</strong><br>", result_txt, "<br>", hosp_txt, alloc_txt, restrict_txt))
       })
 
       # outlines: red = restricted, blue = chosen for testing
@@ -548,7 +603,7 @@ mod_map_server <- function(
       first <- first_report()
       if (!is.null(first) && !is.na(first$index)) {
         f <- first$index
-        if (is.na(values[f])) {
+        if (identical(input$map_layer %||% "positivity", "positivity") && is.na(layer$values[f])) {
           fill_cols[f] <- "#b56cf0"
         }
         if (!is_restricted[f] && !is_chosen[f]) {
@@ -562,11 +617,10 @@ mod_map_server <- function(
         leaflet::addLegend(
           layerId = "positivity_legend",
           position = "bottomright",
-          pal = palette,
-          values = c(0, top),
-          title = "Tests positive<br>(results back<br>this report)",
-          labFormat = leaflet::labelFormat(suffix = "%", digits = 1, transform = function(x) 100 * x),
-          opacity = 0.8
+          colors = c("#3d4f61", map_palette),
+          labels = c(layer$none_label, layer$step_labels),
+          title = layer$title,
+          opacity = 0.9
         ) |>
         leaflet::clearGroup("boroughs") |>
         leaflet::clearGroup("alloc_markers") |>
@@ -632,7 +686,6 @@ mod_map_server <- function(
         }
         restricted(integer())
         chosen(integer())
-        scale_top(0.01)
       },
       interventions = selected_interventions,
       restricted = restricted,

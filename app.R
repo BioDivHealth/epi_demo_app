@@ -157,6 +157,8 @@ app_ui <- page_fluid(
       .top-stat { font-size: 0.9rem; line-height: 1.2; }
       .top-stat .label { display: block; font-size: 0.7rem; color: var(--bs-secondary-color); text-transform: uppercase; }
       .top-stat .value { font-weight: 600; }
+      .map-layer-switch .form-group { margin-bottom: 0; }
+      .map-layer-switch .shiny-options-group { display: flex; gap: 0.75rem; }
       .budget-bar { height: 6px; margin-top: 4px; min-width: 220px; }
       /* no basemap tiles (the old tile service now needs an API key):
          boroughs are drawn on a plain light background */
@@ -633,15 +635,8 @@ server <- function(input, output, session) {
     observations = tibble(),
     actions = tibble()
   )
-  replay_unlocked <- reactiveVal(FALSE)
-  empty_logs <- init_turn_logs(inputs$pop_tbl)
-  replay_snapshot <- reactiveVal(list(
-    truth = empty_logs$truth,
-    observations = empty_logs$observations,
-    actions = empty_logs$actions,
-    truth_history = list()
-  ))
-  replay_open_id <- reactiveVal(0L)
+  # every report's lines (first report first), for the replay
+  report_lines <- reactiveVal(list())
 
   truth_state <- reactiveVal(NULL)
   truth_history <- reactiveVal(list())
@@ -784,6 +779,11 @@ server <- function(input, output, session) {
     pop_tbl = inputs$pop_tbl,
     app_ready = app_ready,
     intervention_defs = intervention_defs,
+    # public hospital and death reports, for the map's other layers
+    reports = reactive({
+      state <- game_state()
+      if (is.null(state)) NULL else state$reports
+    }),
     # only the public first report: the area and what happened there
     first_report = reactive({
       info <- starter_alert_info()
@@ -821,15 +821,6 @@ server <- function(input, output, session) {
     dark_mode = reactive(isTRUE(input$dark_mode)),
     app_ready = app_ready
   )
-
-  logs_snapshot <- reactive({
-    list(
-      truth = turn_logs$truth,
-      observations = turn_logs$observations,
-      actions = turn_logs$actions,
-      truth_history = truth_history()
-    )
-  })
 
   output$run_summary_table <- renderTable({
     report <- run_report()
@@ -872,22 +863,17 @@ server <- function(input, output, session) {
       event_txt <- sprintf("%d patients were admitted to hospital with an unidentified severe illness.", n_admitted)
       place_txt <- "The cluster was reported from"
     }
-    turn_log(sprintf(
+    first_line <- sprintf(
       "%s: %s %s %s. Nothing else is known yet.",
       format_date(report_date), event_txt, place_txt, patient_area
-    ))
+    )
+    turn_log(first_line)
+    report_lines(list(first_line))
 
     blank_logs <- init_turn_logs(inputs$pop_tbl)
     turn_logs$truth <- blank_logs$truth
     turn_logs$observations <- blank_logs$observations
     turn_logs$actions <- blank_logs$actions
-    replay_unlocked(FALSE)
-    replay_snapshot(list(
-      truth = blank_logs$truth,
-      observations = blank_logs$observations,
-      actions = blank_logs$actions,
-      truth_history = list()
-    ))
 
     sync_from_state(state)
     current_available <- state$available
@@ -1180,10 +1166,14 @@ server <- function(input, output, session) {
       sprintf("Hospitals: %s admissions, %s deaths.", big(sum(new_reports$admissions)), big(sum(new_reports$deaths))),
       if (new_state$turn >= teaching_params()$game_turns) "Time is up: press End & review."
     )
-    turn_log(c(sprintf(
+    lines <- c(sprintf(
       "%s · day %d",
       format_date(turn_date(new_state$turn, config)), turn_day(new_state$turn, config)
-    ), log))
+    ), log)
+    turn_log(lines)
+    all_lines <- report_lines()
+    all_lines[[new_state$turn + 1L]] <- lines
+    report_lines(all_lines)
   })
 
   # Review chart: real new infections (black) against confirmed cases (red),
@@ -1386,8 +1376,6 @@ server <- function(input, output, session) {
     )
 
     run_report(report)
-    replay_snapshot(logs_snapshot())
-    replay_unlocked(TRUE)
 
     metrics <- report$metrics
 
@@ -1504,7 +1492,7 @@ server <- function(input, output, session) {
       tags$hr(),
       tags$div(
         class = "text-center",
-        actionButton("show_replay", "View Replay", class = "btn-primary btn-lg")
+        actionButton("show_replay", "Watch it back: what you saw, and what really happened", class = "btn-primary btn-lg")
       ),
       footer = modalButton("Close"),
       size = "xl",
@@ -1512,29 +1500,34 @@ server <- function(input, output, session) {
     ))
   })
 
-  # Handle replay button
+  # Replay: the whole outbreak on one clock, what you saw beside what really
+  # happened (hidden until Reveal)
   observeEvent(input$show_replay, {
     removeModal()
-    replay_snapshot(logs_snapshot())
     showModal(modalDialog(
-      title = "Turn-by-Turn Replay",
-      mod_replay_ui("replay"),
+      title = "What you saw, and what really happened",
+      mod_reveal_ui("reveal"),
       footer = modalButton("Close"),
       size = "xl",
       easyClose = TRUE
     ))
-    replay_open_id(replay_open_id() + 1L)
   })
 
-  # Initialize replay server (works when modal opens)
-  mod_replay_server(
-    id = "replay",
-    logs = reactive(replay_snapshot()),
+  mod_reveal_server(
+    id = "reveal",
+    state = game_state,
+    config = current_config,
+    report_lines = report_lines,
     boros = inputs$boros,
     pop_tbl = inputs$pop_tbl,
-    ended = reactive(replay_unlocked()),
-    open_signal = reactive(replay_open_id()),
-    dark_mode = reactive(isTRUE(input$dark_mode))
+    true_start = reactive({
+      state <- game_state()
+      if (is.null(state)) NULL else state$alert$true_start
+    }),
+    first_report = reactive({
+      state <- game_state()
+      if (is.null(state)) NULL else state$alert$alerted
+    })
   )
 }
 
