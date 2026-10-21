@@ -23,8 +23,8 @@
 #   susceptible_frac share who can catch it at the start (vaccination, past infection)
 #   death_ifr        share of infected people who die
 #   death_delay_days days from infection to death
-#   test_level       testing at the start: 1 reference lab, 2 hospital labs
-#                    (3, rapid antigen tests, has to be built)
+#   test_level       PCR at the start: 1 reference lab, 2 hospital labs
+#                    (rapid antigen tests have to be developed)
 #   asymptomatic     share of infections with no symptoms (never come forward)
 #   presymptomatic   share of a case's spread before symptoms (a case found
 #                    through its symptoms has already done this much damage)

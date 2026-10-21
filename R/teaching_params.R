@@ -33,6 +33,10 @@ teaching_params <- function() {
     # Trap: the first case found is not the first case.
     head_start = list(admissions = 3L, index_cases = 1L, max_reports = 104L),
 
+    # Reports until the reference lab identifies the disease (then its name
+    # is shown). Before that, students have to judge it from the data.
+    identify_after = 6L,
+
     # Days between reports (one turn). Every disease is played at this
     # cadence: 7 = a weekly report, 1 = daily. Spread, hospital and death
     # delays are converted from the disease's own timescale (scenarios.R).
@@ -123,33 +127,47 @@ teaching_params <- function() {
       death_ascertainment = 0.9
     ),
 
-    # Testing levels.
-    # Each disease starts at a level (set in scenarios.R); none starts with
-    # rapid antigen tests, as most health systems would not have them for a
-    # new disease. "Build testing" moves up one level: it costs a lump sum,
-    # takes a few turns, and halves testing capacity while staff are
-    # diverted. The outbreak carries on meanwhile. PCR results always come
-    # back with the next report.
-    # capacity = PCR tests the labs can process per turn across London, and
-    # also the antigen kits that can be supplied per turn. PCR ordered beyond
-    # lab capacity is not lost: it joins a backlog and comes back later.
-    # NA cost = test not available.
+    # Testing.
+    # PCR comes in two levels (set per disease in scenarios.R): a reference
+    # lab only, or hospital labs (cheaper, more capacity). "Improve PCR"
+    # moves up a level: a lump sum, a few reports, and half capacity while
+    # staff are diverted. capacity = PCR tests the labs can process per
+    # report across London; more than that joins a backlog and comes back
+    # late. PCR results always come back with the next report.
     # Trap: ordering more tests than labs can process makes every result late.
-    # Trap: better tests later vs seeing anything at all now.
     test_levels = tibble::tibble(
-      level = 1:3,
-      label = c("Reference lab only", "Hospital labs", "Rapid antigen tests"),
-      ag_cost = c(NA, NA, 2),
-      pcr_cost = c(40, 20, 10),
-      ag_delay = c(NA, NA, 0L),
-      pcr_delay = c(1L, 1L, 1L),
-      capacity = c(2000, 6000, 60000)
+      level = 1:2,
+      label = c("Reference lab only", "Hospital labs"),
+      pcr_cost = c(40, 20),
+      pcr_delay = c(1L, 1L),
+      capacity = c(2000, 6000)
     ),
     build_testing = list(
       cost = 150000,
       turns = 3L,
       capacity_while_building = 0.5
     ),
+
+    # Rapid antigen tests do not exist for a new disease: they have to be
+    # developed, paying `cost` every report for `turns` reports. Then they are cheap,
+    # instant and plentiful (`kits` a report), and because people can test
+    # themselves at home, a lockdown works better (`lockdown_Rt_multiplier`
+    # replaces social distancing's usual effect).
+    # Trap: invest now in a tool you can only use later.
+    rapid_tests = list(
+      cost = 40000,       # per report while being developed
+      turns = 8L,
+      ag_cost = 2,
+      kits = 60000,
+      lockdown_Rt_multiplier = 0.4
+    ),
+
+    # National public health agency: every report it tests the same number of
+    # people with symptoms, spread across all areas by population, free to
+    # the player. Because its sampling never changes, its positives give a
+    # steady Rt that is not thrown about by changes in the player's testing.
+    # Its results are information only (nobody is isolated because of them).
+    sentinel = list(tests = 1000),
 
     # Contact tracing.
     # A team that follows up known cases and quarantines their contacts,

@@ -38,6 +38,7 @@ mod_dashboard_server <- function(
     system_status = shiny::reactive(NULL),
     date_label = function(turn) turn,
     gens_per_turn = shiny::reactive(1),
+    sentinel = shiny::reactive(NULL),
     dark_mode = shiny::reactive(FALSE),
     app_ready = shiny::reactive(TRUE)) {
   shiny::moduleServer(id, function(input, output, session) {
@@ -75,11 +76,19 @@ mod_dashboard_server <- function(
         deaths[by_turn$turn + 1] <- by_turn$deaths
       }
 
-      # Rt from confirmed cases: growth from one report to the next, turned
-      # into growth per generation of infection (a report spans
-      # gens_per_turn generations), so 1 still means flat
+      # Rt from the public health agency's steady sample (same effort every
+      # report, so changes in the player's testing do not move it): growth
+      # from one report to the next, turned into growth per generation of
+      # infection (a report spans gens_per_turn generations), so 1 is flat.
+      # The agency's sample on turn t comes back with the report for t + 1.
+      agency <- numeric(length(turns))
+      sen <- sentinel()
+      if (!is.null(sen) && nrow(sen) > 0) {
+        keep <- sen$turn + 2 <= length(turns)
+        agency[sen$turn[keep] + 2] <- sen$positives[keep]
+      }
       rt <- rep(NA_real_, length(turns))
-      rt_tbl <- estimate_rt_table(confirmed)
+      rt_tbl <- estimate_rt_table(agency)
       if (nrow(rt_tbl) > 0) {
         rt[rt_tbl$t_end] <- rt_tbl$mean^(1 / gens_per_turn())
       }
@@ -89,6 +98,7 @@ mod_dashboard_server <- function(
         confirmed = confirmed,
         tests = tests,
         share_positive = ifelse(tests > 0, 100 * confirmed / tests, NA_real_),
+        agency_positives = agency,
         suspected = suspected,
         deaths = deaths,
         rt = rt
@@ -117,10 +127,14 @@ mod_dashboard_server <- function(
       s <- signals()
       positive_txt <- with_change(s$share_positive, 1, "%")
       rt_txt <- with_change(s$rt, 2)
+      sen <- sentinel()
+      latest_agency <- if (!is.null(sen) && nrow(sen) > 0) sen[nrow(sen), ] else NULL
       signal_txt <- paste(c(
-        if (!is.na(positive_txt)) paste("Share positive", positive_txt),
-        if (!is.na(rt_txt)) paste("Rt", rt_txt)
-      ), collapse = " · ")
+        if (!is.na(positive_txt)) paste("Your tests: share positive", positive_txt),
+        if (!is.null(latest_agency)) sprintf("Agency sample: %s tested, %s positive, Rt %s",
+                                             format(latest_agency$tests, big.mark = ","), latest_agency$positives,
+                                             if (is.na(rt_txt)) "not yet clear" else rt_txt)
+      ), collapse = ". ")
 
       shiny::tagList(
         shiny::tags$b(log[1]),

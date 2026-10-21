@@ -112,10 +112,15 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
       # testing: who and where
       shiny::div(
         class = "small",
+        # every real case a test finds is told to isolate
         shiny::radioButtons(
           ns("who"),
-          label = "Test who",
-          choices = c("People with symptoms" = "symptomatic", "A random sample" = "random"),
+          label = "Test and isolate",
+          choiceNames = list(
+            shiny::HTML("People with symptoms <span class='text-muted'>(those who come forward ill; most have something else)</span>"),
+            shiny::HTML("A random sample <span class='text-muted'>(anyone, ill or not)</span>")
+          ),
+          choiceValues = list("symptomatic", "random"),
           selected = "symptomatic"
         ),
         shiny::radioButtons(
@@ -157,7 +162,8 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
         # people would accept it)
         shiny::uiOutput(ns("interventions_ui")),
         shiny::checkboxInput(ns("tracing"), "Contact tracing", value = FALSE),
-        shiny::checkboxInput(ns("build_testing"), "Build better testing", value = FALSE),
+        shiny::checkboxInput(ns("build_testing"), "Improve PCR", value = FALSE),
+        shiny::checkboxInput(ns("develop_rapid"), "Develop rapid tests", value = FALSE),
         shiny::div(class = "text-muted", shiny::htmlOutput(ns("measure_status")))
       ),
 
@@ -216,6 +222,10 @@ mod_map_server <- function(
       local <- sum(budget$local_costs[restricted_now])
       tracing <- if (isTRUE(input$tracing)) budget$tracing_cost else 0
       build <- if (isTRUE(input$build_testing) && isTRUE(budget$testing$can_build)) budget$testing$build_cost else 0
+      # rapid tests: paid every report while being developed
+      developing <- isTRUE(budget$testing$developing_rapid) ||
+        (isTRUE(input$develop_rapid) && isTRUE(budget$testing$can_develop_rapid))
+      build <- build + if (developing) budget$testing$rapid_cost else 0
       interventions + local + tracing + build
     }
 
@@ -389,10 +399,22 @@ mod_map_server <- function(
       budget <- budget_info()
       shiny::updateCheckboxInput(session, "tracing",
                                  label = sprintf("Contact tracing · %s", format(round(budget$tracing_cost), big.mark = ",")))
+      testing <- budget$testing
       shiny::updateCheckboxInput(
         session, "build_testing",
-        label = sprintf("Build better testing · %s once, takes %d reports",
-                        format(round(budget$testing$build_cost), big.mark = ","), budget$testing$build_turns)
+        label = if (isTRUE(testing$can_build)) {
+          sprintf("Improve PCR · %s once, takes %d reports (cheaper, more tests)",
+                  format(round(testing$build_cost), big.mark = ","), testing$build_turns)
+        } else if (isTRUE(testing$building)) "Improve PCR · under way" else "Improve PCR · done"
+      )
+      shiny::updateCheckboxInput(
+        session, "develop_rapid",
+        label = if (isTRUE(testing$can_develop_rapid)) {
+          sprintf("Develop rapid tests · %s a report for %d reports (cheap home tests; lockdown works better)",
+                  format(round(testing$rapid_cost), big.mark = ","), testing$rapid_turns)
+        } else if (isTRUE(testing$developing_rapid)) {
+          sprintf("Develop rapid tests · under way, %s a report", format(round(testing$rapid_cost), big.mark = ","))
+        } else "Develop rapid tests · done"
       )
     })
 
@@ -461,6 +483,10 @@ mod_map_server <- function(
       if (isTRUE(input$tracing)) {
         lines <- c(lines, sprintf("Tracing: up to %d cases a report.", teaching_params()$tracing$capacity))
       }
+      if (isTRUE(budget$testing$developing_rapid)) {
+        lines <- c(lines, sprintf("Rapid tests: %d report%s to go.", budget$testing$rapid_left,
+                                  if (budget$testing$rapid_left == 1) "" else "s"))
+      }
       if (isTRUE(budget$testing$building)) {
         lines <- c(lines, sprintf("Building testing: %d report%s left, half capacity meanwhile.",
                                   budget$testing$build_left, if (budget$testing$build_left == 1) "" else "s"))
@@ -486,13 +512,13 @@ mod_map_server <- function(
       ag_label <- if (ag_available) {
         sprintf("Antigen · %s each · instant", budget$costs[["ag"]])
       } else {
-        "Antigen · build better testing first"
+        "Antigen · develop rapid tests first"
       }
 
       selected <- if (ag_available) shiny::isolate(input$test_type) %||% "pcr" else "pcr"
       buttons <- shiny::radioButtons(
         session$ns("test_type"),
-        label = "Test",
+        label = "Which test",
         choiceNames = list(ag_label, pcr_label),
         choiceValues = list("ag", "pcr"),
         selected = selected
@@ -665,12 +691,14 @@ mod_map_server <- function(
       # so untick it. Restrictions, interventions and tracing stay on.
       reset = function() {
         shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
+        shiny::updateCheckboxInput(session, "develop_rapid", value = FALSE)
       },
       # new game: everything starts off and at zero; the player decides
       clear_interventions = function(fair_share = 0, max_spend = NULL) {
         shiny::updateCheckboxGroupInput(session, "interventions", selected = character())
         shiny::updateCheckboxInput(session, "tracing", value = FALSE)
         shiny::updateCheckboxInput(session, "build_testing", value = FALSE)
+        shiny::updateCheckboxInput(session, "develop_rapid", value = FALSE)
         shiny::updateRadioButtons(session, "who", selected = "symptomatic")
         shiny::updateRadioButtons(session, "where", selected = "everywhere")
         # the slider's range follows this place's per-turn cap (London: 200,000)
@@ -691,6 +719,7 @@ mod_map_server <- function(
       restricted = restricted,
       tracing = shiny::reactive(isTRUE(input$tracing)),
       build_testing = shiny::reactive(isTRUE(input$build_testing)),
+      develop_rapid = shiny::reactive(isTRUE(input$develop_rapid)),
       # everything planned this turn (tests and measures), for the top bar
       planned_total = shiny::reactive(other_cost() + plan()$money)
     )

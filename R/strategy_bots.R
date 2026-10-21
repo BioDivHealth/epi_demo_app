@@ -179,16 +179,29 @@ bot_tti <- function(view, memory) {
 #    level, testing symptomatic people widely with whatever exists meanwhile.
 bot_build <- function(view, memory) {
   build <- isTRUE(view$testing$can_build)
-  money <- test_budget(view, character()) - if (build) view$testing$build_cost else 0
+  develop <- isTRUE(view$testing$can_develop_rapid)
+  paying_rapid <- develop || isTRUE(view$testing$developing_rapid)
+  money <- test_budget(view, character()) -
+    (if (build) view$testing$build_cost else 0) - (if (paying_rapid) view$testing$rapid_cost else 0)
+  if (money < 0 && build) {
+    # cannot afford both this report: keep developing rapid tests
+    build <- FALSE
+    money <- test_budget(view, character()) - (if (paying_rapid) view$testing$rapid_cost else 0)
+  }
 
-  n_pcr <- spread_tests(max(0, money) / view$costs$pcr, view$pop_tbl$pop)
+  allocs <- if (view$testing$ag_available) {
+    make_allocations(view, n_ag = spread_tests(max(0, money) / view$costs$ag, view$pop_tbl$pop))
+  } else {
+    make_allocations(view, n_pcr = spread_tests(max(0, money) / view$costs$pcr, view$pop_tbl$pop))
+  }
 
   list(
     actions = list(
-      allocations = make_allocations(view, n_pcr = n_pcr),
+      allocations = allocs,
       sampling_mode = "symptomatic",
       interventions = character(),
-      build_testing = build
+      build_testing = build,
+      develop_rapid = develop
     ),
     memory = memory
   )

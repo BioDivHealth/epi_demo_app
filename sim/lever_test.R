@@ -37,7 +37,7 @@ fair_tests <- function(view, cost_of_measures = 0) {
   per_test <- if (use_ag) view$costs$ag else view$costs$pcr
   # never more than the labs (or kit supply) can handle: overloading the
   # labs only makes every result late
-  n_total <- min(money / per_test, view$testing$capacity)
+  n_total <- min(money / per_test, if (use_ag) view$testing$ag_capacity else view$testing$capacity)
   n <- spread_tests(n_total, view$pop_tbl$pop)
   if (use_ag) make_allocations(view, n_ag = n) else make_allocations(view, n_pcr = n)
 }
@@ -66,12 +66,11 @@ policies <- list(
                         tracing = TRUE), memory = memory)
   },
 
-  "Build rapid tests, then test" = function(view, memory) {
-    # keep building until rapid antigen tests exist
-    build <- isTRUE(view$testing$can_build) && !isTRUE(view$testing$building)
-    cost <- if (build) view$testing$build_cost else 0
+  "Develop rapid tests, then test" = function(view, memory) {
+    develop <- isTRUE(view$testing$can_develop_rapid)
+    cost <- if (develop || isTRUE(view$testing$developing_rapid)) view$testing$rapid_cost else 0
     list(actions = list(allocations = fair_tests(view, cost), sampling_mode = "symptomatic",
-                        build_testing = build), memory = memory)
+                        develop_rapid = develop), memory = memory)
   },
 
   "Test the sick where hospitals report" = function(view, memory) {

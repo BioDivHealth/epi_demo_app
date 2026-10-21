@@ -76,9 +76,14 @@ test_that("isolating found cases slows the outbreak (over several outbreaks)", {
   # one outbreak alone is too noisy: once anything differs, the random draws
   # split, so compare the total over ten outbreaks
   config <- scenario_config("ebola_like", inputs)
+  test_the_sick <- function(view, memory) {
+    n <- min(view$allowance / view$costs$pcr, view$testing$capacity)
+    list(actions = list(allocations = make_allocations(view, n_pcr = spread_tests(n, view$pop_tbl$pop)),
+                        sampling_mode = "symptomatic"), memory = memory)
+  }
   quiet <- sum(vapply(1:10, function(s) play_bot_game(config, bot_do_nothing, seed = s, n_turns = 12)$cumulative_infections, numeric(1)))
-  build <- sum(vapply(1:10, function(s) play_bot_game(config, bot_build, seed = s, n_turns = 12)$cumulative_infections, numeric(1)))
-  expect_lt(build, 0.9 * quiet)
+  tested <- sum(vapply(1:10, function(s) play_bot_game(config, test_the_sick, seed = s, n_turns = 12)$cumulative_infections, numeric(1)))
+  expect_lt(tested, 0.9 * quiet)
 })
 
 test_that("PCR beyond lab capacity queues and comes back late, not lost", {
@@ -168,4 +173,24 @@ test_that("the review compares a game with doing nothing on the same outbreak", 
   cmp <- compare_with_doing_nothing(busy, config)
   expect_equal(cmp$infections_doing_nothing, same$infections_doing_nothing)
   expect_gt(cmp$infections_prevented, 0)
+})
+
+test_that("rapid tests take their development time, then exist and make lockdown stronger", {
+  config <- scenario_config("covid_early", inputs)
+  config$tp$lockdown_trigger <- NULL
+  state <- new_game(config, seed = 8)
+  expect_false(test_setup(state, config)$ag_available)
+
+  state <- play_turn(state, list(develop_rapid = TRUE), config)$state
+  for (i in seq_len(config$tp$rapid_tests$turns - 2)) state <- play_turn(state, list(), config)$state
+  expect_false(test_setup(state, config)$ag_available)      # one report still to go
+  state <- play_turn(state, list(), config)$state
+  setup <- test_setup(state, config)
+  expect_true(setup$ag_available)
+  expect_gt(setup$ag_capacity, 0)
+
+  # lockdown with rapid tests uses the stronger multiplier
+  locked <- play_turn(play_turn(state, list(interventions = "distancing"), config)$state,
+                      list(interventions = "distancing"), config)
+  expect_equal(locked$effects$Rt_multiplier, config$tp$rapid_tests$lockdown_Rt_multiplier)
 })

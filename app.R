@@ -601,15 +601,18 @@ server <- function(input, output, session) {
     budget <- turn_budget_info()
     view <- player_view(game_state(), current_config())
     paste0(
-      budget$testing$label, if (isTRUE(budget$testing$building)) " (upgrading)" else "",
+      budget$testing$label, if (isTRUE(budget$testing$building)) " (improving)" else "",
+      if (isTRUE(budget$testing$developing_rapid)) sprintf(", rapid tests in %d", budget$testing$rapid_left) else "",
       if (view$lab_backlog > 0) paste0(", backlog ", format(round(view$lab_backlog), big.mark = ",", scientific = FALSE)) else "",
       " · ", round(100 * view$bed_pressure), "%"
     )
   })
 
   output$scenario_display <- renderText({
-    # students should work out what kind of outbreak this is from the data
-    if (!isTRUE(is_admin())) {
+    # students work out what kind of outbreak this is from the data until the
+    # reference lab identifies it (admins always see it)
+    identified <- turn() >= teaching_params()$identify_after
+    if (!isTRUE(is_admin()) && !identified) {
       return("")
     }
     scenario_id <- active_scenario_id()
@@ -621,7 +624,7 @@ server <- function(input, output, session) {
     if (is.null(label) || identical(label, "")) {
       return("")
     }
-    paste("Scenario:", label)
+    if (identified) paste("Identified:", label) else paste("Scenario:", label)
   })
 
   run_log <- reactiveVal(tibble())
@@ -818,6 +821,10 @@ server <- function(input, output, session) {
     }),
     date_label = function(turns) format(turn_date(turns, current_config()), "%d %b"),
     gens_per_turn = reactive(current_config()$gens_per_turn %||% 1),
+    sentinel = reactive({
+      state <- game_state()
+      if (is.null(state)) NULL else state$sentinel
+    }),
     dark_mode = reactive(isTRUE(input$dark_mode)),
     app_ready = app_ready
   )
@@ -1021,7 +1028,8 @@ server <- function(input, output, session) {
       interventions = allocations_module$interventions(),
       local_restrictions = allocations_module$restricted(),
       tracing = allocations_module$tracing(),
-      build_testing = allocations_module$build_testing()
+      build_testing = allocations_module$build_testing(),
+      develop_rapid = allocations_module$develop_rapid()
     )
 
     result <- play_turn(state, actions, config)
@@ -1049,11 +1057,14 @@ server <- function(input, output, session) {
       action_parts <- c(action_parts, "Contact tracing")
     }
     if (result$build_cost > 0) {
-      action_parts <- c(action_parts, "Started building testing")
+      action_parts <- c(action_parts, "Started improving PCR")
+    }
+    if (result$rapid_cost > 0) {
+      action_parts <- c(action_parts, "Started developing rapid tests")
     }
     intervention_label <- if (length(action_parts) == 0) "None" else paste(action_parts, collapse = "; ")
 
-    other_cost <- result$intervention_cost + result$local_cost + result$tracing_cost + result$build_cost
+    other_cost <- result$intervention_cost + result$local_cost + result$tracing_cost + result$build_cost + result$rapid_cost
     pot_left <- config$tp$budget_total - new_state$spend_total
 
     spend_current(list(
@@ -1154,9 +1165,9 @@ server <- function(input, output, session) {
       if (traced$cases == 0) {
         "Tracing: no known cases to follow up."
       } else {
-        sprintf("Tracing: %s contacts of %s cases checked, %s infected (%d%%).",
+        sprintf("Tracing: %s contacts of %s cases checked, %s infected (%d%%), %s of them quarantined before they could pass it on.",
                 big(traced$contacts), big(traced$cases), big(traced$infected),
-                round(100 * traced$infected / max(1, traced$contacts)))
+                round(100 * traced$infected / max(1, traced$contacts)), big(traced$in_time %||% traced$infected))
       }
     }
 
@@ -1164,6 +1175,8 @@ server <- function(input, output, session) {
       tests_txt,
       tracing_txt,
       sprintf("Hospitals: %s admissions, %s deaths.", big(sum(new_reports$admissions)), big(sum(new_reports$deaths))),
+      if (new_state$turn == teaching_params()$identify_after)
+        sprintf("The reference lab has identified it: %s.", scenario_lookup(active_scenario_id())$label[[1]]),
       if (new_state$turn >= teaching_params()$game_turns) "Time is up: press End & review."
     )
     lines <- c(sprintf(

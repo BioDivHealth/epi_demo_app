@@ -57,6 +57,9 @@ scale_to_place <- function(tp, pop_total) {
   tp$tracing$cost <- tp$tracing$cost * ratio
   tp$tracing$capacity <- round(tp$tracing$capacity * ratio)
   tp$build_testing$cost <- tp$build_testing$cost * ratio
+  if (!is.null(tp$sentinel)) tp$sentinel$tests <- round(tp$sentinel$tests * ratio)
+  tp$rapid_tests$cost <- tp$rapid_tests$cost * ratio
+  tp$rapid_tests$kits <- round(tp$rapid_tests$kits * ratio)
   tp$test_levels$capacity <- round(tp$test_levels$capacity * ratio)
   tp$hospital$beds <- round(tp$hospital$beds * ratio)
   tp$isolation$half_strength_load <- tp$isolation$half_strength_load * ratio
@@ -194,10 +197,13 @@ current_test_level <- function(state, config) {
   levels[levels$level == state$test_level, ]
 }
 
-# Costs, delays and capacity at the current level
+# Costs, delays and capacity now: the PCR level, and rapid tests if developed
 test_setup <- function(state, config) {
   lvl <- current_test_level(state, config)
   build <- config$tp$build_testing
+  rapid <- config$tp$rapid_tests
+  ag_available <- isTRUE(state$rapid_available)
+  rapid_left <- state$rapid_left %||% 0L
 
   capacity <- lvl$capacity
   if (state$build_left > 0) {
@@ -206,16 +212,25 @@ test_setup <- function(state, config) {
 
   list(
     level = lvl$level,
-    label = lvl$label,
-    ag_available = !is.na(lvl$ag_cost),
-    costs = list(ag = ifelse(is.na(lvl$ag_cost), 0, lvl$ag_cost), pcr = lvl$pcr_cost),
-    delays = list(ag = ifelse(is.na(lvl$ag_delay), 0L, lvl$ag_delay), pcr = lvl$pcr_delay),
+    label = if (ag_available) paste(lvl$label, "+ rapid tests") else lvl$label,
+    ag_available = ag_available,
+    costs = list(ag = if (ag_available) rapid$ag_cost else 0, pcr = lvl$pcr_cost),
+    delays = list(ag = 0L, pcr = lvl$pcr_delay),
+    # PCR the labs can process, and rapid test kits available
     capacity = floor(capacity),
+    ag_capacity = if (ag_available) floor(rapid$kits) else 0,
+    # improving PCR
     building = state$build_left > 0,
     build_left = state$build_left,
     can_build = state$build_left == 0 && lvl$level < max(config$tp$test_levels$level),
     build_cost = build$cost,
-    build_turns = build$turns
+    build_turns = build$turns,
+    # developing rapid tests
+    developing_rapid = rapid_left > 0,
+    rapid_left = rapid_left,
+    can_develop_rapid = !ag_available && rapid_left == 0,
+    rapid_cost = rapid$cost,
+    rapid_turns = rapid$turns
   )
 }
 
@@ -227,8 +242,8 @@ cap_to_capacity <- function(allocs, setup) {
     allocs$n_ag <- 0L
   }
   total_ag <- sum(allocs$n_ag)
-  if (total_ag > setup$capacity) {
-    scale <- setup$capacity / total_ag
+  if (total_ag > setup$ag_capacity) {
+    scale <- setup$ag_capacity / total_ag
     allocs$n_ag <- as.integer(floor(allocs$n_ag * scale))
   }
   allocs
@@ -310,7 +325,7 @@ isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt =
   }
 
   # what the tracers did, for the report (none if tracing is off)
-  attr(isolated, "tracing") <- if (isTRUE(tracing)) traced[c("cases", "contacts", "infected")] else NULL
+  attr(isolated, "tracing") <- if (isTRUE(tracing)) traced[c("cases", "contacts", "infected", "in_time")] else NULL
   isolated
 }
 
@@ -351,27 +366,50 @@ traced_contacts <- function(results, n_boroughs, tp, Rt, bio, gens_per_turn, adm
   traced_share <- min(1, trc$capacity / max(1, known_cases))
   per_case <- traced_share * trc$effectiveness * Rt
 
-  infected <- numeric(n_boroughs)
+  # `in_time`: infected contacts quarantined before they could pass it on
+  # (what actually cuts spread); `found`: all infected contacts found
+  in_time <- numeric(n_boroughs)
+  found <- sum(admissions) * per_case
 
   # contacts of hospital cases: infected hosp_delay reports ago
   late <- (bio$delay_decay %||% 0.5)^((bio$hosp_delay %||% 1) * gens_per_turn)
-  infected <- infected + admissions * per_case * late
+  in_time <- in_time + admissions * per_case * late
 
   # contacts of real cases found by testing
   if (!is.null(results) && nrow(results) > 0) {
-    found <- found_still_infectious(results, bio, gens_per_turn) * per_case
-    by_boro <- tapply(found, results$borough_index, sum)
+    caught <- found_still_infectious(results, bio, gens_per_turn) * per_case
+    by_boro <- tapply(caught, results$borough_index, sum)
     idx <- as.integer(names(by_boro))
-    infected[idx] <- infected[idx] + by_boro
+    in_time[idx] <- in_time[idx] + by_boro
+    found <- found + sum(results$true_pos) * per_case
   }
 
   cases <- round(traced_share * known_cases)
   list(
-    infected_by_borough = infected,
+    infected_by_borough = in_time,
     cases = cases,
     contacts = cases * (trc$contacts_per_case %||% 10),
-    infected = round(sum(infected))
+    infected = round(max(found, sum(in_time))),
+    in_time = round(sum(in_time))
   )
+}
+
+# The public health agency's steady sample (see teaching_params()$sentinel):
+# the same number of people with symptoms tested every report, spread by
+# population. Information only; returns tests and positives for this turn.
+sentinel_sample <- function(state, config) {
+  sen <- config$tp$sentinel
+  if (is.null(sen) || is.null(sen$tests) || sen$tests <= 0) return(NULL)
+  pop <- config$pop_tbl$pop
+  allocs <- empty_allocations(config)
+  allocs$n_pcr <- as.integer(floor(sen$tests * pop / sum(pop)))
+  allocs <- cap_to_pool(allocs, symptomatic_pool_size(state, config))
+
+  testing <- testing_for_turn(state, config, "symptomatic")
+  testing$delays$pcr <- 0L
+  testing$source <- "agency"
+  obs <- observe_tests(init_observation_state(), state$turn, allocs, state$truth$incidence, config$pop_tbl, testing)
+  data.frame(turn = as.integer(state$turn), tests = sum(obs$available$n), positives = sum(obs$available$positives))
 }
 
 # Admissions per borough in the latest hospital report
@@ -626,6 +664,9 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
     local_streaks = integer(n_b),
     test_level = config$test_level,
     build_left = 0L,
+    rapid_left = 0L,
+    rapid_available = FALSE,
+    sentinel = data.frame(turn = integer(), tests = integer(), positives = integer()),
     lab_backlog = 0,
     reports = data.frame(turn = integer(), borough_index = integer(), admissions = integer(), deaths = integer()),
     hospital = list(admissions = list(), occupancy = numeric(), extra_deaths = numeric()),
@@ -729,6 +770,9 @@ play_turn <- function(state, actions, config) {
     # capacity drops straight away while staff are diverted
     setup <- test_setup(modifyList(state, list(build_left = setup$build_turns)), config)
   }
+  # rapid tests are paid for every report while they are being developed
+  start_rapid <- isTRUE(actions$develop_rapid) && setup$can_develop_rapid
+  rapid_cost <- if (start_rapid || setup$developing_rapid) setup$rapid_cost else 0
   allocs <- cap_to_capacity(allocs, setup)
 
   # symptomatic testing is limited to the people who come forward
@@ -746,13 +790,18 @@ play_turn <- function(state, actions, config) {
 
   # interventions: lag and fatigue depend on how long each has been on
   streaks <- update_intervention_streaks(state$streaks, selected, config$interventions)
-  effects <- compute_intervention_effects(selected, config$interventions, streaks = streaks)
+  # with rapid tests people can test at home and isolate, so a lockdown works better
+  catalog <- config$interventions
+  if (isTRUE(state$rapid_available) && !is.null(tp$rapid_tests$lockdown_Rt_multiplier)) {
+    catalog$Rt_multiplier[catalog$id == "distancing"] <- tp$rapid_tests$lockdown_Rt_multiplier
+  }
+  effects <- compute_intervention_effects(selected, catalog, streaks = streaks)
 
   # spend this turn: capped per turn and by what is left in the pot
   budget <- min(tp$tests$budget, tp$budget_total - state$spend_total)
   spend_stats <- summarise_budget(allocs, setup$costs, budget)
   tracing_cost <- if (tracing) tp$tracing$cost else 0
-  turn_spend <- spend_stats$spend + effects$cost + local_cost + tracing_cost + build_cost
+  turn_spend <- spend_stats$spend + effects$cost + local_cost + tracing_cost + build_cost + rapid_cost
   if (turn_spend > budget + 1e-6) {
     return(list(ok = FALSE, reason = "over_budget", state = state))
   }
@@ -834,6 +883,8 @@ play_turn <- function(state, actions, config) {
                  offset = state$truth_offset %||% 0)
   )
   new_state$carry_isolated <- NULL
+  # the agency's sample this report (comes back with the next report)
+  new_state$sentinel <- rbind(state$sentinel, sentinel_sample(state, config))
   new_state$tracing_report <- attr(isolated, "tracing")
   new_state$obs <- list(queue = obs$queue, history = obs$history)
   new_state$available <- obs$available
@@ -849,6 +900,16 @@ play_turn <- function(state, actions, config) {
     }
   }
   new_state$build_left <- build_left
+
+  # developing rapid tests: counts down, then they exist
+  rapid_left <- if (start_rapid) setup$rapid_turns else (state$rapid_left %||% 0L)
+  if (rapid_left > 0) {
+    rapid_left <- rapid_left - 1L
+    if (rapid_left == 0L) {
+      new_state$rapid_available <- TRUE
+    }
+  }
+  new_state$rapid_left <- rapid_left
   new_state$lab_backlog <- backlog$backlog_after
   new_state$spend_total <- state$spend_total + turn_spend
 
@@ -864,6 +925,7 @@ play_turn <- function(state, actions, config) {
     local_cost = local_cost,
     tracing_cost = tracing_cost,
     build_cost = build_cost,
+    rapid_cost = rapid_cost,
     test_level = new_state$test_level,
     pcr_extra_delay = backlog$extra_delay,
     restricted = restricted,
@@ -928,6 +990,8 @@ player_view <- function(state, config) {
     pool_size = symptomatic_pool_size(state, config),
     local_streaks = state$local_streaks,
     lockdown_allowed = lockdown_allowed(state, config),
+    # the public health agency's steady sample (public)
+    sentinel = state$sentinel,
     alerted = if (is.null(state$alert)) NA_integer_ else state$alert$alerted,
     reports = state$reports,
     # hospitals publish how full they are (share of beds in use)
