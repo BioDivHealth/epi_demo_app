@@ -27,8 +27,10 @@ get_streak <- function(streaks, id) {
   as.integer(streaks[[id]])
 }
 
-# Update how many turns in a row each intervention has been switched on.
-# Anything not selected this turn drops back to 0.
+# Update how long each intervention has been running (its streak). A measure
+# that is switched off loses one report of streak per report off, so the
+# public's patience comes back gradually: switching off for one week does
+# not reset the fading.
 update_intervention_streaks <- function(streaks, selected, catalog = intervention_catalog()) {
   new_streaks <- stats::setNames(integer(nrow(catalog)), catalog$id)
 
@@ -36,6 +38,8 @@ update_intervention_streaks <- function(streaks, selected, catalog = interventio
     previous <- get_streak(streaks, id)
     if (id %in% selected) {
       new_streaks[[id]] <- previous + 1L
+    } else {
+      new_streaks[[id]] <- max(0L, previous - 1L)
     }
   }
 

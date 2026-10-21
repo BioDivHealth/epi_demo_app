@@ -761,7 +761,8 @@ server <- function(input, output, session) {
       allowance = view$allowance,
       streaks = view$streaks,
       local_streaks = view$local_streaks,
-      pool_size = view$pool_size
+      pool_size = view$pool_size,
+      lockdown_allowed = view$lockdown_allowed
     )
   })
 
@@ -1148,19 +1149,34 @@ server <- function(input, output, session) {
     ran <- sum(allocs$n_ag + allocs$n_pcr)
     big <- function(x) format(x, big.mark = ",", scientific = FALSE)
 
-    # tests: what came back, what is still at the lab, and why if none ran
-    tests_txt <- if (n_results > 0) {
-      sprintf("Tests: %s back, %s positive.", big(n_results), big(n_positives))
-    } else if (asked == 0 && n_pending == 0) {
+    # tests: done this report, back (and positive), still at the lab
+    tests_txt <- if (ran == 0 && n_results == 0 && n_pending == 0) {
       "Tests: none (spend is 0)."
     } else {
-      "Tests: none back yet."
+      paste0(
+        "Tests: ", big(ran), " done",
+        if (n_results > 0) sprintf(", %s back (%s positive)", big(n_results), big(n_positives)) else ", none back yet",
+        if (n_pending > 0) sprintf(", %s at the lab", big(n_pending)) else "",
+        "."
+      )
     }
-    if (n_pending > 0) tests_txt <- paste(tests_txt, big(n_pending), "at the lab.")
     if (ran < asked) tests_txt <- paste(tests_txt, sprintf("Only %s of %s planned tests ran (too few people came forward, or too few kits).", big(ran), big(asked)))
+
+    # contact tracing: who was followed up and what the tracers found
+    traced <- result$tracing_report
+    tracing_txt <- if (!is.null(traced)) {
+      if (traced$cases == 0) {
+        "Tracing: no known cases to follow up."
+      } else {
+        sprintf("Tracing: %s contacts of %s cases checked, %s infected (%d%%).",
+                big(traced$contacts), big(traced$cases), big(traced$infected),
+                round(100 * traced$infected / max(1, traced$contacts)))
+      }
+    }
 
     log <- c(
       tests_txt,
+      tracing_txt,
       sprintf("Hospitals: %s admissions, %s deaths.", big(sum(new_reports$admissions)), big(sum(new_reports$deaths))),
       if (new_state$turn >= teaching_params()$game_turns) "Time is up: press End & review."
     )

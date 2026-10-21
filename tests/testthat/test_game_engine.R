@@ -152,6 +152,8 @@ test_that("an outbreak noticed through admissions has more than one infection be
 
 test_that("the review compares a game with doing nothing on the same outbreak", {
   config <- scenario_config("covid_early", inputs)
+  # this test is about the comparison, so allow lockdown from the start
+  config$tp$lockdown_trigger <- NULL
 
   # doing nothing compared with doing nothing: nothing prevented
   idle <- new_game(config, seed = 21)

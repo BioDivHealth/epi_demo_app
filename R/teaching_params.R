@@ -143,7 +143,7 @@ teaching_params <- function() {
       pcr_cost = c(40, 20, 10),
       ag_delay = c(NA, NA, 0L),
       pcr_delay = c(1L, 1L, 1L),
-      capacity = c(3000, 20000, 60000)
+      capacity = c(2000, 6000, 60000)
     ),
     build_testing = list(
       cost = 150000,
@@ -163,8 +163,9 @@ teaching_params <- function() {
     # cannot see the ones you never found).
     tracing = list(
       cost = 40000,          # per turn while switched on
-      capacity = 400,        # confirmed cases followed up per turn
-      effectiveness = 0.5    # share of each case's onward infections caught
+      capacity = 400,        # known cases followed up per report
+      effectiveness = 0.5,   # share of each case's onward infections caught
+      contacts_per_case = 10 # people named and checked for each case (for the report)
     ),
 
     # Local restrictions on single boroughs.
@@ -175,7 +176,7 @@ teaching_params <- function() {
     # Trap: acting hard on an early positive is great if it was the origin,
     # wasted if it was a false positive or a side branch.
     local_restrictions = list(
-      Rt_multiplier = 0.5,
+      Rt_multiplier = 0.3,
       cost_per_100k = 9000,
       lag = 1L,
       fatigue = 0.9
@@ -203,7 +204,12 @@ teaching_params <- function() {
     # Each one costs budget every turn it is ticked, only starts working the
     # turn after it is switched on (lag), and some lose effect the longer
     # they run (fatigue: effect multiplied by `fatigue` each extra turn).
-    # Unticking resets the lag and the fatigue.
+    # Once switched off, the fading wears off one report per report.
+    # Social distancing (lockdown) is only possible once the public would
+    # accept it: after `lockdown_trigger$deaths` reported deaths, or with
+    # hospital beds `lockdown_trigger$bed_share` full.
+    lockdown_trigger = list(deaths = 10, bed_share = 0.25),
+
     # Traps: you cannot judge an intervention on the turn you start it, and
     # money spent on control is money not spent on seeing the outbreak.
     interventions = tibble::tibble(
@@ -215,7 +221,7 @@ teaching_params <- function() {
       ag_delay_adjust = 0,
       pcr_delay_adjust = 0,
       lag = 1L,
-      fatigue = 0.85
+      fatigue = 0.8
     )
   )
 }

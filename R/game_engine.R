@@ -293,53 +293,85 @@ isolated_from_results <- function(results, n_boroughs, tp, tracing = FALSE, Rt =
                                   gens_per_turn = 1, admissions = NULL) {
   isolated <- numeric(n_boroughs)
 
-  # with tracing on, hospital-reported cases are followed up too: tracers
-  # share their capacity between positives and admissions
-  n_admissions <- if (is.null(admissions)) 0 else sum(admissions)
-  n_positives <- if (is.null(results)) 0 else sum(results$positives)
-  traced_share <- min(1, tp$tracing$capacity / max(1, n_positives + n_admissions))
-
-  if (isTRUE(tracing) && n_admissions > 0) {
-    # an admission was infected hosp_delay reports ago: its contacts are
-    # worth less the more generations have passed since
-    late <- (bio$delay_decay %||% 0.5)^((bio$hosp_delay %||% 1) * gens_per_turn)
-    isolated <- isolated + admissions * traced_share * tp$tracing$effectiveness * Rt * late
+  # contact tracing (if on): the infected contacts it finds are quarantined
+  traced <- traced_contacts(results, n_boroughs, tp, Rt, bio, gens_per_turn, admissions)
+  if (isTRUE(tracing)) {
+    isolated <- isolated + traced$infected_by_borough
   }
 
-  if (is.null(results) || nrow(results) == 0) {
-    return(isolated)
+  if (!is.null(results) && nrow(results) > 0) {
+    # isolation is stretched when there are many positives to support
+    strain <- 1 / (1 + sum(results$positives) / tp$isolation$half_strength_load)
+    effective <- found_still_infectious(results, bio, gens_per_turn) * tp$isolation$effectiveness * strain
+
+    by_boro <- tapply(effective, results$borough_index, sum)
+    idx <- as.integer(names(by_boro))
+    isolated[idx] <- isolated[idx] + by_boro
   }
 
-  iso <- tp$isolation
+  # what the tracers did, for the report (none if tracing is off)
+  attr(isolated, "tracing") <- if (isTRUE(tracing)) traced[c("cases", "contacts", "infected")] else NULL
+  isolated
+}
+
+# Real, still-infectious cases among returned results, discounted by how late
+# the result was (and, if found through symptoms, by the spread already done)
+found_still_infectious <- function(results, bio, gens_per_turn) {
   delay <- results$turn_available - results$turn_sampled
   # delay_decay is per generation; a report's delay spans gens_per_turn of them
   timeliness <- (bio$delay_decay %||% 0.5)^(delay * gens_per_turn)
 
-  # cases found because they had symptoms have already spread pre-symptoms
   found_by_symptoms <- !is.na(results$mode) & results$mode == "symptomatic"
   timeliness <- timeliness * ifelse(found_by_symptoms, 1 - (bio$presymptomatic %||% 0), 1)
 
-  # isolation is stretched when there are many positives to support
-  strain <- 1 / (1 + sum(results$positives) / iso$half_strength_load)
-  per_case <- iso$effectiveness * strain
-
-  if (isTRUE(tracing)) {
-    per_case <- per_case + traced_share * tp$tracing$effectiveness * Rt
-  }
-
-  # only cases still infectious when tested are worth isolating
   still_infectious <- results$infectious_pos
   if (is.null(still_infectious)) {
     still_infectious <- results$true_pos
   }
   still_infectious[is.na(still_infectious)] <- results$true_pos[is.na(still_infectious)]
 
-  effective <- still_infectious * per_case * timeliness
+  still_infectious * timeliness
+}
 
-  by_boro <- tapply(effective, results$borough_index, sum)
-  idx <- as.integer(names(by_boro))
-  isolated[idx] <- isolated[idx] + by_boro
-  isolated
+# Contact tracing ------------------------------------------------------------------
+#
+# Tracers follow up every known case: each positive test (real or false) and
+# each admission in the latest hospital report, up to their capacity. For
+# each real case they reach, they find about Rt of the people it has already
+# infected (an admission's contacts are discounted by how long ago it was
+# infected). They also name and check contacts_per_case people per case,
+# which is what the report shows.
+traced_contacts <- function(results, n_boroughs, tp, Rt, bio, gens_per_turn, admissions) {
+  trc <- tp$tracing
+  admissions <- if (is.null(admissions)) numeric(n_boroughs) else admissions
+  n_positives <- if (is.null(results)) 0 else sum(results$positives)
+  known_cases <- n_positives + sum(admissions)
+
+  # share of known cases the tracers can reach this report
+  traced_share <- min(1, trc$capacity / max(1, known_cases))
+  per_case <- traced_share * trc$effectiveness * Rt
+
+  infected <- numeric(n_boroughs)
+
+  # contacts of hospital cases: infected hosp_delay reports ago
+  late <- (bio$delay_decay %||% 0.5)^((bio$hosp_delay %||% 1) * gens_per_turn)
+  infected <- infected + admissions * per_case * late
+
+  # contacts of real cases found by testing
+  if (!is.null(results) && nrow(results) > 0) {
+    found <- found_still_infectious(results, bio, gens_per_turn) * per_case
+    by_boro <- tapply(found, results$borough_index, sum)
+    idx <- as.integer(names(by_boro))
+    infected[idx] <- infected[idx] + by_boro
+  }
+
+  cases <- round(traced_share * known_cases)
+  list(
+    infected_by_borough = infected,
+    cases = cases,
+    contacts = cases * (trc$contacts_per_case %||% 10),
+    infected = round(sum(infected))
+  )
 }
 
 # Admissions per borough in the latest hospital report
@@ -654,6 +686,17 @@ compare_with_doing_nothing <- function(state, config) {
   )
 }
 
+# Would people accept a lockdown? Only after enough reported deaths, or with
+# hospitals filling up (both public).
+lockdown_allowed <- function(state, config) {
+  trigger <- config$tp$lockdown_trigger
+  if (is.null(trigger)) return(TRUE)
+  deaths_reported <- if (is.null(state$reports)) 0 else sum(state$reports$deaths)
+  occupancy <- state$hospital$occupancy
+  bed_share <- if (length(occupancy) == 0) 0 else utils::tail(occupancy, 1) / config$tp$hospital$beds
+  deaths_reported >= trigger$deaths || bed_share >= trigger$bed_share
+}
+
 # Play one turn ----------------------------------------------------------------
 #
 # actions: list with
@@ -670,6 +713,10 @@ play_turn <- function(state, actions, config) {
   allocs <- actions$allocations %||% empty_allocations(config)
   sampling_mode <- actions$sampling_mode %||% "symptomatic"
   selected <- actions$interventions %||% character()
+  # no lockdown until people would accept one
+  if (!lockdown_allowed(state, config)) {
+    selected <- setdiff(selected, "distancing")
+  }
   restricted <- unique(as.integer(actions$local_restrictions %||% integer()))
   tracing <- isTRUE(actions$tracing)
   n_b <- nrow(config$pop_tbl)
@@ -690,7 +737,10 @@ play_turn <- function(state, actions, config) {
   }
 
   # local restrictions: per-borough streaks give lag and fatigue
-  local_streaks <- ifelse(seq_len(n_b) %in% restricted, state$local_streaks + 1L, 0L)
+  # restrictions fade the longer they run; once lifted, that fading wears
+  # off one report per report (so switching off for a week is no reset)
+  local_streaks <- ifelse(seq_len(n_b) %in% restricted, state$local_streaks + 1L,
+                          pmax(0L, state$local_streaks - 1L))
   local_mult <- local_restriction_multiplier(local_streaks, tp)
   local_cost <- sum(local_restriction_costs(config)[restricted])
 
@@ -784,6 +834,7 @@ play_turn <- function(state, actions, config) {
                  offset = state$truth_offset %||% 0)
   )
   new_state$carry_isolated <- NULL
+  new_state$tracing_report <- attr(isolated, "tracing")
   new_state$obs <- list(queue = obs$queue, history = obs$history)
   new_state$available <- obs$available
   new_state$streaks <- streaks
@@ -818,6 +869,7 @@ play_turn <- function(state, actions, config) {
     restricted = restricted,
     turn_spend = turn_spend,
     remaining = budget - turn_spend,
+    tracing_report = attr(isolated, "tracing"),
     effects = effects,
     intervention_label = intervention_label,
     Rt_used = epi$Rt * effects$Rt_multiplier
@@ -875,6 +927,7 @@ player_view <- function(state, config) {
     # how many people came forward for a test this turn (public: test demand)
     pool_size = symptomatic_pool_size(state, config),
     local_streaks = state$local_streaks,
+    lockdown_allowed = lockdown_allowed(state, config),
     alerted = if (is.null(state$alert)) NA_integer_ else state$alert$alerted,
     reports = state$reports,
     # hospitals publish how full they are (share of beds in use)

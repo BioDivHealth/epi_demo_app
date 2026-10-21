@@ -69,12 +69,9 @@ mod_response_ui <- function(id, intervention_defs = intervention_catalog()) {
       shiny::div(
         class = "small",
         shiny::tags$label(class = "form-label", paste0("Measures (", tp$currency, " per report)")),
-        shiny::checkboxGroupInput(
-          ns("interventions"),
-          label = NULL,
-          choices = stats::setNames(intervention_defs$id, intervention_defs$label),
-          selected = character()
-        ),
+        # built by the server each report (prices; lockdown greyed out until
+        # people would accept it)
+        shiny::uiOutput(ns("interventions_ui")),
         shiny::checkboxInput(ns("tracing"), "Contact tracing", value = FALSE),
         shiny::checkboxInput(ns("build_testing"), "Build better testing", value = FALSE),
         shiny::div(class = "text-muted", shiny::htmlOutput(ns("measure_status")))
@@ -309,13 +306,6 @@ mod_map_server <- function(
     observe({
       req(ready())
       budget <- budget_info()
-      defs <- budget$interventions
-      shiny::updateCheckboxGroupInput(
-        session, "interventions",
-        choiceNames = sprintf("%s · %s", defs$label, format(round(defs$cost), big.mark = ",")),
-        choiceValues = defs$id,
-        selected = shiny::isolate(input$interventions)
-      )
       shiny::updateCheckboxInput(session, "tracing",
                                  label = sprintf("Contact tracing · %s", format(round(budget$tracing_cost), big.mark = ",")))
       shiny::updateCheckboxInput(
@@ -323,6 +313,39 @@ mod_map_server <- function(
         label = sprintf("Build better testing · %s once, takes %d reports",
                         format(round(budget$testing$build_cost), big.mark = ","), budget$testing$build_turns)
       )
+    })
+
+    # London-wide measures with this place's prices; lockdown only once there
+    # have been enough deaths or hospitals are filling up
+    output$interventions_ui <- shiny::renderUI({
+      req(ready())
+      budget <- budget_info()
+      defs <- budget$interventions
+      allowed <- !identical(budget$lockdown_allowed, FALSE)
+      trigger <- teaching_params()$lockdown_trigger
+
+      names <- sprintf("%s · %s", defs$label, format(round(defs$cost), big.mark = ","))
+      if (!allowed) {
+        names[defs$id == "distancing"] <- sprintf(
+          "%s · only after %d deaths or beds %d%% full", defs$label[defs$id == "distancing"],
+          trigger$deaths, round(100 * trigger$bed_share)
+        )
+      }
+      selected <- shiny::isolate(input$interventions) %||% character()
+      if (!allowed) selected <- setdiff(selected, "distancing")
+
+      boxes <- shiny::checkboxGroupInput(
+        session$ns("interventions"), label = NULL,
+        choiceNames = as.list(names), choiceValues = as.list(defs$id), selected = selected
+      )
+      if (!allowed) {
+        boxes <- htmltools::tagQuery(boxes)$
+          find("input")$filter(function(x, i) identical(x$attribs$value, "distancing"))$
+          addAttrs(disabled = NA)$
+          parent()$addAttrs(style = "opacity: 0.5;")$
+          allTags()
+      }
+      boxes
     })
 
     # what each control measure will do next turn (lag, fading, capacity)

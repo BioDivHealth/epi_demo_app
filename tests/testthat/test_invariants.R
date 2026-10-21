@@ -101,10 +101,12 @@ check_turn <- function(before, result, actions, config, label) {
   expect_true(all(rep_now$admissions >= 0), info = info)
   expect_true(all(rep_now$deaths <= after$truth$deaths), info = info)
 
-  # local restrictions: streaks count only restricted boroughs
+  # local restrictions: restricted boroughs' streaks grow by one; lifted ones
+  # wear off by one a report (never below 0)
   restricted <- result$restricted
-  expect_true(all(after$local_streaks[restricted] >= 1), info = info)
-  expect_true(all(after$local_streaks[setdiff(seq_len(n_b), restricted)] == 0), info = info)
+  lifted <- setdiff(seq_len(n_b), restricted)
+  expect_true(all(after$local_streaks[restricted] == before$local_streaks[restricted] + 1L), info = info)
+  expect_true(all(after$local_streaks[lifted] == pmax(0L, before$local_streaks[lifted] - 1L)), info = info)
 
   # the player view never carries hidden truth
   view <- player_view(after, config)

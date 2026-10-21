@@ -35,7 +35,10 @@ fair_tests <- function(view, cost_of_measures = 0) {
   money <- max(0, (view$allowance %||% view$budget) - cost_of_measures)
   use_ag <- isTRUE(view$testing$ag_available)
   per_test <- if (use_ag) view$costs$ag else view$costs$pcr
-  n <- spread_tests(money / per_test, view$pop_tbl$pop)
+  # never more than the labs (or kit supply) can handle: overloading the
+  # labs only makes every result late
+  n_total <- min(money / per_test, view$testing$capacity)
+  n <- spread_tests(n_total, view$pop_tbl$pop)
   if (use_ag) make_allocations(view, n_ag = n) else make_allocations(view, n_pcr = n)
 }
 
@@ -64,11 +67,30 @@ policies <- list(
   },
 
   "Build rapid tests, then test" = function(view, memory) {
-    build <- isTRUE(view$testing$can_build) && !isTRUE(memory$built)
-    if (build) memory$built <- TRUE
+    # keep building until rapid antigen tests exist
+    build <- isTRUE(view$testing$can_build) && !isTRUE(view$testing$building)
     cost <- if (build) view$testing$build_cost else 0
     list(actions = list(allocations = fair_tests(view, cost), sampling_mode = "symptomatic",
                         build_testing = build), memory = memory)
+  },
+
+  "Test the sick where hospitals report" = function(view, memory) {
+    # all of this report's tests go to areas with hospital cases (to everywhere
+    # until there are any)
+    areas <- admission_areas(view)
+    allocs <- fair_tests(view)
+    if (length(areas) > 0) {
+      weights <- ifelse(seq_len(nrow(view$pop_tbl)) %in% areas, view$pop_tbl$pop, 0)
+      total <- sum(allocs$n_ag + allocs$n_pcr)
+      n <- spread_tests(total, weights)
+      allocs <- if (sum(allocs$n_ag) > 0) make_allocations(view, n_ag = n) else make_allocations(view, n_pcr = n)
+    }
+    list(actions = list(allocations = allocs, sampling_mode = "symptomatic"), memory = memory)
+  },
+
+  "Trace + restrict hospital clusters" = function(view, memory) {
+    areas <- affordable_restrictions(view, admission_areas(view), keep_for_tests = 0.5)
+    list(actions = list(local_restrictions = areas, tracing = TRUE), memory = memory)
   },
 
   "Restrict hospital clusters" = function(view, memory) {
@@ -76,7 +98,7 @@ policies <- list(
     list(actions = list(local_restrictions = areas), memory = memory)
   },
 
-  "Lockdown from the start" = function(view, memory) {
+  "Lockdown as soon as allowed" = function(view, memory) {
     list(actions = list(interventions = "distancing"), memory = memory)
   },
 
