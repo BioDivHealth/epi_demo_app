@@ -78,6 +78,10 @@ game_config <- function(
   # money and capacity scale with the place's population (1 for London)
   tp <- scale_to_place(tp, sum(inputs$pop_tbl$pop))
 
+  # small lookup tables used every turn: plain data frames are much quicker
+  tp$test_levels <- as.data.frame(tp$test_levels)
+  tp$interventions <- as.data.frame(tp$interventions)
+
   # imports are per area each turn: keep the place-wide rate like London's
   n_units <- nrow(inputs$pop_tbl)
   epi$imports_prob <- min(1, epi$imports_prob * tp$reference_units / n_units)
@@ -454,8 +458,8 @@ draw_reports <- function(truth, config, admitted, overload = 0, offset = 0) {
 
   deaths <- stats::rbinom(n_b, size = as.integer(truth$deaths), prob = rep_par$death_ascertainment)
 
-  tibble::tibble(
-    turn = turn_now,
+  data.frame(
+    turn = as.integer(turn_now),
     borough_index = seq_len(n_b),
     admissions = as.integer(admissions),
     deaths = as.integer(deaths)
@@ -465,11 +469,12 @@ draw_reports <- function(truth, config, admitted, overload = 0, offset = 0) {
 # Empty allocation table (no tests anywhere)
 empty_allocations <- function(config) {
   n_b <- nrow(config$pop_tbl)
-  tibble::tibble(
+  data.frame(
     borough_index = seq_len(n_b),
     borough_name = config$pop_tbl$borough_name,
     n_ag = integer(n_b),
-    n_pcr = integer(n_b)
+    n_pcr = integer(n_b),
+    stringsAsFactors = FALSE
   )
 }
 
@@ -590,7 +595,7 @@ new_game <- function(config, seed = NULL, sampling_mode = "symptomatic") {
     test_level = config$test_level,
     build_left = 0L,
     lab_backlog = 0,
-    reports = tibble::tibble(turn = integer(), borough_index = integer(), admissions = integer(), deaths = integer()),
+    reports = data.frame(turn = integer(), borough_index = integer(), admissions = integer(), deaths = integer()),
     hospital = list(admissions = list(), occupancy = numeric(), extra_deaths = numeric()),
     spend_total = 0,
     alert = list(
@@ -773,7 +778,7 @@ play_turn <- function(state, actions, config) {
   new_state$hospital <- hospital_now$value$hospital
 
   # what hospitals and death registrations report this turn
-  new_state$reports <- dplyr::bind_rows(
+  new_state$reports <- rbind(
     state$reports,
     draw_reports(next_truth, config, hospital_now$value$admitted, hospital_now$value$overload,
                  offset = state$truth_offset %||% 0)
@@ -827,12 +832,21 @@ play_turn <- function(state, actions, config) {
 player_view <- function(state, config) {
   tp <- config$tp
 
-  history <- state$obs$history |>
-    dplyr::select(borough_index, borough_name, type, n, positives, turn_sampled, turn_available)
+  # returned results only, without the hidden columns
+  history <- state$obs$history[, c("borough_index", "borough_name", "type", "n", "positives",
+                                   "turn_sampled", "turn_available"), drop = FALSE]
 
-  pending <- state$obs$queue |>
-    dplyr::group_by(type) |>
-    dplyr::summarise(n = sum(n), .groups = "drop")
+  # tests still at the lab, by type (not their results)
+  queue <- state$obs$queue
+  pending <- if (nrow(queue) == 0) {
+    data.frame(type = character(), n = integer(), stringsAsFactors = FALSE)
+  } else {
+    waiting <- tapply(queue$n, queue$type, sum)
+    data.frame(type = names(waiting), n = as.integer(waiting), stringsAsFactors = FALSE)
+  }
+
+  # test setup once (it is used three times below)
+  setup <- test_setup(state, config)
 
   # money left, and a fair share of it per remaining turn
   budget_left <- tp$budget_total - state$spend_total
@@ -847,11 +861,11 @@ player_view <- function(state, config) {
     budget_left = budget_left,
     allowance = min(tp$tests$budget, budget_left / turns_left),
     spend_total = state$spend_total,
-    testing = test_setup(state, config),
-    costs = test_setup(state, config)$costs,
+    testing = setup,
+    costs = setup$costs,
     sens = tp$tests$sens,
     spec = tp$tests$spec,
-    delays = test_setup(state, config)$delays,
+    delays = setup$delays,
     interventions = config$interventions,
     streaks = state$streaks,
     local_costs = local_restriction_costs(config),

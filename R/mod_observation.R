@@ -5,34 +5,23 @@
 #' @return A list storing a delay queue and observation history.
 #' @export
 init_observation_state <- function() {
-  list(
-    queue = tibble::tibble(
-      borough_index = integer(),
-      borough_name = character(),
-      type = character(),
-      n = integer(),
-      positives = integer(),
-      true_pos = integer(),
-      infectious_pos = integer(),
-      mode = character(),
-      source = character(),
-      turn_sampled = integer(),
-      turn_available = integer()
-    ),
-    history = tibble::tibble(
-      borough_index = integer(),
-      borough_name = character(),
-      type = character(),
-      n = integer(),
-      positives = integer(),
-      true_pos = integer(),
-      infectious_pos = integer(),
-      mode = character(),
-      source = character(),
-      turn_sampled = integer(),
-      turn_available = integer()
-    )
+  # plain data frames (not tibbles): these are built every turn, and base R
+  # tables are much quicker when bots play thousands of games
+  empty <- data.frame(
+    borough_index = integer(),
+    borough_name = character(),
+    type = character(),
+    n = integer(),
+    positives = integer(),
+    true_pos = integer(),
+    infectious_pos = integer(),
+    mode = character(),
+    source = character(),
+    turn_sampled = integer(),
+    turn_available = integer(),
+    stringsAsFactors = FALSE
   )
+  list(queue = empty, history = empty)
 }
 
 #' Simulate testing outcomes with delays
@@ -95,7 +84,7 @@ observe_tests <- function(
   simulate_type <- function(type, n_col) {
     n_tests <- allocations[[n_col]]
     if (all(n_tests == 0)) {
-      return(tibble::tibble())
+      return(NULL)
     }
 
     sens <- se[[type]]
@@ -123,42 +112,41 @@ observe_tests <- function(
     true_pos <- stats::rbinom(length(positives), size = positives, prob = true_share)
     infectious_pos <- stats::rbinom(length(true_pos), size = true_pos, prob = current_share)
 
-    tibble::tibble(
+    results <- data.frame(
       borough_index = allocations$borough_index,
       borough_name = allocations$borough_name,
       type = type,
-      n = n_tests,
-      positives = positives,
-      true_pos = true_pos,
-      infectious_pos = infectious_pos,
+      n = as.integer(n_tests),
+      positives = as.integer(positives),
+      true_pos = as.integer(true_pos),
+      infectious_pos = as.integer(infectious_pos),
       mode = sampling_mode,
       source = params$source %||% "player",
-      turn_sampled = turn,
-      turn_available = turn + delay
-    ) |> 
-      dplyr::filter(n > 0)
+      turn_sampled = as.integer(turn),
+      turn_available = as.integer(turn + delay),
+      stringsAsFactors = FALSE
+    )
+    results[results$n > 0, , drop = FALSE]
   }
 
   ag_results <- simulate_type("ag", "n_ag")
   pcr_results <- simulate_type("pcr", "n_pcr")
 
-  new_results <- dplyr::bind_rows(ag_results, pcr_results)
+  # rbind of NULLs is NULL; start from the empty table so columns always exist
+  new_results <- rbind(state$queue[0, , drop = FALSE], ag_results, pcr_results)
 
-  # Separate queued vs available
+  # results due now come back; later ones wait in the queue
   prior_queue <- state$queue
-  available_from_queue <- dplyr::filter(prior_queue, turn_available <= turn)
-  retained_queue <- dplyr::filter(prior_queue, turn_available > turn)
+  due <- prior_queue$turn_available <= turn
+  ready <- new_results$turn_available <= turn
+  available_now <- rbind(prior_queue[due, , drop = FALSE], new_results[ready, , drop = FALSE])
+  retained_queue <- rbind(prior_queue[!due, , drop = FALSE], new_results[!ready, , drop = FALSE])
 
-  available_now <- available_from_queue
-  if (nrow(new_results) > 0) {
-    ready_now <- dplyr::filter(new_results, turn_available <= turn)
-    future_results <- dplyr::filter(new_results, turn_available > turn)
-    available_now <- dplyr::bind_rows(available_now, ready_now)
-    retained_queue <- dplyr::bind_rows(retained_queue, future_results)
-  }
-
-  available_now <- dplyr::arrange(available_now, borough_index, type)
-  history <- dplyr::bind_rows(state$history, available_now)
+  available_now <- available_now[order(available_now$borough_index, available_now$type), , drop = FALSE]
+  rownames(available_now) <- NULL
+  rownames(retained_queue) <- NULL
+  history <- rbind(state$history, available_now)
+  rownames(history) <- NULL
 
   list(
     queue = retained_queue,

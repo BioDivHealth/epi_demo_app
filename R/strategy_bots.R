@@ -15,17 +15,16 @@
 recent_results <- function(view, window = 2) {
   n_b <- nrow(view$pop_tbl)
 
-  recent <- view$history |>
-    dplyr::filter(turn_available >= view$turn - window)
+  history <- view$history
+  recent <- history$turn_available >= view$turn - window
 
   positives <- integer(n_b)
   tests <- integer(n_b)
-  if (nrow(recent) > 0) {
-    by_boro <- recent |>
-      dplyr::group_by(borough_index) |>
-      dplyr::summarise(positives = sum(positives), tests = sum(n), .groups = "drop")
-    positives[by_boro$borough_index] <- by_boro$positives
-    tests[by_boro$borough_index] <- by_boro$tests
+  if (any(recent)) {
+    by_boro <- rowsum(cbind(history$positives[recent], history$n[recent]), history$borough_index[recent])
+    idx <- as.integer(rownames(by_boro))
+    positives[idx] <- by_boro[, 1]
+    tests[idx] <- by_boro[, 2]
   }
 
   list(positives = positives, tests = tests)
@@ -69,11 +68,12 @@ spread_tests <- function(n_tests, weights) {
 # Build an allocation table
 make_allocations <- function(view, n_ag = 0L, n_pcr = 0L) {
   n_b <- nrow(view$pop_tbl)
-  tibble::tibble(
+  data.frame(
     borough_index = seq_len(n_b),
     borough_name = view$pop_tbl$borough_name,
     n_ag = as.integer(rep_len(n_ag, n_b)),
-    n_pcr = as.integer(rep_len(n_pcr, n_b))
+    n_pcr = as.integer(rep_len(n_pcr, n_b)),
+    stringsAsFactors = FALSE
   )
 }
 
