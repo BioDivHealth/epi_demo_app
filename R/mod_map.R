@@ -398,22 +398,22 @@ mod_map_server <- function(
       req(ready())
       budget <- budget_info()
       shiny::updateCheckboxInput(session, "tracing",
-                                 label = sprintf("Contact tracing · %s", format(round(budget$tracing_cost), big.mark = ",")))
+                                 label = sprintf("Contact tracing · %s", format_round(budget$tracing_cost)))
       testing <- budget$testing
       shiny::updateCheckboxInput(
         session, "build_testing",
         label = if (isTRUE(testing$can_build)) {
           sprintf("Improve PCR · %s once, takes %d reports (cheaper, more tests)",
-                  format(round(testing$build_cost), big.mark = ","), testing$build_turns)
+                  format_round(testing$build_cost), testing$build_turns)
         } else if (isTRUE(testing$building)) "Improve PCR · under way" else "Improve PCR · labs at their best"
       )
       shiny::updateCheckboxInput(
         session, "develop_rapid",
         label = if (isTRUE(testing$can_develop_rapid)) {
           sprintf("Develop rapid tests · %s a report for %d reports (cheap home tests; lockdown works better)",
-                  format(round(testing$rapid_cost), big.mark = ","), testing$rapid_turns)
+                  format_round(testing$rapid_cost), testing$rapid_turns)
         } else if (isTRUE(testing$developing_rapid)) {
-          sprintf("Develop rapid tests · under way, %s a report", format(round(testing$rapid_cost), big.mark = ","))
+          sprintf("Develop rapid tests · under way, %s a report", format_round(testing$rapid_cost))
         } else "Develop rapid tests · done"
       )
     })
@@ -427,7 +427,7 @@ mod_map_server <- function(
       allowed <- !identical(budget$lockdown_allowed, FALSE)
       trigger <- teaching_params()$lockdown_trigger
 
-      names <- sprintf("%s · %s", defs$label, format(round(defs$cost), big.mark = ","))
+      names <- sprintf("%s · %s", defs$label, format_round(defs$cost))
       if (!allowed) {
         names[defs$id == "distancing"] <- sprintf(
           "%s · only after %d deaths or beds %d%% full", defs$label[defs$id == "distancing"],

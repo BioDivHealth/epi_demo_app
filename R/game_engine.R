@@ -41,28 +41,43 @@ format_date <- function(date) {
   trimws(format(as.Date(date), "%e %B %Y"))
 }
 
+# Round to a number people can judge at a glance: nearest 10,000 from 10,000
+# up, nearest 1,000 from 1,000, nearest 100 below that (77,460 -> 80,000;
+# 857,851 -> 860,000; 4,320 -> 4,000). Never rounds a positive amount to 0.
+nice_round <- function(x) {
+  step <- ifelse(abs(x) >= 1e4, 1e4, ifelse(abs(x) >= 1e3, 1e3, 100))
+  out <- round(x / step) * step
+  ifelse(x > 0 & out == 0, step, out)
+}
+
 # Scale London's money and capacity to another place ---------------------------
 #
-# Prices per test stay the same; the budget, per-turn cap, measure costs,
-# lab capacity, beds, tracers and isolation support grow with population.
+# Prices per test stay the same; the budget, per-report limit, measure costs,
+# lab capacity, beds, tracers and isolation support grow with population,
+# each rounded to a nice number.
 scale_to_place <- function(tp, pop_total) {
   ratio <- pop_total / tp$reference_pop
   if (!is.finite(ratio) || abs(ratio - 1) < 1e-9) {
     return(tp)
   }
+  # money: nice round numbers people can judge; capacities (beds, tests,
+  # tracers): two significant figures, so they stay close to the true scaling
+  money <- function(x) nice_round(x * ratio)
+  amount <- function(x) signif(x * ratio, 2)
 
-  tp$budget_total <- tp$budget_total * ratio
-  tp$tests$budget <- tp$tests$budget * ratio
-  tp$interventions$cost <- tp$interventions$cost * ratio
-  tp$tracing$cost <- tp$tracing$cost * ratio
-  tp$tracing$capacity <- round(tp$tracing$capacity * ratio)
-  tp$build_testing$cost <- tp$build_testing$cost * ratio
-  if (!is.null(tp$sentinel)) tp$sentinel$tests <- round(tp$sentinel$tests * ratio)
-  tp$rapid_tests$cost <- tp$rapid_tests$cost * ratio
-  tp$rapid_tests$kits <- round(tp$rapid_tests$kits * ratio)
-  tp$test_levels$capacity <- round(tp$test_levels$capacity * ratio)
-  tp$hospital$beds <- round(tp$hospital$beds * ratio)
-  tp$isolation$half_strength_load <- tp$isolation$half_strength_load * ratio
+  tp$budget_total <- money(tp$budget_total)
+  tp$tests$budget <- money(tp$tests$budget)
+  tp$interventions$cost <- money(tp$interventions$cost)
+  tp$tracing$cost <- money(tp$tracing$cost)
+  tp$build_testing$cost <- money(tp$build_testing$cost)
+  tp$rapid_tests$cost <- money(tp$rapid_tests$cost)
+
+  tp$tracing$capacity <- amount(tp$tracing$capacity)
+  if (!is.null(tp$sentinel)) tp$sentinel$tests <- amount(tp$sentinel$tests)
+  tp$rapid_tests$kits <- amount(tp$rapid_tests$kits)
+  tp$test_levels$capacity <- amount(tp$test_levels$capacity)
+  tp$hospital$beds <- amount(tp$hospital$beds)
+  tp$isolation$half_strength_load <- amount(tp$isolation$half_strength_load)
   tp
 }
 
@@ -446,7 +461,7 @@ cap_to_pool <- function(allocs, pool_size) {
 
 # Per-turn cost of restricting each borough
 local_restriction_costs <- function(config) {
-  config$tp$local_restrictions$cost_per_100k * config$pop_tbl$pop / 1e5
+  nice_round(config$tp$local_restrictions$cost_per_100k * config$pop_tbl$pop / 1e5)
 }
 
 # Effect of local restrictions this turn, given how long each borough has

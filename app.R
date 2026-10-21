@@ -567,8 +567,8 @@ server <- function(input, output, session) {
 
     tagList(
       paste0(
-        format(round(budget$budget - planned), big.mark = ","), " today · ",
-        format(round(budget$pot_left), big.mark = ","), " total"
+        format_round(budget$budget - planned), " today · ",
+        format_round(budget$pot_left), " total"
       ),
       div(
         class = "progress budget-bar",

@@ -281,5 +281,10 @@ symptomatic_pool_frac <- function(turn, wave_peak, params = teaching_params()) {
 # Format an amount of money for display, e.g. "60,000 credits" -----------------
 
 format_money <- function(x) {
-  paste(format(round(x), big.mark = ",", scientific = FALSE, trim = TRUE), teaching_params()$currency)
+  paste(format_round(x), teaching_params()$currency)
+}
+
+# A round, readable number: 77,460 -> "80,000" (see nice_round())
+format_round <- function(x) {
+  format(nice_round(x), big.mark = ",", scientific = FALSE, trim = TRUE)
 }
