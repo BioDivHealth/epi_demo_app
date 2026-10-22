@@ -33,6 +33,14 @@ teaching_params <- function() {
     # Trap: the first case found is not the first case.
     head_start = list(admissions = 3L, index_cases = 1L, max_reports = 104L),
 
+    # The outbreak is declared over (and the response ends by itself) after
+    # this many reports in a row with no hospital admissions and no deaths
+    # reported. Calibrated in sim/checks/calibrate_declared_over.R: right
+    # (it never comes back) 97% of the time across all diseases; silent
+    # polio-like is the exception. Test positives do not count: false
+    # positives never stop while anyone tests.
+    declare_over_after = 6L,
+
     # Reports until the reference lab identifies the disease (then its name
     # is shown). Before that, students have to judge it from the data.
     identify_after = 6L,

@@ -288,6 +288,105 @@ bot_do_nothing <- function(view, memory) {
   list(actions = list(), memory = memory)
 }
 
+# Adaptive strategies --------------------------------------------------------------
+#
+# These read the data each report and change course, the way a sensible
+# response team would. They only see what a player sees.
+
+# Areas with hospital admissions in the last two reports, most first
+hospital_cluster_areas <- function(view) {
+  rep <- view$reports
+  if (is.null(rep) || nrow(rep) == 0) return(integer())
+  recent <- rep[rep$turn >= view$turn - 1 & rep$admissions > 0, , drop = FALSE]
+  if (nrow(recent) == 0) return(integer())
+  by_area <- tapply(recent$admissions, recent$borough_index, sum)
+  as.integer(names(sort(by_area, decreasing = TRUE)))
+}
+
+# Growth per report in hospital admissions (Rt from admissions, per report)
+admissions_growth <- function(view) {
+  rep <- view$reports
+  if (is.null(rep) || nrow(rep) == 0) return(NA_real_)
+  per_turn <- tapply(rep$admissions, factor(rep$turn, levels = 0:max(rep$turn)), sum)
+  per_turn[is.na(per_turn)] <- 0
+  estimate_rt_series(as.numeric(per_turn))$mean
+}
+
+# Tests for this report: what is left after the measures, on the best test
+# available, never more than labs or kits can handle, in the given areas
+# (everywhere if none)
+adaptive_tests <- function(view, money, areas = integer()) {
+  use_ag <- isTRUE(view$testing$ag_available)
+  per_test <- if (use_ag) view$costs$ag else view$costs$pcr
+  limit <- if (use_ag) view$testing$ag_capacity else view$testing$capacity
+  n <- min(max(0, money) / per_test, limit)
+  weights <- view$pop_tbl$pop
+  if (length(areas) > 0) weights <- ifelse(seq_along(weights) %in% areas, weights, 0)
+  tests <- spread_tests(n, weights)
+  if (use_ag) make_allocations(view, n_ag = tests) else make_allocations(view, n_pcr = tests)
+}
+
+measures_cost <- function(view, interventions = character(), restricted = integer(), tracing = FALSE,
+                          rapid = FALSE) {
+  sum(view$interventions$cost[view$interventions$id %in% interventions]) +
+    sum(view$local_costs[restricted]) +
+    (if (tracing) view$tracing_cost else 0) +
+    (if (rapid) view$testing$rapid_cost else 0)
+}
+
+# A. Act on hospital clusters: restrict the areas with recent hospital cases,
+#    trace known cases, and test the sick in those areas
+bot_hospital_clusters <- function(view, memory) {
+  areas <- hospital_cluster_areas(view)
+  restricted <- affordable_restrictions(view, areas, keep_for_tests = 0.4)
+  tracing <- TRUE
+  money <- view$allowance - measures_cost(view, restricted = restricted, tracing = tracing)
+  list(actions = list(allocations = adaptive_tests(view, money, areas), sampling_mode = "symptomatic",
+                      local_restrictions = restricted, tracing = tracing), memory = memory)
+}
+
+# B. Escalate when it grows: test the sick and trace; lock down once allowed
+#    and admissions are growing; lift it when they fall
+bot_escalate <- function(view, memory) {
+  growth <- admissions_growth(view)
+  locked <- isTRUE(memory$locked)
+  if (!locked && isTRUE(view$lockdown_allowed) && !is.na(growth) && growth > 1.2) locked <- TRUE
+  if (locked && !is.na(growth) && growth < 0.9) locked <- FALSE
+  memory$locked <- locked
+  interventions <- if (locked) "distancing" else character()
+  money <- view$allowance - measures_cost(view, interventions, tracing = TRUE)
+  list(actions = list(allocations = adaptive_tests(view, money), sampling_mode = "symptomatic",
+                      interventions = interventions, tracing = TRUE), memory = memory)
+}
+
+# C. Invest, then test widely: develop rapid tests at once, test the sick
+#    everywhere, trace known cases
+bot_invest_then_test <- function(view, memory) {
+  develop <- isTRUE(view$testing$can_develop_rapid)
+  paying <- develop || isTRUE(view$testing$developing_rapid)
+  money <- view$allowance - measures_cost(view, tracing = TRUE, rapid = paying)
+  list(actions = list(allocations = adaptive_tests(view, money), sampling_mode = "symptomatic",
+                      tracing = TRUE, develop_rapid = develop), memory = memory)
+}
+
+# D. Everything, adaptively: rapid tests, tracing and restricting hospital
+#    clusters, and a lockdown once hospital beds are half full
+bot_everything <- function(view, memory) {
+  develop <- isTRUE(view$testing$can_develop_rapid)
+  paying <- develop || isTRUE(view$testing$developing_rapid)
+  interventions <- if (isTRUE(view$lockdown_allowed) && view$bed_pressure >= 0.5) "distancing" else character()
+  areas <- hospital_cluster_areas(view)
+  restricted <- affordable_restrictions(view, areas, keep_for_tests = 0.5)
+  money <- view$allowance - measures_cost(view, interventions, restricted, tracing = TRUE, rapid = paying)
+  if (money < 0) {
+    restricted <- integer()
+    money <- view$allowance - measures_cost(view, interventions, tracing = TRUE, rapid = paying)
+  }
+  list(actions = list(allocations = adaptive_tests(view, money, areas), sampling_mode = "symptomatic",
+                      interventions = interventions, local_restrictions = restricted, tracing = TRUE,
+                      develop_rapid = develop), memory = memory)
+}
+
 strategy_bots <- function() {
   list(
     "Chase the signal" = bot_chase,
@@ -296,7 +395,11 @@ strategy_bots <- function() {
     "Build testing first" = bot_build,
     "Hit hard early" = bot_hit_hard,
     "All-in early" = bot_all_in,
-    "Respond to hospital reports" = bot_hospital_reports
+    "Respond to hospital reports" = bot_hospital_reports,
+    "Act on hospital clusters" = bot_hospital_clusters,
+    "Escalate when it grows" = bot_escalate,
+    "Invest, then test widely" = bot_invest_then_test,
+    "Everything, adaptively" = bot_everything
   )
 }
 
@@ -317,6 +420,9 @@ play_bot_game <- function(config, bot, seed, n_turns = 20L) {
       result <- play_turn(state, list(), config)
     }
     state <- result$state
+
+    # the response ends by itself once the outbreak is declared over
+    if (declared_over(state, config)) break
   }
 
   history <- state$truth$history

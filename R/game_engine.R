@@ -752,6 +752,16 @@ compare_with_doing_nothing <- function(state, config) {
   )
 }
 
+# Is the outbreak declared over? True after declare_over_after reports in a
+# row with no hospital admissions and no deaths reported (public data only).
+declared_over <- function(state, config) {
+  quiet_needed <- config$tp$declare_over_after
+  if (is.null(quiet_needed) || state$turn < quiet_needed) return(FALSE)
+  rep <- state$reports
+  recent <- rep[rep$turn > state$turn - quiet_needed, , drop = FALSE]
+  sum(recent$admissions) + sum(recent$deaths) == 0
+}
+
 # Would people accept a lockdown? Only after enough reported deaths, or with
 # hospitals filling up (both public).
 lockdown_allowed <- function(state, config) {

@@ -194,3 +194,20 @@ test_that("rapid tests take their development time, then exist and make lockdown
                       list(interventions = "distancing"), config)
   expect_equal(locked$effects$Rt_multiplier, config$tp$rapid_tests$lockdown_Rt_multiplier)
 })
+
+test_that("an outbreak is declared over after enough quiet reports, and bots stop there", {
+  config <- scenario_config("nipah_like", inputs)
+  quiet <- config$tp$declare_over_after
+  state <- new_game(config, seed = 2)
+  state$turn <- quiet + 2L
+  state$reports <- data.frame(turn = 1:(quiet + 2L), borough_index = 1L, admissions = 0L, deaths = 0L)
+  expect_true(declared_over(state, config))
+
+  # one admission within the last `quiet` reports: not over
+  state$reports$admissions[quiet + 1L] <- 1L
+  expect_false(declared_over(state, config))
+
+  # a bot game ends early once it is declared over
+  game <- play_bot_game(config, bot_do_nothing, seed = 2, n_turns = 20)
+  expect_true(game$state$turn <= 20)
+})

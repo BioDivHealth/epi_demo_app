@@ -6,7 +6,7 @@
 #   measles (low vaccination)      explosive: near impossible to contain
 #   COVID-like                     silent spread: cannot be contained, only slowed
 #   Ebola-like                     severe, slow, often dies out: hospital reports
-#   Nipah-like                     clusters that fizzle: hold back
+#   Nipah-like                     a cluster that fizzles: act on hospital cases, hold back
 #   SARS-like                      spreads only once sick: find and isolate the sick
 #   Mpox-like                      slow, close contact: contact tracing
 #   MERS-like                      hospital clusters: hospital reports, act locally
@@ -18,8 +18,11 @@
 #   Rt               R per generation if nobody were immune (R0); effective R at
 #                    the start is Rt x susceptible_frac
 #   k                superspreading (small = a few people cause most spread)
-#   imports_prob     chance of an introduction per area per report ...
-#   lambda_import    ... and its mean size
+#   imports_prob     chance of an introduction from outside per area per
+#   lambda_import    report, and its mean size. All 0: the game is one
+#                    outbreak from one infected person (introductions would
+#                    restart outbreaks that had died out and add clusters
+#                    unrelated to it)
 #   susceptible_frac share who can catch it at the start (vaccination, past infection)
 #   death_ifr        share of infected people who die
 #   death_delay_days days from infection to death
@@ -37,18 +40,18 @@
 scenario_catalog <- function() {
   diseases <- tibble::tribble(
     ~id,               ~Rt,  ~k,   ~imports_prob, ~lambda_import, ~susceptible_frac, ~death_ifr, ~death_delay_days, ~test_level, ~asymptomatic, ~presymptomatic, ~delay_decay, ~hosp_frac, ~gen_days, ~hosp_delay_days, ~kernel_key,
-    "custom",          1.3,  0.5,  0.01,          0.5,            1,                 0.002,      20,                2L,          0.2,           0.3,             0.5,          0.02,       5L,        10,               "default",
-    "measles_current", 15,   1.5,  0.01,          0.2,            0.08,              0.001,      24,                2L,          0.05,          0.3,             0.6,          0.1,        12L,       12,               "measles",
-    "measles_low_vax", 15,   1.5,  0.01,          0.2,            0.2,               0.001,      24,                2L,          0.05,          0.3,             0.6,          0.1,        12L,       12,               "measles",
-    "covid_early",     2.0,  0.25, 0.04,          1.0,            0.9,               0.002,      20,                2L,          0.45,          0.45,            0.4,          0.03,       5L,        10,               "default",
-    "ebola_like",      1.5,  0.4,  0.004,         0.2,            1.0,               0.5,        15,                1L,          0.05,          0,               0.85,         0.5,        15L,       15,               "default",
-    "nipah_like",      0.8,  0.1,  0.01,          0.2,            1.0,               0.6,        20,                1L,          0.1,           0.1,             0.8,          0.6,        10L,       10,               "default",
-    "sars_like",       2.5,  0.16, 0.01,          0.3,            1.0,               0.1,        24,                1L,          0.1,           0.05,            0.8,          0.6,        8L,        8,                "default",
-    "mpox_like",       1.6,  0.3,  0.02,          0.5,            0.8,               0.001,      25,                2L,          0.1,           0.2,             0.8,          0.05,       10L,       14,               "default",
-    "mers_like",       1.3,  0.1,  0.004,         0.2,            1.0,               0.35,       15,                1L,          0.2,           0.05,            0.8,          0.7,        7L,        7,                "default",
-    "flu_pandemic",    2.0,  1.0,  0.04,          1.0,            1.0,               0.02,       14,                2L,          0.3,           0.3,             0.35,         0.05,       3L,        7,                "default",
-    "smallpox_like",   4.0,  0.6,  0.004,         0.2,            0.5,               0.3,        21,                1L,          0,             0,               0.9,          0.5,        15L,       14,               "default",
-    "polio_like",      6.0,  1.0,  0.02,          0.5,            0.25,              0.0005,     30,                2L,          0.99,          0.5,             0.7,          0.005,      12L,       14,               "default"
+    "custom",          1.3,  0.5,  0,             0.5,            1,                 0.002,      20,                2L,          0.2,           0.3,             0.5,          0.02,       5L,        10,               "default",
+    "measles_current", 15,   1.5,  0,             0.2,            0.08,              0.001,      24,                2L,          0.05,          0.3,             0.6,          0.1,        12L,       12,               "measles",
+    "measles_low_vax", 15,   1.5,  0,             0.2,            0.2,               0.001,      24,                2L,          0.05,          0.3,             0.6,          0.1,        12L,       12,               "measles",
+    "covid_early",     2.0,  0.25, 0,             1.0,            0.9,               0.002,      20,                2L,          0.45,          0.45,            0.4,          0.03,       5L,        10,               "default",
+    "ebola_like",      1.5,  0.4,  0,             0.2,            1.0,               0.5,        15,                1L,          0.05,          0,               0.85,         0.5,        15L,       15,               "default",
+    "nipah_like",      0.8,  0.1,  0,             0.2,            1.0,               0.6,        20,                1L,          0.1,           0.1,             0.8,          0.6,        10L,       10,               "default",
+    "sars_like",       2.5,  0.16, 0,             0.3,            1.0,               0.1,        24,                1L,          0.1,           0.05,            0.8,          0.6,        8L,        8,                "default",
+    "mpox_like",       1.6,  0.3,  0,             0.5,            0.8,               0.001,      25,                2L,          0.1,           0.2,             0.8,          0.05,       10L,       14,               "default",
+    "mers_like",       1.3,  0.1,  0,             0.2,            1.0,               0.35,       15,                1L,          0.2,           0.05,            0.8,          0.7,        7L,        7,                "default",
+    "flu_pandemic",    2.0,  1.0,  0,             1.0,            1.0,               0.02,       14,                2L,          0.3,           0.3,             0.35,         0.05,       3L,        7,                "default",
+    "smallpox_like",   4.0,  0.6,  0,             0.2,            0.5,               0.3,        21,                1L,          0,             0,               0.9,          0.5,        15L,       14,               "default",
+    "polio_like",      6.0,  1.0,  0,             0.5,            0.25,              0.0005,     30,                2L,          0.99,          0.5,             0.7,          0.005,      12L,       14,               "default"
   )
 
   # names and what each one was (the blurb is shown at the start of the review)
@@ -80,11 +83,11 @@ scenario_catalog <- function() {
       "before symptoms, so isolating cases works well. Half of those infected die. At first only a",
       "reference lab could test for it."
     ),
-    "nipah_like", "Nipah-like (clustered spillovers)", "Low average spread with strong clustering and repeated introductions.",
+    "nipah_like", "Nipah-like (spillover cluster)", "Low average spread with strong clustering, from one jump from animals.",
     paste(
-      "A Nipah-like virus: repeated jumps from animals into people, with little onward spread",
-      "(each case infects fewer than one other on average) but very high mortality. Most clusters",
-      "die out on their own."
+      "A Nipah-like virus: it jumped from an animal into one person, and spreads little between",
+      "people (each case infects fewer than one other on average) but kills most of those it",
+      "infects. Clusters like this usually die out on their own."
     ),
     "sars_like", "SARS-like (spreads once sick)", "Fast spread with superspreading, but almost none before symptoms.",
     paste(

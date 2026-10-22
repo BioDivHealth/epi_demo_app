@@ -86,7 +86,8 @@ devtools::test()
   - Row j of K = where borough j's onward infections land; rows sum to 1, so each case causes R_t new cases wherever it is. Built in load_inputs() from data/kernel_K.rds plus a within-borough share.
   - k controls overdispersion (superspreading).
 
-  Imports: allow small stochastic introductions each turn. Example (pseudocode):
+  Imports: the mechanism allows small stochastic introductions each turn, but every
+  preset sets imports_prob = 0: the game is one outbreak from one index case. Example (pseudocode):
       gate <- runif(length(I_t)) < imports_prob
       imports <- ifelse(gate, rpois(length(I_t), lambda_import), 0L)
       I_next <- I_next + imports

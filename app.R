@@ -1014,6 +1014,12 @@ server <- function(input, output, session) {
     state <- game_state()
     req(state)
 
+    # nothing more to do once the outbreak has been declared over
+    if (declared_over(state, current_config())) {
+      showNotification("The outbreak has been declared over. Press End & review.", type = "message")
+      return()
+    }
+
     # the game lasts a fixed number of turns
     if (state$turn >= teaching_params()$game_turns) {
       showNotification("Time is up. Press End & review to see what really happened.", type = "message")
@@ -1188,6 +1194,16 @@ server <- function(input, output, session) {
     all_lines <- report_lines()
     all_lines[[new_state$turn + 1L]] <- lines
     report_lines(all_lines)
+
+    # declared over: the response ends by itself and the review opens
+    if (declared_over(new_state, config)) {
+      over_line <- sprintf("No hospital admissions or deaths reported for %d weeks: the outbreak is declared over.",
+                           config$tp$declare_over_after)
+      turn_log(c(lines, over_line))
+      all_lines[[new_state$turn + 1L]] <- c(lines, over_line)
+      report_lines(all_lines)
+      end_response()
+    }
   })
 
   # Review chart: real new infections (black) against confirmed cases (red),
@@ -1378,7 +1394,9 @@ server <- function(input, output, session) {
     )
   }
 
-  observeEvent(controls$end(), {
+  # end the response and show the review (the End & review button, or by
+  # itself once the outbreak is declared over)
+  end_response <- function() {
     req(truth_state())
     report <- build_run_report(
       truth_history = truth_history(),
@@ -1433,6 +1451,18 @@ server <- function(input, output, session) {
       sprintf(" (doing nothing: %s infections, %s deaths).",
               format(round(vs_nothing$infections_doing_nothing), big.mark = ","),
               format(round(vs_nothing$deaths_doing_nothing), big.mark = ","))
+    )
+
+    # what the best approaches we know achieve for this disease (from a long
+    # run of every way of playing), and advice for this type of disease
+    scenario_row <- scenario_lookup(active_scenario_id())
+    advice <- disease_advice(scenario_row)
+    advice_txt <- paste0("This was a disease where ", advice$type, ". ", advice$advice)
+    benchmarks <- load_benchmarks()
+    bench <- if (is.null(benchmarks)) NULL else benchmarks[benchmarks$disease == scenario_row$id[[1]], ]
+    benchmark_txt <- if (is.null(bench) || nrow(bench) == 0) NULL else sprintf(
+      "the best approaches we know prevent about %d%% of deaths and %d%% of infections here (%s).",
+      round(100 * bench$deaths_prevented), round(100 * bench$infections_prevented), tolower(bench$best_policy)
     )
 
     # deaths: reported by hospitals and registrations, against everyone who
@@ -1496,6 +1526,8 @@ server <- function(input, output, session) {
       ),
       tags$p(tags$strong("You spent: "), format_money(metrics$total_spend)),
       tags$p(tags$strong("Compared with doing nothing: "), prevented_txt),
+      if (!is.null(benchmark_txt)) tags$p(tags$strong("What is possible: "), benchmark_txt),
+      tags$p(tags$strong("What tends to work: "), advice_txt),
       hidden_distortions_ui(),
       tags$hr(),
       tags$h5("Turn-by-Turn Comparison"),
@@ -1512,7 +1544,8 @@ server <- function(input, output, session) {
       size = "xl",
       easyClose = TRUE
     ))
-  })
+  }
+  observeEvent(controls$end(), end_response())
 
   # Replay: the whole outbreak on one clock, what you saw beside what really
   # happened (hidden until Reveal)

@@ -18,7 +18,7 @@ Where:
 - **k** = overdispersion parameter (superspreading)
 - **Rt** = effective reproduction number
 
-**Imports**: Small stochastic introductions each turn:
+**Imports**: Small stochastic introductions each turn (every preset sets `imports_prob = 0`, so the game is one outbreak from one index case):
 ```r
 gate <- runif(n) < imports_prob
 imports <- ifelse(gate, rpois(n, lambda_import), 0L)
