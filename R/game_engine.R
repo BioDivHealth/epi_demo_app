@@ -459,6 +459,16 @@ cap_to_pool <- function(allocs, pool_size) {
   allocs
 }
 
+# Keep restricted areas, in the order chosen, while they hold at most
+# max_pop_share of the population (the first area is always allowed)
+within_restriction_limit <- function(restricted, config) {
+  share <- config$tp$local_restrictions$max_pop_share
+  if (is.null(share) || length(restricted) == 0) return(restricted)
+  pop <- config$pop_tbl$pop
+  covered <- cumsum(pop[restricted]) / sum(pop)
+  restricted[covered <= share | seq_along(restricted) == 1]
+}
+
 # Per-turn cost of restricting each borough
 local_restriction_costs <- function(config) {
   nice_round(config$tp$local_restrictions$cost_per_100k * config$pop_tbl$pop / 1e5)
@@ -774,6 +784,7 @@ play_turn <- function(state, actions, config) {
     selected <- setdiff(selected, "distancing")
   }
   restricted <- unique(as.integer(actions$local_restrictions %||% integer()))
+  restricted <- within_restriction_limit(restricted, config)
   tracing <- isTRUE(actions$tracing)
   n_b <- nrow(config$pop_tbl)
 
@@ -1005,6 +1016,7 @@ player_view <- function(state, config) {
     pool_size = symptomatic_pool_size(state, config),
     local_streaks = state$local_streaks,
     lockdown_allowed = lockdown_allowed(state, config),
+    restriction_share = tp$local_restrictions$max_pop_share,
     # the public health agency's steady sample (public)
     sentinel = state$sentinel,
     alerted = if (is.null(state$alert)) NA_integer_ else state$alert$alerted,

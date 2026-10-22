@@ -200,6 +200,63 @@ heat("win_rate",
      c(0, 1), "#f7f7f7", "#9ecae1", "#08519c",
      file.path("sim/checks", paste0("winnable_", label, ".png")))
 
+# What is avertable: the best any way of playing achieves for each disease ------
+#
+# For each disease, the way of playing that prevents the largest median share
+# of infections, with the deaths it prevents and the infections averted.
+
+avertable <- scored |>
+  mutate(
+    prevented = ifelse(reference > 0, 1 - cumulative_infections / reference, NA),
+    deaths_prevented = ifelse(reference_deaths >= 1, 1 - deaths_eventual / reference_deaths, NA),
+    averted = reference - cumulative_infections
+  ) |>
+  group_by(disease, policy = bot) |>
+  summarise(
+    prevented = median(prevented, na.rm = TRUE),
+    deaths_prevented = median(deaths_prevented, na.rm = TRUE),
+    averted = median(averted),
+    left_alone = median(reference),
+    win_rate = mean(win),
+    .groups = "drop"
+  ) |>
+  group_by(disease) |>
+  slice_max(prevented, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(disease = factor(disease_labels[disease], levels = rev(disease_labels[diseases])))
+
+cat("
+What is avertable (best way of playing for each disease):
+")
+print(as.data.frame(avertable |> mutate(across(c(prevented, deaths_prevented, win_rate), ~ round(100 * .x)))), row.names = FALSE)
+
+avert_long <- dplyr::bind_rows(
+  avertable |> transmute(disease, policy, averted, left_alone, what = "Infections", share = prevented),
+  avertable |> transmute(disease, policy, averted, left_alone, what = "Deaths", share = deaths_prevented)
+)
+p_avert <- ggplot(avert_long, aes(x = share, y = disease, fill = what)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.7) +
+  geom_text(
+    data = avertable,
+    aes(x = 1.02, y = disease, label = sprintf("%s  (averts %s of %s infections)", policy,
+                                                format(signif(averted, 2), big.mark = ",", scientific = FALSE),
+                                                format(signif(left_alone, 2), big.mark = ",", scientific = FALSE))),
+    inherit.aes = FALSE, hjust = 0, size = 3
+  ) +
+  scale_x_continuous(labels = scales::percent, limits = c(min(0, min(avert_long$share, na.rm = TRUE)), 2.2),
+                     breaks = seq(0, 1, 0.25)) +
+  scale_fill_manual(values = c(Infections = "#2b8cbe", Deaths = "#e15759")) +
+  labs(
+    title = "What is avertable: the most any way of playing prevents, for each disease",
+    subtitle = sprintf("Median share of infections and deaths prevented compared with doing nothing on the same outbreak (%d outbreaks), by the best way of playing", n_seeds),
+    x = NULL, y = NULL, fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom", panel.grid.major.y = element_blank())
+ggsave(file.path("sim/checks", paste0("avertable_", label, ".png")), p_avert, width = 13, height = 6, dpi = 110)
+cat("Wrote", file.path("sim/checks", paste0("avertable_", label, ".png")), "
+")
+
 heat("prevented",
      function(d) sprintf("%d%%", round(100 * d$prevented)),
      sprintf("Median share of infections prevented compared with doing nothing on the same outbreak (%d outbreaks each)", n_seeds),

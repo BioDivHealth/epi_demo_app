@@ -377,8 +377,16 @@ mod_map_server <- function(
           return()
         }
         trial <- c(current, idx)
+        share <- teaching_params()$local_restrictions$max_pop_share
+        if (length(current) > 0 && sum(pop_tbl$pop[trial]) / sum(pop_tbl$pop) > share) {
+          shiny::showNotification(
+            sprintf("At most %d%% of people can be under local restrictions at once: lift one first.", round(100 * share)),
+            type = "error"
+          )
+          return()
+        }
         if (budget_info()$budget - other_cost(trial) < -1e-6) {
-          shiny::showNotification("Not enough money left this turn to restrict another borough.", type = "error")
+          shiny::showNotification("Not enough money left this report to restrict another area.", type = "error")
           return()
         }
         restricted(trial)

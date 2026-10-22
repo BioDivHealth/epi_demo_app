@@ -56,7 +56,16 @@ test_budget <- function(view, interventions, restricted = integer()) {
 affordable_restrictions <- function(view, boroughs, keep_for_tests = 0.3) {
   money <- (view$allowance %||% view$budget) * (1 - keep_for_tests)
   costs <- view$local_costs[boroughs]
-  boroughs[cumsum(costs) <= money]
+  boroughs <- boroughs[cumsum(costs) <= money]
+
+  # no more than the share of people that can be restricted at once
+  share <- view$restriction_share
+  if (!is.null(share) && length(boroughs) > 0) {
+    pop <- view$pop_tbl$pop
+    covered <- cumsum(pop[boroughs]) / sum(pop)
+    boroughs <- boroughs[covered <= share | seq_along(boroughs) == 1]
+  }
+  boroughs
 }
 
 # Spread a number of tests across boroughs in proportion to weights

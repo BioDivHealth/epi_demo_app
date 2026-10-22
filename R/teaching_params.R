@@ -192,9 +192,13 @@ teaching_params <- function() {
     # Much cheaper than London-wide measures, but only useful in the right
     # place. Cost scales with the borough's population. Same lag/fatigue
     # rules as the London-wide interventions.
+    # Only `max_pop_share` of the population can be under local restrictions
+    # at once (always at least one area): police, support and goodwill run
+    # out, so you have to choose which clusters matter most.
     # Trap: acting hard on an early positive is great if it was the origin,
     # wasted if it was a false positive or a side branch.
     local_restrictions = list(
+      max_pop_share = 0.1,
       Rt_multiplier = 0.3,
       cost_per_100k = 9000,
       lag = 1L,

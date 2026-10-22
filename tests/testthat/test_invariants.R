@@ -105,6 +105,11 @@ check_turn <- function(before, result, actions, config, label) {
   # wear off by one a report (never below 0)
   restricted <- result$restricted
   lifted <- setdiff(seq_len(n_b), restricted)
+  # never more than the allowed share of people restricted (one area always allowed)
+  if (length(restricted) > 1) {
+    share <- sum(config$pop_tbl$pop[restricted]) / sum(config$pop_tbl$pop)
+    expect_lte(share, config$tp$local_restrictions$max_pop_share + 1e-9, label = info)
+  }
   expect_true(all(after$local_streaks[restricted] == before$local_streaks[restricted] + 1L), info = info)
   expect_true(all(after$local_streaks[lifted] == pmax(0L, before$local_streaks[lifted] - 1L)), info = info)
 
