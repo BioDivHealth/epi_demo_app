@@ -20,25 +20,14 @@ mod_controls_ui <- function(id) {
       shiny::div(
         class = "d-flex gap-2 align-items-center",
         shiny::numericInput(ns("rng_seed"), label = NULL, value = 2024, min = 1, step = 1, width = "100%"),
-        shiny::checkboxInput(ns("random_seed"), "Random", value = FALSE)
-      )
-    ),
-    shiny::div(
-      class = "mb-3",
-      shiny::tags$label(class = "form-label", "Testing pool"),
-      shiny::radioButtons(
-        ns("testing_pool"),
-        label = NULL,
-        choices = c("Symptomatic" = "symptomatic", "Random" = "random"),
-        selected = "symptomatic",
-        inline = TRUE
+        shiny::checkboxInput(ns("random_seed"), "Random", value = teaching_params()$random_seed_default)
       )
     ),
     shiny::uiOutput(ns("admin_controls")),
-    shiny::actionButton(ns("reseed"), "New Game", class = "btn-outline-primary w-100 mb-2"),
+
     shiny::hr(),
-    shiny::actionButton(ns("end"), "End & Reveal", class = "btn-success w-100 mb-2"),
-    shiny::actionButton(ns("reset"), "Reset", class = "btn-outline-secondary w-100"),
+
+
     width = NULL
   )
 }
@@ -53,7 +42,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
     scenario_defs <- scenario_catalog()
     default_scenario <- scenario_lookup("custom", scenario_defs)
     default_death_ifr <- 0.002
-    default_death_delay <- 6L
+    default_death_delay <- 4L
     admin_defaults <- list(
       Rt = default_scenario$Rt[[1]],
       k = default_scenario$k[[1]],
@@ -109,7 +98,8 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         death_ifr <- shared_admin$death_ifr
       }
       death_ifr <- min(1, max(0, death_ifr))
-      death_delay <- scenario$death_delay[[1]]
+      # scenario delays are in days; the admin setting is in reports
+      death_delay <- scenario$death_delay_days[[1]] / teaching_params()$report_days
       if (is.null(death_delay) || is.na(death_delay)) {
         death_delay <- shared_admin$death_delay
       }
@@ -172,17 +162,19 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
       )
     }
 
-    # Fixed parameters - students focus on testing strategy, not epidemiology
+    # Fixed parameters - students focus on testing strategy, not epidemiology.
+    # Values come from teaching_params() so they can be tuned in one place.
+    tp <- teaching_params()
     fixed_params <- list(
       testing = list(
-        sens = list(ag = 0.80, pcr = 0.98),
-        spec = list(ag = 0.995, pcr = 0.995),
-        delays = list(ag = 0, pcr = 1),
-        prev_floor = 1e-6
+        sens = tp$tests$sens,
+        spec = tp$tests$spec,
+        delays = tp$tests$delays,
+        prev_floor = tp$tests$prev_floor
       ),
       budget = list(
-        budget = 2000,
-        costs = list(ag = 2, pcr = 10)
+        budget = tp$tests$budget,
+        costs = tp$tests$costs
       ),
       starter_intel = "alert"
     )
@@ -205,12 +197,9 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
 
     params_testing <- shiny::reactive({
       testing <- fixed_params$testing
-      mode <- input$testing_pool
-      if (is.null(mode)) {
-        mode <- "symptomatic"
-      }
-      testing$sampling_mode <- mode
-      testing$sampling_pool_frac <- 0.1
+      # who to test is now chosen in the testing plan on the map card
+      testing$sampling_mode <- "symptomatic"
+      testing$sampling_pool_frac <- tp$symptomatic$pool_frac
       testing
     })
 
@@ -252,7 +241,7 @@ mod_controls_server <- function(id, is_admin = NULL, shared_admin = NULL, reset_
         shiny::uiOutput(ns("admin_scenario_note")),
         shiny::numericInput(
           ns("admin_rt"),
-          label = "Rt",
+          label = "R0 (R if nobody were immune)",
           value = shiny::isolate(shared_admin$Rt),
           min = 0,
           step = 0.05

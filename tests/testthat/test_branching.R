@@ -48,3 +48,35 @@ test_that("expected growth tracks Rt when k is infinite", {
 
   expect_equal(mean(draws), 20 * Rt, tolerance = 0.1)
 })
+
+test_that("vaccination (susceptible fraction) scales the effective R", {
+  K1 <- matrix(1, 1, 1)
+  state <- init_truth(n_boroughs = 1, seed_boroughs = 1, seed_cases = 1000)
+
+  set.seed(1)
+  full <- step_truth(state, K1, Rt_global = 15, k_overdisp = Inf,
+                     imports_prob = 0, lambda_import = 0, pop = 1e7, susceptible_frac = 1)
+  set.seed(1)
+  vaccinated <- step_truth(state, K1, Rt_global = 15, k_overdisp = Inf,
+                           imports_prob = 0, lambda_import = 0, pop = 1e7, susceptible_frac = 0.08)
+
+  # about 15 vs about 1.2 new cases per case
+  expect_equal(sum(full$incidence) / 1000, 15, tolerance = 0.05)
+  expect_equal(sum(vaccinated$incidence) / 1000, 15 * 0.08, tolerance = 0.1)
+})
+
+test_that("superspreading is per person: a large outbreak does not vanish in one step", {
+  # 200 cases, R 1.8, k 0.25 (COVID-like). With size k per person the total
+  # is NegBin(size = 50, mu = 360): practically never zero, and its spread
+  # matches the sum of 200 people's offspring. A single size = k for the
+  # whole area would give zero about 3 times in 10.
+  K1 <- matrix(1, 1, 1)
+  start <- init_truth(n_boroughs = 1, seed_boroughs = 1, seed_cases = 200L)
+  set.seed(9)
+  totals <- replicate(400, sum(step_truth(start, K1, Rt_global = 1.8, k_overdisp = 0.25,
+                                          imports_prob = 0, lambda_import = 0)$incidence))
+  expect_equal(sum(totals == 0), 0)
+  expect_equal(mean(totals), 360, tolerance = 0.05)
+  expected_sd <- sqrt(360 + 360^2 / (0.25 * 200))
+  expect_equal(stats::sd(totals), expected_sd, tolerance = 0.15)
+})

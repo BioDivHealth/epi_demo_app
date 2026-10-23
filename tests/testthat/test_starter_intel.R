@@ -9,10 +9,21 @@ truth_stub <- init_truth(n_boroughs = 3, seed_boroughs = 2, seed_cases = 15)
 
 set.seed(1)
 
-test_that("alert intel targets seeded borough where possible", {
+test_that("alert intel sends all its tests to one borough", {
   alloc <- starter_intel_allocations("alert", truth_stub, pop_stub)
-  expect_equal(sum(alloc$n_ag), 200)
-  expect_equal(which(alloc$n_ag > 0), 2)
+  expect_equal(sum(alloc$n_ag), teaching_params()$starter_alert$tests)
+  expect_length(which(alloc$n_ag > 0), 1)
+})
+
+test_that("alert intel is sometimes right and sometimes a false alarm", {
+  set.seed(42)
+  targets <- vapply(1:200, function(i) {
+    alloc <- starter_intel_allocations("alert", truth_stub, pop_stub)
+    which(alloc$n_ag > 0)
+  }, integer(1))
+  hit_rate <- mean(targets == 2)
+  expect_gt(hit_rate, 0.5)
+  expect_lt(hit_rate, 0.95)
 })
 
 test_that("sweep intel mixes antigen and PCR tests", {

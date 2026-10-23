@@ -48,11 +48,22 @@ init_truth <- function(n_boroughs, seed_boroughs = 1L, seed_cases = 10L) {
 #' Advance the hidden outbreak by one turn
 #'
 #' @param state Current truth state as returned by `init_truth()` / `step_truth()`.
-#' @param K Row-normalised spatial kernel matrix.
+#' @param K Spatial kernel. Row j = where borough j's onward infections land;
+#'   each row sums to 1, so every case causes Rt_global new cases on average.
 #' @param Rt_global Effective reproduction number applied uniformly.
 #' @param k_overdisp Negative binomial size parameter controlling overdispersion.
 #' @param imports_prob Probability an import event occurs in each borough on a turn.
 #' @param lambda_import Mean size of the Poisson import when it occurs.
+#' @param isolated Per-borough number of (effectively) isolated cases that do
+#'   not transmit this turn.
+#' @param local_multiplier Per-borough multiplier on onward transmission from
+#'   cases in that borough (local restrictions).
+#' @param susceptible_frac Share of the population susceptible at the start
+#'   (1 = nobody immune). Rt_global is the R in a fully susceptible population.
+#' @param gens_per_step Generations of infection in one step (report interval
+#'   in days / generation time in days). Each case's onward spread per step
+#'   is (R per generation)^gens_per_step, so a weekly step keeps the same
+#'   growth per day as stepping one generation at a time. 1 = one generation.
 #' @return An updated state list with the next turn's incidence and cumulative totals.
 #' @export
 step_truth <- function(
@@ -64,7 +75,11 @@ step_truth <- function(
     lambda_import,
     pop = NULL,
     death_ifr = 0,
-    death_delay = 0) {
+    death_delay = 0,
+    isolated = 0,
+    local_multiplier = 1,
+    susceptible_frac = 1,
+    gens_per_step = 1) {
   if (is.null(state) || !is.list(state)) {
     stop("state must be a list created by init_truth()")
   }
@@ -113,24 +128,42 @@ step_truth <- function(
     stop("death_delay must be non-negative")
   }
 
-  mu <- as.numeric(K %*% I_t) * Rt_global
-  mu[mu < 0] <- 0
+  # isolated cases (found by testing) do not pass the infection on, and
+  # cases in boroughs under local restrictions pass it on less
+  # (the per-generation multipliers compound over the generations in a step)
+  g <- gens_per_step
+  I_transmit <- pmax(I_t - isolated, 0) * local_multiplier^g
 
-  # Apply susceptible depletion if population provided
+  # each borough's cases spread along its row of K:
+  # mu[i] = Rt^g * sum_j K[j, i] * I_transmit[j]
+  infectors <- as.numeric(crossprod(K, I_transmit))
+  infectors[infectors < 0] <- 0
+  mu <- infectors * Rt_global^g
+
+  # Only susceptible people can be infected: the share still susceptible
+  # starts at susceptible_frac (e.g. after vaccination) and falls as people
+  # are infected. Effective R = Rt x share still susceptible.
   if (!is.null(pop)) {
     if (length(pop) != length(I_t)) {
       stop("Length of pop vector must match number of boroughs")
     }
-    S_frac <- 1 - (state$cumulative / pop)
+    S_frac <- susceptible_frac - (state$cumulative / pop)
     S_frac[!is.finite(S_frac)] <- 0
     S_frac <- pmax(0, pmin(1, S_frac))
-    mu <- mu * S_frac
+    mu <- mu * S_frac^g
   }
 
+  # superspreading is per person: each infected person's onward infections
+  # are NegBin(size = k), so the total from n people is NegBin(size = k * n).
+  # (A single size = k for a whole area would make even a large outbreak
+  # wobble and often vanish.)
   offspring <- if (is.infinite(k_overdisp)) {
     stats::rpois(length(mu), lambda = mu)
   } else {
-    stats::rnbinom(length(mu), size = k_overdisp, mu = mu)
+    out <- integer(length(mu))
+    live <- mu > 0
+    out[live] <- stats::rnbinom(sum(live), size = k_overdisp * infectors[live], mu = mu[live])
+    out
   }
 
   gates <- stats::rbinom(length(mu), size = 1L, prob = imports_prob)

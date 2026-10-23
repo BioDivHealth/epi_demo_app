@@ -4,3 +4,11 @@
 renv/library/
 renv/staging/
 renv/cache/
+
+# strategy-bot heatmap results (regenerate with sim/run_heatmap.R)
+sim/results/
+# Global boundary/population downloads (re-download, see prepare_place_library.R)
+data_raw/global/
+# Scratch outputs from the examples; the built place library itself is kept
+locations/*
+!locations/library/

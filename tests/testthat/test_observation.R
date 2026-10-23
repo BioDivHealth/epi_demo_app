@@ -106,3 +106,70 @@ test_that("result queues honour delays", {
   expect_gt(nrow(res2$available), 0)
   expect_true(all(res2$available$turn_available == 2))
 })
+
+test_that("care-seeking lowers symptomatic positivity in reluctant boroughs", {
+  n_b <- nrow(inputs$pop_tbl)
+  alloc <- tibble(
+    borough_index = seq_len(n_b),
+    borough_name = inputs$pop_tbl$borough_name,
+    n_ag = integer(n_b),
+    n_pcr = rep(2000L, n_b)
+  )
+
+  # same true prevalence everywhere
+  truth_incidence <- round(0.002 * inputs$pop_tbl$pop)
+
+  # first half of boroughs rarely come forward, second half often do
+  care <- rep(c(0.3, 1.5), length.out = n_b)
+
+  params <- list(
+    sens = list(ag = 1, pcr = 1),
+    spec = list(ag = 1, pcr = 1),
+    delays = list(ag = 0, pcr = 0),
+    prev_floor = 1e-6,
+    sampling_mode = "symptomatic",
+    sampling_pool_frac = 0.1,
+    care_seeking = care
+  )
+
+  set.seed(7)
+  res <- observe_tests(init_observation_state(), 0, alloc, truth_incidence, inputs$pop_tbl, params)
+  pos <- res$new_results$positives / res$new_results$n
+
+  expect_lt(mean(pos[care == 0.3]), mean(pos[care == 1.5]) / 2)
+})
+
+test_that("illness wave swells the symptomatic pool around its peak", {
+  base <- teaching_params()$symptomatic$pool_frac
+  expect_equal(symptomatic_pool_frac(30, wave_peak = 6), base, tolerance = 1e-6)
+  expect_gt(symptomatic_pool_frac(6, wave_peak = 6), 2 * base)
+})
+
+test_that("random tests find recent infections but only this turn's are infectious", {
+  n_b <- nrow(inputs$pop_tbl)
+  alloc <- tibble(
+    borough_index = seq_len(n_b),
+    borough_name = inputs$pop_tbl$borough_name,
+    n_ag = integer(n_b),
+    n_pcr = rep(20000L, n_b)
+  )
+
+  current <- round(0.002 * inputs$pop_tbl$pop)
+  params <- list(
+    sens = list(ag = 1, pcr = 1),
+    spec = list(ag = 1, pcr = 1),
+    delays = list(ag = 0, pcr = 0),
+    prev_floor = 1e-6,
+    sampling_mode = "random",
+    # three turns' worth of infections are still test-positive
+    detectable = list(ag = current * 2, pcr = current * 3)
+  )
+
+  set.seed(9)
+  res <- observe_tests(init_observation_state(), 0, alloc, current, inputs$pop_tbl, params)$new_results
+
+  # about 3x as many positives as this turn's infections alone would give
+  expect_equal(sum(res$positives) / sum(res$n), 3 * 0.002, tolerance = 0.05)
+  # about a third of the real positives are still infectious
+  expect_equal(sum(res$infectious_pos) / sum(res$true_pos), 1 / 3, tolerance = 0.05)
+})

@@ -14,11 +14,20 @@ starter_intel_allocations <- function(option = "none", truth_state, pop_tbl) {
   }
 
   if (option == "alert") {
-    candidate <- which.max(truth_state$incidence)
-    if (truth_state$incidence[candidate] == 0) {
+    alert <- teaching_params()$starter_alert
+
+    # the alert is only right some of the time; otherwise it is a false
+    # alarm pointing at a borough picked at random
+    alert_is_right <- stats::runif(1) < alert$accuracy
+    hotspot <- which.max(truth_state$incidence)
+
+    if (alert_is_right && truth_state$incidence[hotspot] > 0) {
+      candidate <- hotspot
+    } else {
       candidate <- sample.int(n_b, 1L)
     }
-    base$n_ag[candidate] <- 200L
+
+    base$n_ag[candidate] <- alert$tests
     return(base)
   }
 
